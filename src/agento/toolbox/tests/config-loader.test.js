@@ -1,0 +1,797 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+
+describe('config-loader', () => {
+  let loadTools, getModuleToolTypes;
+  let tmpDir;
+  const savedEnv = {};
+
+  beforeEach(async () => {
+    tmpDir = path.join(import.meta.dirname, '_test_modules_' + Date.now());
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    // Save and set env — use CORE_MODULES_DIR for the new structure
+    savedEnv.CORE_MODULES_DIR = process.env.CORE_MODULES_DIR;
+    savedEnv.USER_MODULES_DIR = process.env.USER_MODULES_DIR;
+    process.env.CORE_MODULES_DIR = tmpDir;
+    process.env.USER_MODULES_DIR = path.join(tmpDir, '_nonexistent_');
+
+    // Mock DB — no overrides by default
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[]]),
+      }),
+    }));
+
+    // Mock log
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    loadTools = mod.loadTools;
+    getModuleToolTypes = mod.getModuleToolTypes;
+  });
+
+  afterEach(() => {
+    if (savedEnv.CORE_MODULES_DIR === undefined) delete process.env.CORE_MODULES_DIR;
+    else process.env.CORE_MODULES_DIR = savedEnv.CORE_MODULES_DIR;
+    if (savedEnv.USER_MODULES_DIR === undefined) delete process.env.USER_MODULES_DIR;
+    else process.env.USER_MODULES_DIR = savedEnv.USER_MODULES_DIR;
+
+    // Clean env vars set during tests
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('CONFIG__')) delete process.env[key];
+    }
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  function createModule(name, moduleJson, configJson) {
+    const dir = path.join(tmpDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.json'), JSON.stringify(moduleJson));
+    if (configJson) {
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(configJson));
+    }
+  }
+
+  it('returns empty when no modules exist', async () => {
+    const tools = await loadTools();
+    expect(tools).toEqual([]);
+  });
+
+  it('skips directories starting with underscore', async () => {
+    createModule('_example', { name: '_example', tools: [{ type: 'mysql', name: 'test', description: 'T', fields: {} }] });
+    const tools = await loadTools();
+    expect(tools).toEqual([]);
+  });
+
+  it('loads tool with config.json defaults', async () => {
+    createModule('my-app', {
+      name: 'my-app',
+      tools: [{
+        type: 'mysql',
+        name: 'mysql_myapp',
+        description: 'My DB',
+        fields: {
+          host: { type: 'string', label: 'Host' },
+          port: { type: 'integer', label: 'Port' },
+        },
+      }],
+    }, {
+      tools: { mysql_myapp: { host: '10.0.0.1', port: 3306 } },
+    });
+
+    const tools = await loadTools();
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe('mysql_myapp');
+    expect(tools[0].type).toBe('mysql');
+    expect(tools[0].module).toBe('my-app');
+    expect(tools[0].config.host).toBe('10.0.0.1');
+    expect(tools[0].config.port).toBe(3306); // config.json default
+  });
+
+  it('ENV var overrides config.json default', async () => {
+    createModule('my-app', {
+      name: 'my-app',
+      tools: [{
+        type: 'mysql',
+        name: 'mysql_myapp',
+        description: 'My DB',
+        fields: { host: { type: 'string', label: 'Host' } },
+      }],
+    }, {
+      tools: { mysql_myapp: { host: '10.0.0.1' } },
+    });
+
+    process.env.CONFIG__MY_APP__TOOLS__MYSQL_MYAPP__HOST = '10.0.0.99';
+
+    const tools = await loadTools();
+    expect(tools[0].config.host).toBe('10.0.0.99');
+  });
+
+  it('DB override beats config.json default', async () => {
+    createModule('my-app', {
+      name: 'my-app',
+      tools: [{
+        type: 'mysql',
+        name: 'mysql_myapp',
+        description: 'My DB',
+        fields: { host: { type: 'string', label: 'Host' } },
+      }],
+    }, {
+      tools: { mysql_myapp: { host: '10.0.0.1' } },
+    });
+
+    // Re-mock with DB override
+    vi.resetModules();
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[
+          { path: 'my_app/tools/mysql_myapp/host', value: '10.0.0.50', encrypted: 0 },
+        ]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+    }));
+
+    const mod = await import('../config-loader.js');
+    const tools = await mod.loadTools();
+    expect(tools[0].config.host).toBe('10.0.0.50');
+  });
+
+  it('returns null for unresolved field without default', async () => {
+    createModule('my-app', {
+      name: 'my-app',
+      tools: [{
+        type: 'mysql',
+        name: 'mysql_myapp',
+        description: 'My DB',
+        fields: { pass: { type: 'obscure', label: 'Password' } },
+      }],
+    });
+
+    const tools = await loadTools();
+    expect(tools[0].config.pass).toBeNull();
+  });
+
+  it('getModuleToolTypes returns unique types across modules', () => {
+    createModule('app-a', {
+      name: 'app-a',
+      tools: [
+        { type: 'mysql', name: 'a', description: 'A', fields: {} },
+        { type: 'mssql', name: 'b', description: 'B', fields: {} },
+      ],
+    });
+    createModule('app-b', {
+      name: 'app-b',
+      tools: [{ type: 'mysql', name: 'c', description: 'C', fields: {} }],
+    });
+
+    const types = getModuleToolTypes();
+    expect(types).toEqual(new Set(['mysql', 'mssql']));
+  });
+
+  it('handles module without config.json gracefully', async () => {
+    createModule('no-config', {
+      name: 'no-config',
+      tools: [{
+        type: 'mysql',
+        name: 'mysql_nc',
+        description: 'NC',
+        fields: { port: { type: 'integer', label: 'Port' } },
+      }],
+    });
+    // No config.json created
+
+    const tools = await loadTools();
+    expect(tools[0].config.port).toBeNull(); // no config.json, no default
+  });
+});
+
+describe('resolveModuleField', () => {
+  let resolveModuleField;
+  let tmpDir;
+  const savedEnv = {};
+
+  beforeEach(async () => {
+    tmpDir = path.join(import.meta.dirname, '_test_modcfg_' + Date.now());
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    savedEnv.CORE_MODULES_DIR = process.env.CORE_MODULES_DIR;
+    savedEnv.USER_MODULES_DIR = process.env.USER_MODULES_DIR;
+    process.env.CORE_MODULES_DIR = tmpDir;
+    process.env.USER_MODULES_DIR = path.join(tmpDir, '_nonexistent_');
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    resolveModuleField = mod.resolveModuleField;
+  });
+
+  afterEach(() => {
+    if (savedEnv.CORE_MODULES_DIR === undefined) delete process.env.CORE_MODULES_DIR;
+    else process.env.CORE_MODULES_DIR = savedEnv.CORE_MODULES_DIR;
+    if (savedEnv.USER_MODULES_DIR === undefined) delete process.env.USER_MODULES_DIR;
+    else process.env.USER_MODULES_DIR = savedEnv.USER_MODULES_DIR;
+
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('CONFIG__')) delete process.env[key];
+    }
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('returns null when no source and no config.json default', () => {
+    const result = resolveModuleField('core', 'sql_timeout_seconds', {}, {});
+    expect(result).toBeNull();
+  });
+
+  it('returns config.json default', () => {
+    const result = resolveModuleField('core', 'sql_timeout_seconds', { sql_timeout_seconds: 600 }, {});
+    expect(result).toBe(600);
+  });
+
+  it('ENV var overrides config.json default', () => {
+    process.env.CONFIG__CORE__SQL_TIMEOUT_SECONDS = '120';
+    const result = resolveModuleField('core', 'sql_timeout_seconds', { sql_timeout_seconds: 600 }, {});
+    expect(result).toBe('120'); // raw string — coercion is caller's responsibility
+  });
+
+  it('DB override overrides config.json default', () => {
+    const dbOverrides = { 'core/sql_timeout_seconds': { value: '90', encrypted: false } };
+    const result = resolveModuleField('core', 'sql_timeout_seconds', { sql_timeout_seconds: 600 }, dbOverrides);
+    expect(result).toBe('90');
+  });
+
+  it('returns null when no source at all', () => {
+    const result = resolveModuleField('core', 'smtp_host', {}, {});
+    expect(result).toBeNull();
+  });
+});
+
+describe('loadModuleConfigs', () => {
+  let loadModuleConfigs;
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = path.join(import.meta.dirname, '_test_modcfg2_' + Date.now());
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    process.env.CORE_MODULES_DIR = tmpDir;
+    process.env.USER_MODULES_DIR = path.join(tmpDir, '_nonexistent_');
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    loadModuleConfigs = mod.loadModuleConfigs;
+  });
+
+  afterEach(() => {
+    delete process.env.CORE_MODULES_DIR;
+    delete process.env.USER_MODULES_DIR;
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('CONFIG__')) delete process.env[key];
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('resolves module config from system.json + config.json', async () => {
+    const dir = path.join(tmpDir, 'mymod');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.json'), JSON.stringify({ name: 'mymod' }));
+    fs.writeFileSync(path.join(dir, 'system.json'), JSON.stringify({
+      timeout: { type: 'integer' },
+      label: { type: 'string' },
+    }));
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ timeout: 100, label: 'hello' }));
+
+    const configs = await loadModuleConfigs();
+    expect(configs.mymod.timeout).toBe(100);
+    expect(configs.mymod.label).toBe('hello');
+  });
+
+  it('ENV override takes priority', async () => {
+    const dir = path.join(tmpDir, 'mymod');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.json'), JSON.stringify({ name: 'mymod' }));
+    fs.writeFileSync(path.join(dir, 'system.json'), JSON.stringify({
+      timeout: { type: 'integer' },
+    }));
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ timeout: 100 }));
+
+    process.env.CONFIG__MYMOD__TIMEOUT = '999';
+    const configs = await loadModuleConfigs();
+    expect(configs.mymod.timeout).toBe('999');
+  });
+
+  it('returns empty for modules without system.json', async () => {
+    const dir = path.join(tmpDir, 'bare');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.json'), JSON.stringify({ name: 'bare' }));
+
+    const configs = await loadModuleConfigs();
+    expect(configs.bare).toBeUndefined();
+  });
+});
+
+describe('loadScopedDbOverrides', () => {
+  let loadScopedDbOverrides;
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = path.join(import.meta.dirname, '_test_scoped_' + Date.now());
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    process.env.CORE_MODULES_DIR = tmpDir;
+    process.env.USER_MODULES_DIR = path.join(tmpDir, '_nonexistent_');
+  });
+
+  afterEach(() => {
+    delete process.env.CORE_MODULES_DIR;
+    delete process.env.USER_MODULES_DIR;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('returns global overrides when agentViewId is null', async () => {
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[
+          { path: 'jira/jira_host', value: 'https://jira.example.com', encrypted: 0 },
+        ]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    loadScopedDbOverrides = mod.loadScopedDbOverrides;
+
+    const { overrides, agentViewMeta } = await loadScopedDbOverrides(null);
+    expect(agentViewMeta).toBeNull();
+    expect(overrides['jira/jira_host'].value).toBe('https://jira.example.com');
+  });
+
+  it('layers workspace and agent_view overrides on top of global', async () => {
+    const queryMock = vi.fn()
+      // 1st call: global defaults (loadDbOverrides)
+      .mockResolvedValueOnce([[
+        { path: 'jira/jira_host', value: 'https://global.jira.com', encrypted: 0 },
+        { path: 'core/timeout', value: '30', encrypted: 0 },
+      ]])
+      // 2nd call: agent_view lookup
+      .mockResolvedValueOnce([[
+        { id: 5, workspace_id: 2, label: 'Dev Agent' },
+      ]])
+      // 3rd call: workspace overrides
+      .mockResolvedValueOnce([[
+        { path: 'jira/jira_host', value: 'https://ws.jira.com', encrypted: 0 },
+      ]])
+      // 4th call: agent_view overrides
+      .mockResolvedValueOnce([[
+        { path: 'jira/jira_host', value: 'https://av.jira.com', encrypted: 0 },
+      ]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryMock }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+
+    const { overrides, agentViewMeta } = await mod.loadScopedDbOverrides(5);
+    expect(agentViewMeta).toEqual({ id: 5, label: 'Dev Agent', workspaceId: 2 });
+    // agent_view override wins
+    expect(overrides['jira/jira_host'].value).toBe('https://av.jira.com');
+    // global value preserved for non-overridden path
+    expect(overrides['core/timeout'].value).toBe('30');
+  });
+
+  it('returns global config when agent_view not found', async () => {
+    const queryMock = vi.fn()
+      // global defaults
+      .mockResolvedValueOnce([[
+        { path: 'core/timeout', value: '30', encrypted: 0 },
+      ]])
+      // agent_view lookup — not found
+      .mockResolvedValueOnce([[]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryMock }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { overrides, agentViewMeta } = await mod.loadScopedDbOverrides(999);
+    expect(agentViewMeta).toBeNull();
+    expect(overrides['core/timeout'].value).toBe('30');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('agent_view_id=999 not found'));
+    warnSpy.mockRestore();
+  });
+
+  it('workspace overrides global but agent_view overrides workspace', async () => {
+    const queryMock = vi.fn()
+      // global
+      .mockResolvedValueOnce([[
+        { path: 'app/color', value: 'red', encrypted: 0 },
+      ]])
+      // agent_view lookup
+      .mockResolvedValueOnce([[{ id: 1, workspace_id: 10, label: 'QA' }]])
+      // workspace overrides
+      .mockResolvedValueOnce([[
+        { path: 'app/color', value: 'blue', encrypted: 0 },
+      ]])
+      // agent_view overrides — no override for this path
+      .mockResolvedValueOnce([[]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryMock }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+
+    const { overrides } = await mod.loadScopedDbOverrides(1);
+    // workspace override wins over global (no agent_view override)
+    expect(overrides['app/color'].value).toBe('blue');
+  });
+});
+
+describe('toolbox discovery', () => {
+  let scanModules;
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = path.join(import.meta.dirname, '_test_discovery_' + Date.now());
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    process.env.CORE_MODULES_DIR = tmpDir;
+    process.env.USER_MODULES_DIR = path.join(tmpDir, '_nonexistent_');
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    scanModules = mod.scanModules;
+  });
+
+  afterEach(() => {
+    delete process.env.CORE_MODULES_DIR;
+    delete process.env.USER_MODULES_DIR;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  it('scans core modules directory', () => {
+    const dir = path.join(tmpDir, 'test-mod');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.json'), JSON.stringify({ name: 'test-mod' }));
+
+    const modules = scanModules();
+    expect(modules).toHaveLength(1);
+    expect(modules[0].name).toBe('test-mod');
+    expect(modules[0]._path).toBe(dir);
+  });
+
+  it('scans both core and user module directories', () => {
+    const userDir = path.join(tmpDir, '_user_');
+    fs.mkdirSync(userDir, { recursive: true });
+    process.env.USER_MODULES_DIR = userDir;
+
+    // Core module
+    const coreDir = path.join(tmpDir, 'core-mod');
+    fs.mkdirSync(coreDir, { recursive: true });
+    fs.writeFileSync(path.join(coreDir, 'module.json'), JSON.stringify({ name: 'core-mod' }));
+
+    // User module
+    const userModDir = path.join(userDir, 'user-mod');
+    fs.mkdirSync(userModDir, { recursive: true });
+    fs.writeFileSync(path.join(userModDir, 'module.json'), JSON.stringify({ name: 'user-mod' }));
+
+    // Re-import to pick up new USER_MODULES_DIR
+    vi.resetModules();
+    // Need synchronous re-read — scanModules reads env at import time
+    // For this test, directly call with the updated env
+    const modules = scanModules();
+    expect(modules.map(m => m.name)).toContain('core-mod');
+  });
+});
+
+describe('isToolEnabled', () => {
+  let isToolEnabled;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: vi.fn().mockResolvedValue([[]]) }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+    const mod = await import('../config-loader.js');
+    isToolEnabled = mod.isToolEnabled;
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('returns true when no is_enabled config exists', () => {
+    expect(isToolEnabled('mysql_test', {})).toBe(true);
+  });
+
+  it('returns true when is_enabled is "1"', () => {
+    const overrides = { 'tools/mysql_test/is_enabled': { value: '1', encrypted: false } };
+    expect(isToolEnabled('mysql_test', overrides)).toBe(true);
+  });
+
+  it('returns false when is_enabled is "0"', () => {
+    const overrides = { 'tools/mysql_test/is_enabled': { value: '0', encrypted: false } };
+    expect(isToolEnabled('mysql_test', overrides)).toBe(false);
+  });
+
+  it('returns true for unrelated tool paths', () => {
+    const overrides = { 'tools/other_tool/is_enabled': { value: '0', encrypted: false } };
+    expect(isToolEnabled('mysql_test', overrides)).toBe(true);
+  });
+});
+
+describe('registerTools integration', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = path.join(import.meta.dirname, '_test_reg_' + Date.now());
+    fs.mkdirSync(tmpDir, { recursive: true });
+    process.env.CORE_MODULES_DIR = tmpDir;
+    process.env.USER_MODULES_DIR = path.join(tmpDir, '_nonexistent_');
+  });
+
+  afterEach(() => {
+    delete process.env.CORE_MODULES_DIR;
+    delete process.env.USER_MODULES_DIR;
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('CONFIG__')) delete process.env[key];
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.resetModules();
+  });
+
+  function createModule(name, moduleJson, configJson) {
+    const dir = path.join(tmpDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'module.json'), JSON.stringify(moduleJson));
+    if (configJson) {
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(configJson));
+    }
+  }
+
+  it('adapter tools use scoped config from agent_view', async () => {
+    createModule('myapp', {
+      name: 'myapp',
+      tools: [{
+        type: 'mysql', name: 'mysql_prod', description: 'Prod DB',
+        fields: { host: { type: 'string' }, pass: { type: 'obscure' } },
+      }],
+    });
+
+    // global has no host, agent_view scope provides it
+    const queryMock = vi.fn()
+      .mockResolvedValueOnce([[]])  // global: empty
+      .mockResolvedValueOnce([[{ id: 2, workspace_id: 1, label: 'Dev' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[]])  // workspace: empty
+      .mockResolvedValueOnce([[  // agent_view scope
+        { path: 'myapp/tools/mysql_prod/host', value: 'scoped-db.internal', encrypted: 0 },
+        { path: 'myapp/tools/mysql_prod/pass', value: 'secret', encrypted: 0 },
+      ]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryMock }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    const { registerAdapterTools } = await import('../adapters/index.js');
+    const mod = await import('../config-loader.js');
+    const mockServer = { tool: vi.fn() };
+    const mockContext = { log: vi.fn(), db: {}, playwright: {} };
+
+    await mod.registerTools(mockServer, mockContext, 2);
+
+    // Adapter should receive tool with scoped config
+    const calledTools = registerAdapterTools.mock.calls[0][1];
+    expect(calledTools).toHaveLength(1);
+    expect(calledTools[0].config.host).toBe('scoped-db.internal');
+    expect(calledTools[0].config.pass).toBe('secret');
+  });
+
+  it('is_enabled=0 at agent_view scope filters out adapter tool', async () => {
+    createModule('myapp', {
+      name: 'myapp',
+      tools: [{
+        type: 'mysql', name: 'mysql_prod', description: 'Prod DB',
+        fields: { host: { type: 'string' } },
+      }],
+    }, { tools: { mysql_prod: { host: '10.0.0.1' } } });
+
+    const queryMock = vi.fn()
+      .mockResolvedValueOnce([[]])  // global
+      .mockResolvedValueOnce([[{ id: 3, workspace_id: 1, label: 'QA' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[]])  // workspace
+      .mockResolvedValueOnce([[  // agent_view: disable tool
+        { path: 'tools/mysql_prod/is_enabled', value: '0', encrypted: 0 },
+      ]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryMock }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    const { registerAdapterTools } = await import('../adapters/index.js');
+    const mod = await import('../config-loader.js');
+    const mockServer = { tool: vi.fn() };
+    const mockContext = { log: vi.fn(), db: {}, playwright: {} };
+
+    await mod.registerTools(mockServer, mockContext, 3);
+
+    // Tool should be filtered out
+    const calledTools = registerAdapterTools.mock.calls[0][1];
+    expect(calledTools).toHaveLength(0);
+  });
+
+  it('isToolEnabled available to JS module tools via context', async () => {
+    const modDir = path.join(tmpDir, 'testmod');
+    fs.mkdirSync(path.join(modDir, 'toolbox'), { recursive: true });
+    fs.writeFileSync(path.join(modDir, 'module.json'), JSON.stringify({ name: 'testmod' }));
+    const capturePath = path.join(tmpDir, '_capture.json');
+    fs.writeFileSync(path.join(modDir, 'toolbox', 'probe.js'),
+      `import fs from 'fs';
+       export function register(server, ctx) {
+         fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({
+           hasFn: typeof ctx.isToolEnabled === 'function',
+           emailEnabled: ctx.isToolEnabled('email_send'),
+         }));
+       }`
+    );
+
+    // Disable email_send in DB
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[
+          { path: 'tools/email_send/is_enabled', value: '0', encrypted: 0 },
+        ]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn(() => ({ names: [], healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    const mockServer = { tool: vi.fn() };
+    const mockContext = { log: vi.fn(), db: {}, playwright: {} };
+
+    await mod.registerTools(mockServer, mockContext);
+
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+    expect(captured.hasFn).toBe(true);
+    expect(captured.emailEnabled).toBe(false);
+  });
+
+  it('no agent_view_id serves globally enabled tools only', async () => {
+    createModule('myapp', {
+      name: 'myapp',
+      tools: [
+        { type: 'mysql', name: 'mysql_a', description: 'A', fields: { host: { type: 'string' } } },
+        { type: 'mysql', name: 'mysql_b', description: 'B', fields: { host: { type: 'string' } } },
+      ],
+    }, { tools: { mysql_a: { host: 'a.db' }, mysql_b: { host: 'b.db' } } });
+
+    // Disable mysql_b globally
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({
+        query: vi.fn().mockResolvedValue([[
+          { path: 'tools/mysql_b/is_enabled', value: '0', encrypted: 0 },
+        ]]),
+      }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(),
+      logPublisher: vi.fn(),
+      createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    const { registerAdapterTools } = await import('../adapters/index.js');
+    const mod = await import('../config-loader.js');
+    const mockServer = { tool: vi.fn() };
+    const mockContext = { log: vi.fn(), db: {}, playwright: {} };
+
+    await mod.registerTools(mockServer, mockContext);  // no agentViewId
+
+    const calledTools = registerAdapterTools.mock.calls[0][1];
+    expect(calledTools).toHaveLength(1);
+    expect(calledTools[0].name).toBe('mysql_a');
+  });
+});

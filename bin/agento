@@ -1,0 +1,305 @@
+#!/bin/bash
+# bin/agento — Development convenience wrapper
+#
+# Delegates to the Python CLI (agento.framework.cli).
+# For production use: install via 'uv tool install agento' and run 'agento' directly.
+#
+# The legacy 'install' command is kept here for backward compatibility.
+# It will be replaced by 'agento init' + 'agento up' in a future release.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPOSE_DIR="$PROJECT_DIR/docker"
+COMPOSE="docker compose -f $COMPOSE_DIR/docker-compose.yml"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log_info()  { echo -e "${GREEN}[agento]${NC} $*"; }
+log_warn()  { echo -e "${YELLOW}[agento]${NC} $*"; }
+log_error() { echo -e "${RED}[agento]${NC} $*" >&2; }
+
+# ─── Template rendering ───
+
+render_template() {
+  local template="$1"
+  local output="$2"
+  shift 2
+
+  if [ ! -f "$template" ]; then
+    log_error "Template not found: $template"
+    exit 1
+  fi
+
+  cp "$template" "$output"
+
+  # Apply replacements: pairs of (placeholder, value)
+  while [ $# -ge 2 ]; do
+    local placeholder="$1"
+    local value="$2"
+    shift 2
+    # Use | as sed delimiter to avoid issues with / in values
+    sed -i.bak "s|${placeholder}|${value}|g" "$output"
+  done
+
+  rm -f "${output}.bak"
+}
+
+# ─── Legacy install command (deprecated — use 'agento init' + 'agento up') ───
+
+cmd_install() {
+  local agent_email=""
+  local agent_role="Senior Developer"
+  local jira_host=""
+  local jira_projects=""
+  local jira_assignee=""
+  local jira_assignee_id=""
+  local jira_status="To Do"
+  local jira_frequency_field="customfield_10709"
+  local timezone="UTC"
+  local skip_build=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --agent-email=*)    agent_email="${1#*=}" ;;
+      --agent-role=*)     agent_role="${1#*=}" ;;
+      --jira-host=*)      jira_host="${1#*=}" ;;
+      --jira-projects=*)  jira_projects="${1#*=}" ;;
+      --jira-assignee=*)  jira_assignee="${1#*=}" ;;
+      --jira-assignee-id=*) jira_assignee_id="${1#*=}" ;;
+      --jira-status=*)    jira_status="${1#*=}" ;;
+      --jira-frequency-field=*) jira_frequency_field="${1#*=}" ;;
+      --timezone=*)       timezone="${1#*=}" ;;
+      --skip-build)       skip_build=1 ;;
+      --help)
+        cat <<'HELPEOF'
+Usage: bin/agento install [options]
+
+DEPRECATED: Use 'agento init' + 'agento up' instead.
+
+Required:
+  --agent-email=EMAIL           Agent email (used as MCP tool credential)
+  --jira-host=URL               Jira instance URL (e.g. https://mycompany.atlassian.net)
+  --jira-projects=CSV           Jira project keys, comma-separated (e.g. AI,DEV)
+
+Optional:
+  --agent-role=ROLE             Agent role description (default: "Senior Developer")
+  --jira-assignee=EMAIL         Agent's Jira account email (default: same as agent-email)
+  --jira-assignee-id=ID         Agent's Jira account ID (atlassian accountId)
+  --jira-status=STATUS          Jira status for recurring tasks (default: "To Do")
+  --jira-frequency-field=FIELD  Custom field ID for frequency (default: customfield_10709)
+  --timezone=TZ                 Timezone (default: UTC)
+  --skip-build                  Skip Docker image build
+HELPEOF
+        exit 0
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  # Validate required params
+  local missing=0
+  if [ -z "$agent_email" ]; then log_error "Missing --agent-email"; missing=1; fi
+  if [ -z "$jira_host" ]; then log_error "Missing --jira-host"; missing=1; fi
+  if [ -z "$jira_projects" ]; then log_error "Missing --jira-projects"; missing=1; fi
+  if [ $missing -eq 1 ]; then
+    echo ""
+    log_info "Run 'bin/agento install --help' for usage."
+    exit 1
+  fi
+
+  # Defaults
+  if [ -z "$jira_assignee" ]; then
+    jira_assignee="$agent_email"
+  fi
+
+  # Check Docker prerequisites
+  if ! command -v docker &>/dev/null; then
+    log_error "docker not found. Install Docker: https://docs.docker.com/get-docker/"
+    exit 1
+  fi
+  if ! docker compose version &>/dev/null 2>&1; then
+    log_error "docker compose not found. Install Docker Compose V2."
+    exit 1
+  fi
+
+  log_info "Starting Agento installation..."
+  log_warn "This command is deprecated. Use 'agento init' + 'agento up' for new projects."
+
+  # Step 1: Create directories
+  log_info "Creating directories..."
+  mkdir -p "$PROJECT_DIR/workspace/systems"
+  mkdir -p "$PROJECT_DIR/workspace/tmp"
+  mkdir -p "$PROJECT_DIR/workspace/app"
+  mkdir -p "$PROJECT_DIR/logs"
+  mkdir -p "$PROJECT_DIR/tokens"
+  mkdir -p "$PROJECT_DIR/storage"
+
+  # Step 2: Generate SOUL.md
+  log_info "Generating workspace/SOUL.md..."
+  render_template \
+    "$PROJECT_DIR/workspace/SOUL.md.template" \
+    "$PROJECT_DIR/workspace/SOUL.md" \
+    "{{AGENT_EMAIL}}" "$agent_email" \
+    "{{AGENT_ROLE}}" "$agent_role"
+
+  # Step 3: Generate .cron.env with module config
+  log_info "Generating docker/.cron.env..."
+
+  # Convert CSV to JSON array: "AI,K3" -> ["AI", "K3"]
+  local jira_projects_json
+  jira_projects_json=$(echo "$jira_projects" | awk -F',' '{
+    printf "["
+    for (i=1; i<=NF; i++) {
+      gsub(/^ +| +$/, "", $i)
+      printf "\"%s\"", $i
+      if (i < NF) printf ", "
+    }
+    printf "]"
+  }')
+
+  cat > "$PROJECT_DIR/docker/.cron.env" <<CRONENV
+DISABLE_LLM=0
+
+# Jira module config (resolved via 4-level fallback: CONFIG__ env → DB → config.json → default)
+# NOTE: JSON values (jira_projects, frequency_map) are set via DB after migrations.
+CONFIG__JIRA__USER=${agent_email}
+CONFIG__JIRA__JIRA_STATUS=${jira_status}
+CONFIG__JIRA__JIRA_FREQUENCY_FIELD=${jira_frequency_field}
+CONFIG__JIRA__JIRA_ASSIGNEE=${jira_assignee}
+CONFIG__JIRA__JIRA_ASSIGNEE_ACCOUNT_ID=${jira_assignee_id}
+CRONENV
+
+  # Step 4: Generate AGENTS.md
+  log_info "Generating workspace/AGENTS.md..."
+  uv run agento _generate-agents-md 2>/dev/null || true
+
+  # Step 5: Check secrets.env
+  local secrets_path="$PROJECT_DIR/../secrets.env"
+  if [ ! -f "$secrets_path" ]; then
+    if [ -f "$PROJECT_DIR/secrets.env" ]; then
+      secrets_path="$PROJECT_DIR/secrets.env"
+    else
+      log_warn "secrets.env not found. Copying template..."
+      cp "$PROJECT_DIR/secrets.env.example" "$secrets_path"
+      log_warn "Please edit $secrets_path and fill in your credentials."
+    fi
+  fi
+
+  # Step 6: Generate AGENTO_ENCRYPTION_KEY if not present
+  if ! grep -q "^AGENTO_ENCRYPTION_KEY=" "$secrets_path" 2>/dev/null; then
+    local enc_key
+    enc_key=$(openssl rand -hex 32)
+    echo "" >> "$secrets_path"
+    echo "# Encryption key for core_config_data obscure fields" >> "$secrets_path"
+    echo "AGENTO_ENCRYPTION_KEY=$enc_key" >> "$secrets_path"
+    log_info "Generated AGENTO_ENCRYPTION_KEY in secrets.env"
+  fi
+
+  # Step 7: Add JIRA_HOST to secrets.env if not present
+  if ! grep -q "^JIRA_HOST=" "$secrets_path" 2>/dev/null; then
+    echo "" >> "$secrets_path"
+    echo "# Jira instance URL" >> "$secrets_path"
+    echo "JIRA_HOST=$jira_host" >> "$secrets_path"
+    log_info "Added JIRA_HOST to secrets.env"
+  fi
+
+  # Step 8: Build Docker images
+  if [ $skip_build -eq 0 ]; then
+    log_info "Building Docker images..."
+    (cd "$COMPOSE_DIR" && docker compose build)
+  else
+    log_info "Skipping Docker build (--skip-build)"
+  fi
+
+  # Step 9: Start containers
+  log_info "Starting containers..."
+  (cd "$COMPOSE_DIR" && docker compose up -d cron)
+
+  # Step 10: Wait for MySQL to be ready
+  log_info "Waiting for MySQL..."
+  local retries=30
+  while [ $retries -gt 0 ]; do
+    if $COMPOSE exec -T mysql mysqladmin ping -h localhost --silent 2>/dev/null; then
+      break
+    fi
+    retries=$((retries - 1))
+    sleep 2
+  done
+
+  if [ $retries -eq 0 ]; then
+    log_warn "MySQL may not be ready yet. Continuing anyway..."
+  fi
+
+  # Step 11: Run migrations
+  log_info "Running migrations..."
+  $COMPOSE exec -T cron /opt/cron-agent/run.sh migrate || true
+
+  # Step 12: Set JSON config values via DB
+  log_info "Setting Jira config in database..."
+  $COMPOSE exec -T cron /opt/cron-agent/run.sh config-set jira/jira_projects "$jira_projects_json" || true
+
+  # Step 13: Reindex modules
+  log_info "Running reindex..."
+  uv run agento reindex 2>/dev/null || true
+
+  # Done!
+  echo ""
+  log_info "========================================="
+  log_info " Agento installation complete!"
+  log_info "========================================="
+  echo ""
+  echo -e "${CYAN}Next steps:${NC}"
+  echo ""
+  echo "  1. Edit secrets.env with your credentials:"
+  echo "     - JIRA_USER, JIRA_TOKEN"
+  echo "     - SMTP settings (optional)"
+  echo "     - Database passwords (per system)"
+  echo ""
+  echo "  2. Add modules:"
+  echo "     bin/agento module:add my-app \\"
+  echo "       --description='My Application' \\"
+  echo "       --tool mysql:mysql_myapp_prod:'My App Production DB'"
+  echo ""
+  echo "  3. Set credentials:"
+  echo "     bin/agento config:set my_app/tools/mysql_myapp_prod/pass secret123"
+  echo ""
+  echo "  4. Register agent tokens:"
+  echo "     bin/agento token register claude my-token"
+  echo "     bin/agento token set claude 1"
+  echo ""
+  echo "  5. Verify:"
+  echo "     bin/agento token list"
+  echo "     bin/agento migrate --dry-run"
+  echo ""
+}
+
+# ─── Main dispatch ───
+
+if [ $# -eq 0 ]; then
+  # Delegate to Python CLI help
+  exec uv run agento --help
+fi
+
+command="$1"
+
+case "$command" in
+  install)
+    shift
+    cmd_install "$@"
+    ;;
+  *)
+    # Delegate everything to Python CLI
+    exec uv run agento "$@"
+    ;;
+esac

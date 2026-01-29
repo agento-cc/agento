@@ -1,0 +1,147 @@
+"""Module validation — checks module structure and manifest integrity."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+REQUIRED_MANIFEST_FIELDS = {"name", "version", "description"}
+VALID_FIELD_TYPES = {"string", "integer", "boolean", "obscure", "select", "multiselect", "json"}
+
+
+def _resolve_class_path(module_dir: Path, class_path: str) -> bool:
+    """Check if a di.json/events.json class path resolves to an existing .py file.
+
+    Class path format: 'src.commands.hello.HelloCommand'
+    -> check if {module_dir}/src/commands/hello.py exists.
+    """
+    parts = class_path.rsplit(".", 1)
+    if len(parts) < 2:
+        return False
+    module_path = parts[0]
+    file_path = module_dir / (module_path.replace(".", "/") + ".py")
+    return file_path.is_file()
+
+
+def validate_module(module_dir: Path) -> list[str]:
+    """Validate a module directory structure and manifests.
+
+    Returns list of error messages (empty = valid).
+    """
+    errors: list[str] = []
+    module_dir = Path(module_dir)
+
+    # module.json
+    manifest_path = module_dir / "module.json"
+    if not manifest_path.is_file():
+        errors.append("module.json not found")
+        return errors
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as e:
+        errors.append(f"module.json: invalid JSON — {e}")
+        return errors
+
+    if not isinstance(manifest, dict):
+        errors.append("module.json: must be a JSON object")
+        return errors
+
+    for field in REQUIRED_MANIFEST_FIELDS:
+        if field not in manifest:
+            errors.append(f"module.json: missing required field '{field}'")
+
+    # Validate tools
+    tools = manifest.get("tools", [])
+    if not isinstance(tools, list):
+        errors.append("module.json: 'tools' must be an array")
+    else:
+        for i, tool in enumerate(tools):
+            if not isinstance(tool, dict):
+                errors.append(f"module.json: tools[{i}] must be an object")
+                continue
+            for tf in ("type", "name", "description"):
+                if tf not in tool:
+                    errors.append(f"module.json: tools[{i}] missing '{tf}'")
+
+    # di.json
+    di_path = module_dir / "di.json"
+    if di_path.is_file():
+        try:
+            di = json.loads(di_path.read_text())
+        except json.JSONDecodeError as e:
+            errors.append(f"di.json: invalid JSON — {e}")
+            di = None
+
+        if di is not None and isinstance(di, dict):
+            for section in ("channels", "workflows", "commands"):
+                for entry in di.get(section, []):
+                    if isinstance(entry, dict) and "class" in entry and not _resolve_class_path(module_dir, entry["class"]):
+                        errors.append(
+                            f"di.json: {section} class '{entry['class']}' does not resolve to a .py file"
+                        )
+
+    # events.json
+    events_path = module_dir / "events.json"
+    if events_path.is_file():
+        try:
+            events = json.loads(events_path.read_text())
+        except json.JSONDecodeError as e:
+            errors.append(f"events.json: invalid JSON — {e}")
+            events = None
+
+        if events is not None and isinstance(events, dict):
+            # events.json format: {event_name: [observer_dicts]} or {"observers": [observer_dicts]}
+            for _event_name, observer_list in events.items():
+                if not isinstance(observer_list, list):
+                    continue
+                for observer in observer_list:
+                    if isinstance(observer, dict) and "class" in observer and not _resolve_class_path(module_dir, observer["class"]):
+                        errors.append(
+                            f"events.json: observer class '{observer['class']}' does not resolve to a .py file"
+                        )
+
+    # config.json
+    config_path = module_dir / "config.json"
+    if config_path.is_file():
+        try:
+            json.loads(config_path.read_text())
+        except json.JSONDecodeError as e:
+            errors.append(f"config.json: invalid JSON — {e}")
+
+    # system.json
+    system_path = module_dir / "system.json"
+    if system_path.is_file():
+        try:
+            system = json.loads(system_path.read_text())
+        except json.JSONDecodeError as e:
+            errors.append(f"system.json: invalid JSON — {e}")
+            system = None
+
+        if system is not None and isinstance(system, dict):
+            for field_name, field_def in system.items():
+                if isinstance(field_def, dict) and "type" in field_def and field_def["type"] not in VALID_FIELD_TYPES:
+                    errors.append(
+                        f"system.json: field '{field_name}' has invalid type '{field_def['type']}'"
+                    )
+
+    return errors
+
+
+def validate_all(core_dir: Path, user_dir: Path) -> dict[str, list[str]]:
+    """Validate all modules in core and user directories.
+
+    Returns dict of {module_name: [errors]} for modules with errors.
+    """
+    results: dict[str, list[str]] = {}
+
+    for scan_dir in (core_dir, user_dir):
+        if not scan_dir.is_dir():
+            continue
+        for entry in sorted(scan_dir.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("_") or entry.name.startswith("."):
+                continue
+            errors = validate_module(entry)
+            if errors:
+                results[entry.name] = errors
+
+    return results

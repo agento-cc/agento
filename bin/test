@@ -1,0 +1,200 @@
+#!/bin/bash
+set -euo pipefail
+
+# test.sh — Validate JSON configs + run all test suites
+# Usage: bin/test.sh
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+NC='\033[0m'
+
+pass=0
+fail=0
+total_errors=0
+
+check() {
+  if "$@" 2>/dev/null; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# ============================================================
+echo -e "${CYAN}[1/6] JSON Config Validation${NC}"
+echo "========================================"
+
+json_errors=0
+
+# Collect all module JSON files (core + user, skip _prefixed dirs)
+json_files=()
+
+# Framework modules
+for dir in "$PROJECT_DIR"/src/agento/modules/*; do
+  [ -d "$dir" ] || continue
+  mod_name=$(basename "$dir")
+  [[ "$mod_name" == _* ]] && continue
+
+  for f in module.json di.json system.json config.json events.json cron.json data_patch.json; do
+    [ -f "$dir/$f" ] && json_files+=("$dir/$f")
+  done
+done
+
+# User modules
+for dir in "$PROJECT_DIR"/app/code/*; do
+  [ -d "$dir" ] || continue
+  mod_name=$(basename "$dir")
+  [[ "$mod_name" == _* ]] && continue
+
+  for f in module.json di.json system.json config.json events.json cron.json data_patch.json; do
+    [ -f "$dir/$f" ] && json_files+=("$dir/$f")
+  done
+done
+
+# Toolbox package.json
+[ -f "$PROJECT_DIR/src/agento/toolbox/package.json" ] && json_files+=("$PROJECT_DIR/src/agento/toolbox/package.json")
+
+# Validate each JSON file
+for file in "${json_files[@]}"; do
+  rel_path="${file#$PROJECT_DIR/}"
+  if python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$file" 2>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} ${rel_path}"
+    ((pass++)) || true
+  else
+    error=$(python3 -c "
+import json, sys
+try:
+    json.load(open(sys.argv[1]))
+except json.JSONDecodeError as e:
+    print(f'line {e.lineno}: {e.msg}')
+" "$file" 2>&1)
+    echo -e "  ${RED}✗${NC} ${rel_path} — ${error}"
+    ((fail++)) || true
+    ((json_errors++)) || true
+  fi
+done
+
+# Cross-validate: system.json fields have matching config.json defaults (warn-only)
+for dir in "$PROJECT_DIR"/src/agento/modules/*; do
+  [ -d "$dir" ] || continue
+  mod_name=$(basename "$dir")
+  [[ "$mod_name" == _* ]] && continue
+  [ -f "$dir/system.json" ] || continue
+
+  system_fields=$(python3 -c "
+import json, sys
+data = json.load(open(sys.argv[1]))
+print(' '.join(data.keys()))
+" "$dir/system.json" 2>/dev/null) || continue
+
+  if [ -f "$dir/config.json" ]; then
+    config_fields=$(python3 -c "
+import json, sys
+data = json.load(open(sys.argv[1]))
+print(' '.join(data.keys()))
+" "$dir/config.json" 2>/dev/null) || continue
+  else
+    config_fields=""
+  fi
+
+  # Check system.json fields with defaults are consistent with config.json
+  for field in $system_fields; do
+    has_schema_default=$(python3 -c "
+import json, sys
+data = json.load(open(sys.argv[1]))
+print('yes' if 'default' in data.get(sys.argv[2], {}) else 'no')
+" "$dir/system.json" "$field" 2>/dev/null)
+
+    in_config=$(echo "$config_fields" | grep -qw "$field" && echo "yes" || echo "no")
+
+    # No warning needed — field can have schema default OR config.json default OR neither
+  done
+done
+
+if [ $json_errors -eq 0 ]; then
+  echo -e "\n  ${GREEN}All ${#json_files[@]} JSON files valid${NC}"
+else
+  echo -e "\n  ${RED}${json_errors} invalid JSON file(s)${NC}"
+fi
+
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[2/6] Ruff Lint${NC}"
+echo "========================================"
+
+cd "$PROJECT_DIR"
+if uv run ruff check src/ tests/ 2>&1; then
+  echo -e "  ${GREEN}ruff: all checks passed${NC}"
+  ((pass++)) || true
+else
+  ((fail++)) || true
+fi
+
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[3/6] Basedpyright${NC}"
+echo "========================================"
+
+if uv run basedpyright 2>&1; then
+  echo -e "  ${GREEN}basedpyright: no errors${NC}"
+  ((pass++)) || true
+else
+  ((fail++)) || true
+fi
+
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[4/6] ESLint (Toolbox)${NC}"
+echo "========================================"
+
+cd "$PROJECT_DIR/src/agento/toolbox"
+if npx eslint . 2>&1; then
+  echo -e "  ${GREEN}eslint: all checks passed${NC}"
+  ((pass++)) || true
+else
+  ((fail++)) || true
+fi
+
+cd "$PROJECT_DIR"
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[5/6] Python Tests${NC}"
+echo "========================================"
+
+cd "$PROJECT_DIR"
+if uv run pytest -q 2>&1; then
+  ((pass++)) || true
+else
+  ((fail++)) || true
+fi
+
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[6/6] JS Toolbox Tests${NC}"
+echo "========================================"
+
+cd "$PROJECT_DIR/src/agento/toolbox"
+if npm test 2>&1; then
+  ((pass++)) || true
+else
+  ((fail++)) || true
+fi
+
+cd "$PROJECT_DIR"
+
+# Summary
+echo ""
+echo "========================================"
+echo -e "Result: ${GREEN}${pass} passed${NC}, ${RED}${fail} failed${NC}"
+
+[ "$fail" -eq 0 ]

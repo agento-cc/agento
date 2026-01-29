@@ -1,0 +1,7 @@
+{
+  "name": "codex",
+  "version": "1.0.0",
+  "description": "OpenAI Codex runtime",
+  "sequence": [],
+  "order": 200
+}

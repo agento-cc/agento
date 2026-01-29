@@ -1,0 +1,59 @@
+# Docker Containers
+
+Four containers on the `agento-net` bridge network.
+
+## Services
+
+| Service | Image | Role | Language |
+|---------|-------|------|----------|
+| **cron** | agento-cron | Job consumer + cron scheduler + Python CLI | Python |
+| **toolbox** | agento-toolbox | MCP server — credential broker, tool execution | Node.js |
+| **mysql** | mysql:8.0 | Job queue DB (`cron_agent`) | — |
+| **sandbox** | agento-sandbox | Interactive agent execution (ad-hoc) | Python |
+
+## Volume Mounts
+
+### Shared
+
+| Mount | Containers | Access | Purpose |
+|-------|-----------|--------|---------|
+| `modules/` | cron, toolbox, sandbox | read-only | Module manifests + config.json |
+| `logs/` | cron, toolbox | read-write | Structured JSON logs |
+
+### Agent-Only (cron + sandbox)
+
+| Mount | Purpose |
+|-------|---------|
+| `workspace/` | Agent workspace — AGENTS.md, SOUL.md, systems/, app/, tmp/ |
+| `tokens/` | OAuth credentials (Claude, Codex) |
+| `id_rsa` | SSH key for git operations |
+
+### Toolbox-Only
+
+| Mount | Purpose |
+|-------|---------|
+| `modules/core/` | Core module toolbox JS (`src/agento/modules/`) |
+| `modules/user/` | User module toolbox JS (`app/code/`) |
+| `workspace/tmp/` | Module-created temp dirs (jira attachments, screenshots, etc.) |
+
+## Key Environment Variables
+
+### Toolbox
+- `CRONDB_*` — MySQL connection (job queue DB)
+- `JIRA_HOST`, `JIRA_USER`, `JIRA_TOKEN` — Jira API (from secrets.env)
+- `SMTP_*` — Email sending
+- `AGENTO_ENCRYPTION_KEY` — Decrypt core_config_data secrets
+- `CONFIG__*` — Config overrides (highest priority)
+
+### Cron
+- `MYSQL_*` — MySQL connection
+- `DISABLE_LLM` — Skip LLM calls (testing)
+- `AGENTO_ENCRYPTION_KEY` — Encrypt config:set values
+
+## Network
+
+All containers communicate on `agento-net` (bridge). DNS names match service names: `toolbox`, `mysql`.
+
+Agent connects to Toolbox via MCP/SSE at `http://toolbox:3001/sse` (configured in `workspace/.mcp.json`).
+
+Source: [docker/docker-compose.yml](../../docker/docker-compose.yml)

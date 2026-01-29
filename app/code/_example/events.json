@@ -1,0 +1,23 @@
+{
+  "job_failed": [
+    {"name": "example_job_failed", "class": "src.observers.JobFailedObserver"}
+  ],
+  "job_succeeded": [
+    {"name": "example_job_succeeded", "class": "src.observers.JobSucceededObserver"}
+  ],
+  "module_register": [
+    {"name": "example_register", "class": "src.observers.ModuleRegisterObserver"}
+  ],
+  "module_ready": [
+    {"name": "example_ready", "class": "src.observers.ModuleReadyObserver"}
+  ],
+  "module_shutdown": [
+    {"name": "example_shutdown", "class": "src.observers.ModuleShutdownObserver"}
+  ],
+  "agento_config_saved": [
+    {"name": "example_config_saved", "class": "src.observers.ConfigSavedObserver"}
+  ],
+  "agento_setup_complete": [
+    {"name": "example_setup_complete", "class": "src.observers.SetupCompleteObserver"}
+  ]
+}

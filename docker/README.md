@@ -1,0 +1,456 @@
+# AI Sandbox Docker
+
+Containerized environment for running AI coding assistants.
+
+> For framework-level documentation (modules, config, CLI, architecture), see [docs/](../docs/).
+
+## Quick Start
+
+```bash
+bin/run-sandbox.sh              # Interactive bash
+bin/run-sandbox.sh claude       # Claude Code
+bin/run-sandbox.sh codex        # OpenAI Codex
+```
+
+## Build
+
+The `bin/run-sandbox.sh` script automatically detects your UID/GID and builds the image accordingly.
+This ensures file permissions work correctly across different systems (macOS, Linux VPS, etc.).
+
+```bash
+# Automatic build (recommended) - uses your current user's UID/GID
+bin/run-sandbox.sh
+
+# Manual build with explicit UID/GID
+cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build sandbox
+```
+
+### Rebuilding for a Different User
+
+If you switch users or deploy to a new server, force a rebuild:
+
+```bash
+docker rmi agento-sandbox:latest agento-sandbox:uid-*
+bin/run-sandbox.sh
+```
+
+## Usage Examples
+
+### Claude Code
+
+```bash
+bin/run-sandbox.sh claude                                    # Interactive
+bin/run-sandbox.sh claude -p "explain this code"             # One-shot prompt
+bin/run-sandbox.sh claude --allowedTools "Bash,Read,Edit"    # Skip approvals
+bin/run-sandbox.sh claude --dangerously-skip-permissions     # Full auto mode
+```
+
+### OpenAI Codex
+
+```bash
+bin/run-sandbox.sh codex                                     # Interactive
+bin/run-sandbox.sh codex "refactor this function"            # With prompt
+bin/run-sandbox.sh codex --dangerously-bypass-approvals-and-sandbox  # Auto mode
+```
+
+### General Commands
+
+```bash
+bin/run-sandbox.sh echo "hello"                              # Run any command
+bin/run-sandbox.sh git status                                # Git in workspace
+bin/run-sandbox.sh ls -la bin/                               # List files
+```
+
+## Direct Docker Compose
+
+Alternative without the wrapper script (must export UID/GID first):
+
+```bash
+cd docker
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
+docker compose build sandbox   # Only needed once per user
+docker compose run --rm sandbox claude
+docker compose run --rm sandbox codex
+```
+
+**Note:** Using `bin/run-sandbox.sh` is recommended as it handles UID/GID automatically.
+
+## Jira Agent
+
+Automatically executes Jira tasks using Claude Code, with a MySQL-backed job queue for reliable scheduling.
+See [cron/app/README.md](cron/app/README.md) for architecture, CLI commands, file structure, and monitoring.
+
+**Services:**
+- **cron container** — runs cron daemon + consumer process (based on sandbox image + Python)
+- **mysql** — job queue database (`cron_agent`), auto-initialized from `cron/app/src/sql/`
+- **toolbox** — MCP server (credential broker for Jira, MySQL, email tools)
+
+### Security: Zero-Trust Credential Model
+
+Kontenery `cron` i `sandbox` **nie mają dostępu do żadnych credentials** (JIRA_TOKEN, JIRA_USER itp.). Jedynym pośrednikiem jest `toolbox`:
+
+- **Toolbox** jest brokerem credentials — przechowuje tokeny, filtruje zapytania, loguje dostęp
+- **Cron** komunikuje się z Jirą wyłącznie przez `POST http://toolbox:3001/api/jira/search` (read)
+- **Claude CLI** łączy się z toolbox przez MCP do mutacji (komentarze, zmiany statusów)
+- Konfiguracja użytkownika (email) jest w `.cron.env` jako `CONFIG__JIRA__USER`
+- `secrets.env` jest montowany **tylko** do kontenera `toolbox`, nigdy do `cron`/`sandbox`
+
+### Build & Deployment
+
+#### First-time setup
+
+```bash
+cd docker
+
+# 1. Build images (sandbox base must exist first)
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build sandbox
+docker compose build cron
+
+# 2. Start services (mysql auto-creates tables on first start)
+docker compose up -d cron
+
+# 3. Authenticate Claude CLI (browser auth on host, then copy credentials)
+cp ~/.claude/.credentials.json ../workspace/.claude/
+```
+
+MySQL tables are auto-created on first start — files in `src/sql/` are mounted
+into MySQL's `/docker-entrypoint-initdb.d/` and executed alphabetically.
+
+#### Deploying code changes
+
+```bash
+cd docker
+docker compose build cron && docker compose up -d cron --force-recreate
+```
+
+The Dockerfile installs the Python package into a venv at build time
+(`uv venv .venv && uv pip install .`). No manual `uv sync` needed — rebuilding
+the image handles everything.
+
+#### MySQL migrations
+
+Migrations are applied **automatically** on every container start via `entrypoint.sh` → `agent migrate`.
+A `schema_migrations` table tracks which SQL files from `src/sql/` have been applied.
+This is safe to run repeatedly — already-applied migrations are skipped, and idempotent ALTERs
+(duplicate column, unknown column, etc.) are handled gracefully.
+
+```bash
+# Check pending migrations (without applying)
+docker compose exec cron /opt/cron-agent/run.sh migrate --dry-run
+
+# Apply manually (normally not needed — entrypoint does this)
+docker compose exec cron /opt/cron-agent/run.sh migrate
+```
+
+To reset the database completely (destroys all data):
+```bash
+docker compose down -v   # removes mysql-data volume
+docker compose up -d cron
+```
+
+#### Local development (without Docker)
+
+```bash
+cd docker/cron/app
+
+# Create venv and install all deps (including dev tools)
+uv sync --group dev
+
+# Run tests
+uv run --group dev pytest -v
+
+# Run CLI commands locally (requires MYSQL_* env vars and toolbox running)
+uv run --group dev python -m src.cli task-list --json
+```
+
+#### Agent onboarding (OAuth tokens)
+
+The agent manager uses **OAuth tokens from Claude/Codex subscriptions** — NOT API keys
+from console.anthropic.com. OAuth tokens are obtained through the normal browser login flow
+and stored as credential files in `tokens/` (mounted as `/etc/tokens` in containers).
+
+##### Option A: Interactive auth (recommended)
+
+`token register` can launch the CLI's OAuth flow directly inside the container.
+Credentials are saved automatically — no manual extraction needed.
+
+```bash
+# Interactive auth — launches browser OAuth, extracts token, registers in DB
+docker compose exec -it cron /opt/cron-agent/run.sh token register claude oauth-team-1
+
+# With Codex
+docker compose exec -it cron /opt/cron-agent/run.sh token register codex oauth-codex-1
+```
+
+> **Requires `-it` flag** (interactive TTY). The command runs `claude auth login` /
+> `codex auth login` in an isolated temporary HOME directory so the main active
+> credentials at `/workspace/.claude` are NOT affected.
+
+##### Option B: Manual credentials file
+
+If you already have a credentials file (e.g. extracted from a host authentication):
+
+```bash
+# 1. Authenticate Claude CLI on the host (browser flow)
+claude
+# After auth completes, type /exit
+
+# 2. Extract OAuth token to the tokens directory
+python3 -c "
+import json
+with open('workspace/.claude/.credentials.json') as f:
+    oauth = json.load(f)['claudeAiOauth']
+token = {
+    'subscription_key': oauth['accessToken'],
+    'refresh_token': oauth['refreshToken'],
+    'expires_at': oauth['expiresAt'],
+    'subscription_type': oauth.get('subscriptionType', ''),
+}
+with open('tokens/claude_oauth_1.json', 'w') as f:
+    json.dump(token, f, indent=2)
+print('Done. Token expires:', __import__('datetime').datetime.fromtimestamp(oauth['expiresAt']/1000))
+"
+
+# 3. Register with explicit path
+docker compose exec cron /opt/cron-agent/run.sh token register \
+  claude oauth-team-1 /etc/tokens/claude_oauth_1.json
+```
+
+##### After registering: activate and configure
+
+```bash
+# Set the active token (creates symlink in /etc/tokens/active/)
+docker compose exec cron /opt/cron-agent/run.sh rotate
+
+# Verify
+docker compose exec cron /opt/cron-agent/run.sh token list
+```
+
+Then rebuild: `docker compose build cron && docker compose up -d cron --force-recreate`
+
+> **OAuth tokens expire.** When jobs fail with auth errors, refresh the token:
+> `docker compose exec -it cron /opt/cron-agent/run.sh token refresh <id>`
+> This re-runs interactive OAuth and overwrites the credentials file in-place.
+
+To add more tokens (multiple subscriptions for rotation):
+```bash
+# Interactive auth with a different label
+docker compose exec -it cron /opt/cron-agent/run.sh token register claude oauth-team-2
+
+# Or with an existing file
+docker compose exec cron /opt/cron-agent/run.sh token register \
+  claude oauth-team-2 /etc/tokens/claude_oauth_2.json
+
+# Rotate picks the token with the most remaining capacity
+docker compose exec cron /opt/cron-agent/run.sh rotate
+```
+
+#### Caveats
+
+- **Do not delete log files** while the consumer is running — the consumer holds
+  open file descriptors. Deleting the file orphans the fd and logs are silently
+  lost. If you must clean logs, restart the container afterwards.
+- **OAuth tokens expire** — if jobs fail with auth errors, re-authenticate on the
+  host, re-run the token extraction script, and restart the container.
+- **Config changes** to `.cron.env` require `docker compose restart cron`.
+
+## Playwright Browser Tools (MCP Proxy)
+
+Toolbox proxies requests to a Playwright MCP child process, providing controlled browser access with domain and tool whitelisting.
+
+**Available tools:** `browser_navigate`, `browser_take_screenshot`, `browser_snapshot`
+
+### Configuration (ENV)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PLAYWRIGHT_TOOL_WHITELIST` | `""` (deny all) | Comma-separated tool names to expose |
+| `ALLOWED_DOMAINS` | `""` (deny all) | Comma-separated domains to allow |
+| `ALLOW_SUBDOMAINS` | `true` | `foo.example.com` matches `example.com` |
+| `ALLOW_HTTP` | `false` | Allow HTTP URLs (HTTPS only by default) |
+
+### Example
+
+```bash
+# In .env or secrets.env
+ALLOWED_DOMAINS=mycompany.com,example.com
+```
+
+With `ALLOW_SUBDOMAINS=true`, this allows `www.mycompany.com`, `shop.mycompany.com`, etc.
+
+### Rebuilding after changes
+
+```bash
+cd docker && docker compose build toolbox && docker compose up -d toolbox --force-recreate
+```
+
+## Reloading Toolbox After secrets.env Changes
+
+`docker compose restart toolbox` only restarts the process — it does **not** re-read `env_file`.
+To apply changes from `secrets.env`, recreate the container:
+
+```bash
+docker compose up -d toolbox --force-recreate
+```
+
+## Auth
+
+AI tools require authentication before use. Since the container cannot open a browser,
+you must authenticate on your host machine first.
+
+### Claude Code Auth
+
+**Option A: From host machine** (if Claude CLI is installed locally)
+
+```bash
+claude                    # authenticate in browser
+cp ~/.claude/.credentials.json workspace/.claude/
+```
+
+**Option B: Inside the container** (production servers without local Claude CLI)
+
+```bash
+# Enter the running cron container as root
+docker compose exec -u root cron bash
+
+# Authenticate (opens a URL to paste in browser)
+claude
+# After auth completes, type /exit
+
+# Copy credentials from root's home to the shared workspace
+cp /root/.claude/.credentials.json /workspace/.claude/
+chown agent:dialout /workspace/.claude/.credentials.json
+
+# Verify it works as the agent user
+su - agent -c "cd /workspace && claude -p 'say hello' --output-format json"
+
+exit
+```
+
+**Why root?** The `agent` user's `~/.claude/` is symlinked to `/workspace/.claude/`.
+Running `claude` as root authenticates under `/root/.claude/` instead, so you must
+copy `.credentials.json` to the shared location afterwards.
+
+### OpenAI Codex Auth
+
+1. Run `codex` in your normal terminal (not in Docker)
+2. Complete the browser authentication (Option 1: Sign in with ChatGPT)
+3. Copy auth file to project: `cp ~/.codex/auth.json workspace/.codex/`
+
+### Auth Troubleshooting
+
+If authentication fails inside the container:
+
+- Verify auth files exist in project directory:
+
+  ```bash
+  ls -la workspace/.claude/.credentials.json
+  ls -la workspace/.codex/auth.json
+  ```
+
+- Re-authenticate on host and copy files again if expired
+- The `bin/run-sandbox.sh` script will warn you if auth files are missing
+
+### Permission Errors (Linux/VPS)
+
+If you see "Permission denied" errors when running `claude` or `codex`:
+
+1. **Rebuild with correct UID** (most common fix):
+
+   ```bash
+   docker rmi agento-sandbox:latest agento-sandbox:uid-*
+   bin/run-sandbox.sh
+   ```
+
+2. **Fix ownership of auth directories**:
+
+   ```bash
+   sudo chown -R $(id -u):$(id -g) workspace/.claude workspace/.codex
+   ```
+
+3. **Quick test as root** (for debugging only):
+
+   ```bash
+   docker compose run --user root --rm sandbox bash
+   ```
+
+
+# Handy commands
+
+```bash
+# Rebuild & restart everything
+docker compose up -d --build --force-recreate
+```
+
+## Tests
+```bash
+# Unit tests (from docker/ dir)
+TEST_MYSQL_HOST=localhost TEST_MYSQL_PASSWORD=cronagent_root cd cron/app && uv run --group dev pytest -v && cd ../../
+
+# E2E tests — real LLM calls, uses primary token (is_primary=1), requires DISABLE_LLM=0
+docker exec -it -u agent -e DISABLE_LLM=0 agento-cron /opt/cron-agent/run.sh e2e --keep
+
+# E2E with specific token override
+docker exec -it -u agent -e DISABLE_LLM=0 agento-cron /opt/cron-agent/run.sh e2e --keep --oauth_token 2 --model gpt-5.3-codex
+```
+
+## Agent management
+```bash
+# Check migration status
+docker exec -it agento-cron /opt/cron-agent/run.sh migrate --dry-run
+
+# Set the primary token (determines which agent runs all jobs)
+docker exec -it agento-cron /opt/cron-agent/run.sh token set claude 1
+
+# OAuth Token - register (interactive auth)
+docker exec -it agento-cron /opt/cron-agent/run.sh token register claude oauth-team-1
+
+# OAuth Token - refresh (re-authenticate expired token by id)
+docker exec -it agento-cron /opt/cron-agent/run.sh token refresh 2
+
+# Verify
+docker exec -it agento-cron /opt/cron-agent/run.sh token list
+```
+
+## Replay
+
+Replay reconstructs the full CLI command from a completed job's stored prompt and agent metadata.
+Useful for local testing, reproducing bugs, and comparing different models on the same prompt.
+
+```bash
+# Execute: re-run the stored prompt through the same runner
+# --exec invokes the agent CLI — must run as non-root user (-u agent)
+# DISABLE_LLM=0 overrides the default (LLM disabled to prevent cron from processing jobs)
+docker exec -it -u agent -e DISABLE_LLM=0 agento-cron /opt/cron-agent/run.sh replay 1 --exec --oauth_token 1
+
+# Execute with a different Claude model
+docker exec -it -u agent -e DISABLE_LLM=0 agento-cron /opt/cron-agent/run.sh replay 1 --exec --model claude-opus-4-20250514
+
+# Execute with a specific token (overrides primary)
+docker exec -it -u agent -e DISABLE_LLM=0 agento-cron /opt/cron-agent/run.sh replay 1 --exec --oauth_token 2 --model gpt-5.3-codex
+```
+
+## Token management
+
+```bash
+# List tokens with usage stats, model, and % free capacity
+docker exec -it agento-cron /opt/cron-agent/run.sh token list
+docker exec -it agento-cron /opt/cron-agent/run.sh token list --json
+
+# Register a token with a specific model
+# Claude models: claude-sonnet-4-20250514, claude-opus-4-20250514, claude-haiku-4-5-20251001
+docker exec -it agento-cron /opt/cron-agent/run.sh token register claude prod-1 --model claude-sonnet-4-20250514
+
+# Codex models: o3, o4-mini, codex-mini-latest
+docker exec -it agento-cron /opt/cron-agent/run.sh token register codex prod-1 --model o3
+
+# Refresh an expired token (re-runs interactive OAuth, overwrites credentials)
+docker exec -it agento-cron /opt/cron-agent/run.sh token refresh 1
+docker exec -it agento-cron /opt/cron-agent/run.sh token refresh 2
+
+# Set a token as primary (determines which agent runs all jobs)
+docker exec -it agento-cron /opt/cron-agent/run.sh token set claude 1
+
+# Show usage for last 24h
+docker exec -it agento-cron /opt/cron-agent/run.sh token usage --window 24
+```

@@ -1,0 +1,42 @@
+# Local/private directories
+prompts/local/
+!prompts/local/.gitkeep
+
+bin/local/
+!bin/local/.gitkeep
+
+# System files
+.DS_Store
+
+# Cursor/Claude local config (contains tokens)
+.cursor/mcp.json
+.cursor/rules/
+mcp.json
+
+.claude/*
+!.claude/.gitkeep
+!.claude/skills/
+.claude/skills/.local/
+
+.codex/
+!.codex/.gitkeep
+
+# Application code (separate repositories with sensitive data)
+app/local/
+!app/local/.gitkeep
+
+# Temporary files
+tmp/
+!tmp/.gitkeep
+!tmp/jira/.gitkeep
+!tmp/screenshots/.gitkeep
+
+# Environment files (contain secrets)
+*.env
+secrets.env
+!secrets.env.example
+
+# Bootstrap completion marker (local state)
+.bootstrap_completed
+
+LESSONS.md

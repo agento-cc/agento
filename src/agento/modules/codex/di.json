@@ -1,0 +1,8 @@
+{
+  "runtimes": [
+    {"provider": "codex", "class": "src.runner.TokenCodexRunner"}
+  ],
+  "auth_strategies": [
+    {"provider": "codex", "class": "src.auth.CodexAuthStrategy"}
+  ]
+}

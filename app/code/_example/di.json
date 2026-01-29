@@ -1,0 +1,9 @@
+{
+    "channels": [],
+    "workflows": [],
+    "commands": [
+        {
+            "class": "src.commands.hello.HelloCommand"
+        }
+    ]
+}

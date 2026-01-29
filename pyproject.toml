@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "src/agento/**/*.py",
+    "src/agento/**/*.json",
+    "src/agento/**/*.js",
+    "src/agento/**/*.yml",
+    "src/agento/**/*.yaml",
+    "src/agento/**/*.md",
+    "src/agento/**/*.sql",
+    "src/agento/framework/cli/templates/*",
+    "src/agento/toolbox/package.json",
+    "src/agento/toolbox/package-lock.json",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agento"]
+
+[project]
+name = "agento"
+version = "0.1.0"
+description = "AI Agent Framework — automates tasks using AI agents in Docker containers"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "PyMySQL>=1.1",
+    "cryptography>=43.0",
+]
+authors = [{name = "Marcin Klauza"}]
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["ai", "agent", "automation", "framework", "docker", "modular"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
+[project.scripts]
+agento = "agento.framework.cli:main"
+agent = "agento.framework.cli:main"
+
+[project.entry-points."agento.modules"]
+jira = "agento.modules.jira"
+claude = "agento.modules.claude"
+codex = "agento.modules.codex"
+
+[project.urls]
+Homepage = "https://github.com/saipix/agento"
+Repository = "https://github.com/saipix/agento"
+Documentation = "https://github.com/saipix/agento/tree/master/docs"
+Issues = "https://github.com/saipix/agento/issues"
+Changelog = "https://github.com/saipix/agento/blob/master/CHANGELOG.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "app/code"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agento"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-mock>=3.14", "respx>=0.22", "ruff>=0.11", "basedpyright>=1.29"]
+test = ["pytest>=8.0", "pytest-mock>=3.14", "respx>=0.22"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "respx>=0.22",
+    "ruff>=0.11",
+    "basedpyright>=1.29",
+]

@@ -1,0 +1,5 @@
+{
+    "patches": [
+        {"name": "SeedDefaults", "class": "src.patches.seed_defaults.SeedDefaults"}
+    ]
+}

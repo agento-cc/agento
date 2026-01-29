@@ -1,0 +1,14 @@
+# Agento project
+app/code/*/
+!app/code/_example/
+logs/
+tokens/
+storage/
+secrets.env
+docker/.env
+docker/.cron.env
+docker/.toolbox.env
+.env
+__pycache__/
+*.pyc
+node_modules/
