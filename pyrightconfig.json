@@ -1,0 +1,13 @@
+{
+  "include": ["src/agento/framework"],
+  "exclude": ["tests", "src/agento/toolbox"],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "reportArgumentType": false,
+  "reportCallIssue": false,
+  "reportOptionalSubscript": false,
+  "reportAttributeAccessIssue": false,
+  "reportReturnType": false
+}

@@ -1,0 +1,32 @@
+# Architecture
+
+Agento runs as Docker containers with strict security separation between the AI agent and credential-holding services.
+
+```
+┌─────────────┐     JQL search      ┌─────────────┐    secrets.env     ┌──────────┐
+│  Jira Cloud │◄────────────────────►│   Toolbox   │◄──────────────────►│  MySQL   │
+│             │     REST API v2      │  (MCP+REST) │    credentials     │ cron_db  │
+└─────────────┘                      │  port 3001  │                    └──────────┘
+       ▲                             └──────┬──────┘                         ▲
+       │ @mention, comment                  │ MCP (SSE)                      │ jobs table
+       │                                    ▼                                │
+┌──────┴──────┐                      ┌─────────────┐    publish/consume  ┌──────────┐
+│   Human     │                      │  Agent      │                    │   Cron   │
+│  (reporter) │                      │  (sandbox)  │                    │ consumer │
+└─────────────┘                      └─────────────┘                    └──────────┘
+```
+
+## Design Principles
+
+1. **Two languages = security boundary** — Python (cron) runs the AI agent, Node.js (toolbox) holds secrets. You cannot accidentally mix credential code with agent execution code.
+
+2. **Zero-trust credentials** — Agent container has NO secrets. All database/API access goes through Toolbox MCP tools. See [zero-trust.md](zero-trust.md).
+
+3. **Magento-inspired modules** — Self-contained packages with config, tools, knowledge base. See [modules docs](../modules/).
+
+## Further Reading
+
+- [Containers](containers.md) — what runs where, volume mounts, networking
+- [Zero-Trust Security](zero-trust.md) — credential isolation model
+- [Publisher-Consumer](publisher-consumer.md) — job queue architecture
+- [Event-Observer System](events.md) — cross-module communication via events

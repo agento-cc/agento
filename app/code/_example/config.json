@@ -1,0 +1,7 @@
+{
+  "tools": {
+    "mysql_myapp_prod": {
+      "port": 3306
+    }
+  }
+}

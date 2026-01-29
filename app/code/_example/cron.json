@@ -1,0 +1,5 @@
+{
+    "jobs": [
+        {"name": "example_heartbeat", "schedule": "0 * * * *", "command": "example-heartbeat"}
+    ]
+}

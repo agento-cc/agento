@@ -1,0 +1,7 @@
+{
+  "name": "agent_view",
+  "version": "1.0.0",
+  "description": "Per-agent_view instruction files (AGENTS.md, SOUL.md) via scoped config",
+  "sequence": ["core"],
+  "order": 50
+}

@@ -1,0 +1,8 @@
+{
+  "runtimes": [
+    {"provider": "claude", "class": "src.runner.TokenClaudeRunner"}
+  ],
+  "auth_strategies": [
+    {"provider": "claude", "class": "src.auth.ClaudeAuthStrategy"}
+  ]
+}

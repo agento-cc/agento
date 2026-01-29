@@ -1,0 +1,6 @@
+{
+  "sql_timeout_seconds": 300,
+  "smtp_port": 587,
+  "allow_subdomains": true,
+  "allow_http": false
+}

@@ -1,0 +1,5 @@
+{
+  "module_loaded": [
+    {"name": "crypt_register_backend", "class": "src.observers.RegisterEncryptorObserver", "order": 1}
+  ]
+}

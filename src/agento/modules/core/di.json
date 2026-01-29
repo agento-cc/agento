@@ -1,0 +1,10 @@
+{
+  "routers": [
+    {"name": "identity", "class": "src.routers.identity_router.IdentityRouter", "order": 100}
+  ],
+  "commands": [
+    {"name": "ingress:bind", "class": "src.commands.ingress_bind.IngressBindCommand"},
+    {"name": "ingress:list", "class": "src.commands.ingress_list.IngressListCommand"},
+    {"name": "ingress:unbind", "class": "src.commands.ingress_unbind.IngressUnbindCommand"}
+  ]
+}

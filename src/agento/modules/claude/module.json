@@ -1,0 +1,7 @@
+{
+  "name": "claude",
+  "version": "1.0.0",
+  "description": "Claude Code runtime",
+  "sequence": [],
+  "order": 200
+}

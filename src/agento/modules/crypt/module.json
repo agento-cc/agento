@@ -1,0 +1,6 @@
+{
+  "name": "crypt",
+  "version": "1.0.0",
+  "description": "Encryption backend for obscure config fields (AES-256-CBC default, adapter pattern for future vault integration)",
+  "order": 5
+}

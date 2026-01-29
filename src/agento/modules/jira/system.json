@@ -1,0 +1,14 @@
+{
+  "toolbox_url": {"type": "string", "label": "Toolbox URL"},
+  "user": {"type": "string", "label": "AI User"},
+  "jira_projects": {"type": "json", "label": "Jira Projects (JSON array)"},
+  "jira_status": {"type": "string", "label": "Jira Status filter"},
+  "jira_frequency_field": {"type": "string", "label": "Jira custom field key for cron frequency"},
+  "jira_assignee": {"type": "string", "label": "Agent username in Jira"},
+  "jira_assignee_account_id": {"type": "string", "label": "Agent Jira account ID (for mention detection)"},
+  "frequency_map": {"type": "json", "label": "Frequency label to cron expression map"},
+  "jira_host": {"type": "string", "label": "Jira Cloud URL"},
+  "jira_user": {"type": "string", "label": "Jira API user email"},
+  "jira_token": {"type": "obscure", "label": "Jira API token"},
+  "create_issue_limit_per_hour": {"type": "integer", "label": "Max issues created per hour"}
+}

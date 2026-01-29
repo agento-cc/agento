@@ -1,0 +1,28 @@
+{
+  "issues": [
+    {
+      "key": "AI-10",
+      "fields": {
+        "summary": "Zaktualizuj dokumentację API",
+        "status": {"name": "To Do"},
+        "priority": {"name": "High"},
+        "assignee": {"displayName": "AI Agent", "accountId": "ai-account-123"},
+        "reporter": {"displayName": "Jan Kowalski", "accountId": "jan-123"},
+        "created": "2026-02-10T08:00:00.000+0100",
+        "updated": "2026-02-10T08:00:00.000+0100"
+      }
+    },
+    {
+      "key": "AI-11",
+      "fields": {
+        "summary": "Napraw błąd w synchronizacji stanów",
+        "status": {"name": "To Do"},
+        "priority": {"name": "Critical"},
+        "assignee": {"displayName": "AI Agent", "accountId": "ai-account-123"},
+        "reporter": {"displayName": "Anna Nowak", "accountId": "anna-456"},
+        "created": "2026-02-12T10:30:00.000+0100",
+        "updated": "2026-02-12T10:30:00.000+0100"
+      }
+    }
+  ]
+}

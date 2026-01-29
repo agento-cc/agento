@@ -1,0 +1,14 @@
+# Required programs for Claude Code container
+# Format: package_name (apt package) | description
+# Lines starting with # are comments
+
+git | Version control
+curl | HTTP client
+jq | JSON processor
+openssh-client | SSH client
+poppler-utils | PDF tools (pdftotext)
+default-mysql-client | MySQL client
+ca-certificates | SSL certificates
+socat | TCP forwarder (for Codex OAuth callback)
+
+# mssql-tools18 (sqlcmd) - installed via Microsoft repo in Dockerfile

@@ -1,0 +1,7 @@
+{
+  "name": "jira",
+  "version": "1.0.0",
+  "description": "Jira Cloud integration — channel, workflows, and tools",
+  "sequence": [],
+  "order": 100
+}

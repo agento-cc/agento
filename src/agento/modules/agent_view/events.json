@@ -1,0 +1,5 @@
+{
+  "agento_agent_view_run_started": [
+    {"name": "agent_view_populate_instructions", "class": "src.observers.PopulateInstructionsObserver", "order": 100}
+  ]
+}

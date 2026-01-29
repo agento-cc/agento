@@ -1,0 +1,21 @@
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "description": "Example application module. Copy this directory and customize.",
+  "repo": "git@github.com:your-org/my-app.git",
+  "tools": [
+    {
+      "type": "mysql",
+      "name": "mysql_myapp_prod",
+      "description": "My App Production MySQL (read-only). Database: myapp.",
+      "fields": {
+        "host": {"type": "string", "label": "Host"},
+        "port": {"type": "integer", "label": "Port"},
+        "user": {"type": "string", "label": "User"},
+        "pass": {"type": "obscure", "label": "Password"},
+        "database": {"type": "string", "label": "Database"}
+      }
+    }
+  ],
+  "log_servers": []
+}

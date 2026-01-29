@@ -1,0 +1,32 @@
+{
+  "issues": [
+    {
+      "key": "AI-2",
+      "fields": {
+        "summary": "Sprawdź logi serwera",
+        "customfield_10709": {"value": "Co 5min"}
+      }
+    },
+    {
+      "key": "AI-3",
+      "fields": {
+        "summary": "Raport dzienny sprzedaży",
+        "customfield_10709": {"value": "1x dziennie o 8:00"}
+      }
+    },
+    {
+      "key": "AI-4",
+      "fields": {
+        "summary": "Brak ustawionej częstotliwości",
+        "customfield_10709": null
+      }
+    },
+    {
+      "key": "AI-5",
+      "fields": {
+        "summary": "Nieznana częstotliwość",
+        "customfield_10709": {"value": "Co 2 lata"}
+      }
+    }
+  ]
+}

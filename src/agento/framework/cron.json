@@ -1,0 +1,9 @@
+{
+    "jobs": [
+        {
+            "name": "logrotate",
+            "schedule": "0 2 * * *",
+            "raw_command": "/usr/sbin/logrotate /opt/cron-agent/logrotate-agent.conf --state /app/logs/logrotate.state"
+        }
+    ]
+}

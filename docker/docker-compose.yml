@@ -1,0 +1,126 @@
+name: agento
+
+services:
+  sandbox:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-501}
+        HOST_GID: ${HOST_GID:-20}
+    image: agento-sandbox:latest
+    container_name: agento-sandbox
+    volumes:
+      - ../workspace:/workspace
+      - ../app/code:/app/code:ro
+      - ../../id_rsa:/run/secrets/id_rsa:ro
+      - ../logs:/app/logs
+      - ../tokens:/etc/tokens
+    environment:
+      - TZ=Europe/Warsaw
+    stdin_open: true
+    tty: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agento-net
+    depends_on:
+      toolbox:
+        condition: service_started
+    restart: unless-stopped
+
+  toolbox:
+    build:
+      context: ..
+      dockerfile: docker/toolbox/Dockerfile
+    image: agento-toolbox:latest
+    container_name: agento-toolbox
+    environment:
+      - TZ=Europe/Warsaw
+      - CRONDB_HOST=mysql
+      - CRONDB_PORT=3306
+      - CRONDB_DATABASE=cron_agent
+      - CRONDB_USER=cron_agent
+      - CRONDB_PASSWORD=${MYSQL_PASSWORD:-cronagent_pass}
+    env_file:
+      - path: .toolbox.env
+        required: true
+      - path: ../secrets.env
+        required: false
+    volumes:
+      - ../src/agento/toolbox:/app
+      - /app/node_modules
+      - ../src/agento/modules:/app/modules/core:ro
+      - ../app/code:/app/modules/user:ro
+      - ../logs:/app/logs
+      - ../workspace/tmp:/workspace/tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agento-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cron:
+    build:
+      context: ..
+      dockerfile: docker/cron/Dockerfile
+    image: agento-cron:latest
+    container_name: agento-cron
+    env_file:
+      - path: .cron.env
+        required: false
+      - path: ../secrets.env
+        required: false
+    environment:
+      - TZ=Europe/Warsaw
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=cron_agent
+      - MYSQL_USER=cron_agent
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-cronagent_pass}
+      - DISABLE_LLM=${DISABLE_LLM:-0}
+    volumes:
+      - ../workspace:/workspace
+      - ../app/code:/app/code:ro
+      - ../../id_rsa:/run/secrets/id_rsa:ro
+      - ../logs:/app/logs
+      - ../src/agento:/opt/cron-agent/src/agento
+      - ../tokens:/etc/tokens
+    networks:
+      - agento-net
+    depends_on:
+      toolbox:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    container_name: agento-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-cronagent_root}
+      MYSQL_DATABASE: cron_agent
+      MYSQL_USER: cron_agent
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cronagent_pass}
+    volumes:
+      - ../storage/mysql:/var/lib/mysql
+      - ../src/agento/framework/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - agento-net
+    restart: unless-stopped
+
+networks:
+  agento-net:
+    driver: bridge

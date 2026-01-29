@@ -1,0 +1,24 @@
+{
+  "name": "agento-toolbox",
+  "version": "1.0.0",
+  "description": "MCP server providing secure tool access for AI sandbox",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.21.0",
+    "mssql": "^11.0.0",
+    "mysql2": "^3.11.0",
+    "nodemailer": "^6.9.0",
+    "zod": "^3.23.0",
+    "@playwright/mcp": "^0.0.68"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "vitest": "^3.0.0"
+  }
+}
