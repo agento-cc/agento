@@ -37,7 +37,7 @@ class TestGetTemplate:
 
 class TestCmdInit:
     def test_creates_project_structure(self, tmp_path: Path):
-        args = argparse.Namespace(project="test-proj", local=False, no_example=False)
+        args = argparse.Namespace(project="test-proj", no_example=False)
         with patch("agento.framework.cli.init.Path") as mock_path_cls:
             mock_path_cls.cwd.return_value = tmp_path
             # Let Path() constructor work normally for everything else
@@ -64,34 +64,12 @@ class TestCmdInit:
 
         meta = json.loads((project_dir / ".agento" / "project.json").read_text())
         assert meta["name"] == "test-proj"
-        assert meta["mode"] == "compose"
-
-    def test_local_mode_creates_env(self, tmp_path: Path):
-        args = argparse.Namespace(project="local-proj", local=True, no_example=False)
-
-        original_cwd = Path.cwd
-        try:
-            Path.cwd = staticmethod(lambda: tmp_path)
-            cmd_init(args)
-        finally:
-            Path.cwd = original_cwd
-
-        project_dir = tmp_path / "local-proj"
-        assert (project_dir / ".env").is_file()
-        env_content = (project_dir / ".env").read_text()
-        assert "CRONDB_HOST" in env_content
-
-        meta = json.loads((project_dir / ".agento" / "project.json").read_text())
-        assert meta["mode"] == "local"
-
-        # No docker/ directory in local mode
-        assert not (project_dir / "docker").is_dir()
 
     def test_refuses_existing_directory(self, tmp_path: Path):
         import pytest
 
         (tmp_path / "existing").mkdir()
-        args = argparse.Namespace(project="existing", local=False, no_example=False)
+        args = argparse.Namespace(project="existing", no_example=False)
 
         original_cwd = Path.cwd
         try:

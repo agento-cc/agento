@@ -24,11 +24,12 @@ from .crontab import (
     install_crontab,
 )
 from .data_patch import apply_patch, get_all_pending, resolve_patch_order
-from .dependency_resolver import resolve_order
+from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import get_event_manager
 from .events import CrontabInstalledEvent, SetupBeforeEvent, SetupCompleteEvent
 from .migrate import get_pending, migrate
 from .module_loader import scan_modules
+from .module_status import filter_enabled
 
 FRAMEWORK_SQL_DIR = Path(__file__).parent / "sql"
 FRAMEWORK_CRON_JSON = Path(__file__).parent / "cron.json"
@@ -75,7 +76,10 @@ def setup_upgrade(
         result.framework_migrations = migrate(conn, logger, module="framework")
 
     # 2. Module SQL migrations in dependency order
-    manifests = resolve_order(scan_modules(core_dir) + scan_modules(user_dir))
+    all_scanned = scan_modules(core_dir) + scan_modules(user_dir)
+    enabled = filter_enabled(all_scanned)
+    validate_dependencies(enabled, all_scanned)
+    manifests = resolve_order(enabled)
 
     for m in manifests:
         sql_dir = m.path / "sql"

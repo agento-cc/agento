@@ -10,7 +10,7 @@ def test_extract_unmanaged_with_markers():
         "* * * * * /some/job\n"
         f"{MARKER_BEGIN}\n"
         "# AI-2: Task (Co 5min)\n"
-        "*/5 * * * * /opt/cron-agent/run.sh exec-cron AI-2\n"
+        "*/5 * * * * /opt/cron-agent/run.sh exec:cron AI-2\n"
         f"{MARKER_END}\n"
     )
     result = mgr.extract_unmanaged(crontab)

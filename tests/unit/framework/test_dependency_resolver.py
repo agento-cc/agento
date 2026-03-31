@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from agento.framework.dependency_resolver import CyclicDependencyError, resolve_order
+from agento.framework.dependency_resolver import (
+    CyclicDependencyError,
+    DisabledDependencyError,
+    resolve_order,
+    validate_dependencies,
+)
 from agento.framework.module_loader import ModuleManifest
 
 
@@ -125,3 +130,29 @@ class TestResolveOrderCycle:
         ]
         with pytest.raises(CyclicDependencyError):
             resolve_order(modules)
+
+
+class TestValidateDependencies:
+    """Enabled modules must not depend on disabled modules."""
+
+    def test_disabled_dep_raises(self):
+        enabled = [_m("a", sequence=["b"])]
+        all_scanned = [_m("a", sequence=["b"]), _m("b")]
+        with pytest.raises(DisabledDependencyError, match="requires 'b'"):
+            validate_dependencies(enabled, all_scanned)
+
+    def test_all_enabled_passes(self):
+        modules = [_m("a", sequence=["b"]), _m("b")]
+        validate_dependencies(modules, modules)  # no exception
+
+    def test_missing_dep_does_not_raise(self):
+        """Dep not on disk at all — handled by resolve_order, not here."""
+        enabled = [_m("a", sequence=["nonexistent"])]
+        all_scanned = [_m("a", sequence=["nonexistent"])]
+        validate_dependencies(enabled, all_scanned)  # no exception
+
+    def test_error_message_includes_enable_command(self):
+        enabled = [_m("x", sequence=["y"])]
+        all_scanned = [_m("x", sequence=["y"]), _m("y")]
+        with pytest.raises(DisabledDependencyError, match="agento module:enable y"):
+            validate_dependencies(enabled, all_scanned)

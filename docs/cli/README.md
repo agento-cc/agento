@@ -12,9 +12,6 @@
 | `up` | Start Docker Compose runtime |
 | `down` | Stop Docker Compose runtime |
 | `logs [service]` | Show container logs |
-| **Development** | |
-| `dev bootstrap` | Set up development environment ([details](dev.md)) |
-| `toolbox start` | Run Node.js toolbox locally ([details](toolbox.md)) |
 | **Setup** | |
 | `setup:upgrade [--dry-run]` | Apply migrations, data patches, install crontab |
 | `reindex` | Reindex modules → workspace/systems/ + AGENTS.md |
@@ -45,8 +42,8 @@
 | `consumer` | Start job consumer loop |
 | `sync` | Sync Jira recurring tasks to crontab |
 | `publish <kind>` | Publish a job (jira-cron, jira-todo, jira-mention) |
-| `exec-cron <key>` | Execute a recurring task |
-| `exec-todo [key]` | Execute next TODO task |
+| `exec:cron <key>` | Execute a recurring task |
+| `exec:todo [key]` | Execute next TODO task |
 | `replay <job_id>` | Replay a completed job |
 | `e2e` | Run end-to-end tests |
 

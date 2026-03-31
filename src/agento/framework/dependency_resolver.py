@@ -18,6 +18,30 @@ class CyclicDependencyError(Exception):
     """Raised when modules form a dependency cycle."""
 
 
+class DisabledDependencyError(Exception):
+    """Raised when an enabled module depends on a disabled module."""
+
+
+def validate_dependencies(
+    enabled: list[ModuleManifest], all_scanned: list[ModuleManifest]
+) -> None:
+    """Validate that all sequence deps of enabled modules are also enabled.
+
+    Raises DisabledDependencyError if a disabled module is required by an enabled one.
+    Missing-on-disk deps are ignored (handled by resolve_order skip logic).
+    """
+    enabled_names = {m.name for m in enabled}
+    all_names = {m.name for m in all_scanned}
+
+    for m in enabled:
+        for dep in m.sequence:
+            if dep in all_names and dep not in enabled_names:
+                raise DisabledDependencyError(
+                    f"Module '{m.name}' requires '{dep}', but '{dep}' is disabled. "
+                    f"Enable it with: agento module:enable {dep}"
+                )
+
+
 def resolve_order(manifests: list[ModuleManifest]) -> list[ModuleManifest]:
     """Sort modules respecting sequence (dependencies) and order (sort position).
 

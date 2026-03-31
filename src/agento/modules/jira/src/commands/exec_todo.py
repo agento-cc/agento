@@ -1,4 +1,4 @@
-"""CLI command: exec-todo — Execute next TODO task (or specific issue)."""
+"""CLI command: exec:todo — Execute next TODO task (or specific issue)."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ import argparse
 class ExecTodoCommand:
     @property
     def name(self) -> str:
-        return "exec-todo"
+        return "exec:todo"
 
     @property
     def help(self) -> str:

@@ -247,7 +247,7 @@ CRONENV
 
   # Step 12: Set JSON config values via DB
   log_info "Setting Jira config in database..."
-  $COMPOSE exec -T cron /opt/cron-agent/run.sh config-set jira/jira_projects "$jira_projects_json" || true
+  $COMPOSE exec -T cron /opt/cron-agent/run.sh config:set jira/jira_projects "$jira_projects_json" || true
 
   # Step 13: Reindex modules
   log_info "Running reindex..."

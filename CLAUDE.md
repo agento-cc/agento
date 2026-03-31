@@ -50,10 +50,6 @@ agento up                                              # Start Docker Compose
 agento down                                            # Stop containers
 agento logs [service]                                  # View container logs
 
-# Development
-agento dev bootstrap                                   # Install Python + Node.js deps
-agento toolbox start                                   # Run toolbox locally (needs external MySQL)
-
 # Restart after code changes
 cd docker && docker compose restart cron toolbox
 
@@ -66,7 +62,10 @@ agento setup:upgrade --dry-run                         # Preview pending work
 
 # Modules
 agento module:add <name> --tool mysql:<tool_name>:<description>
-agento module:list
+agento module:list                                     # List all modules with enabled/disabled status
+agento module:enable <name>                            # Enable a module (stored in app/etc/modules.json)
+agento module:disable <name>                           # Disable a module (skips loading, cron, config, CLI)
+agento module:validate [name]                          # Validate module structure and sequence deps
 agento reindex
 
 # Config

@@ -18,15 +18,10 @@ git clone https://github.com/<your-username>/agento.git
 cd agento
 ```
 
-2. Run the developer setup script:
+2. Install dependencies and verify everything works:
 
 ```bash
-scripts/bootstrap-dev.sh
-```
-
-3. Verify everything works:
-
-```bash
+uv sync --group dev
 bin/test
 ```
 

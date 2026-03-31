@@ -42,8 +42,6 @@ def cmd_init(args: argparse.Namespace) -> None:
         log_error(f"Directory already exists: {project_dir}")
         sys.exit(1)
 
-    local_mode = getattr(args, "local", False)
-
     log_info(f"Initializing agento project: {project_name}")
 
     # Create directory structure
@@ -55,9 +53,8 @@ def cmd_init(args: argparse.Namespace) -> None:
         "logs",
         "tokens",
         "storage",
+        "docker",
     ]
-    if not local_mode:
-        dirs.append("docker")
 
     for d in dirs:
         (project_dir / d).mkdir(parents=True, exist_ok=True)
@@ -67,7 +64,6 @@ def cmd_init(args: argparse.Namespace) -> None:
         "name": project_name,
         "version": "0.1.0",
         "created_at": datetime.now(UTC).isoformat(),
-        "mode": "local" if local_mode else "compose",
     }
     (project_dir / ".agento" / "project.json").write_text(
         json.dumps(project_meta, indent=2) + "\n"
@@ -92,41 +88,22 @@ def cmd_init(args: argparse.Namespace) -> None:
             "docker/.toolbox.env\n"
         )
 
-    if local_mode:
-        # Local mode: generate .env with DB connection placeholders
-        env_content = (
-            "# Agento local dev configuration\n"
-            "# Fill in your external MySQL connection details:\n"
-            "CRONDB_HOST=localhost\n"
-            "CRONDB_PORT=3306\n"
-            "CRONDB_USER=agento\n"
-            "CRONDB_PASSWORD=\n"
-            "CRONDB_DATABASE=agento\n"
-            "\n"
-            "# Encryption key (generate with: openssl rand -hex 32)\n"
-            "AGENTO_ENCRYPTION_KEY=\n"
-            "\n"
+    # Docker Compose config
+    try:
+        compose_content = _get_template("docker-compose.yml")
+        (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
+    except TemplateNotFoundError:
+        log_warn("docker-compose.yml template not available yet.")
+
+    try:
+        env_content = _get_template("env.example")
+        (project_dir / "docker" / ".env").write_text(env_content)
+    except TemplateNotFoundError:
+        # Write basic .env
+        (project_dir / "docker" / ".env").write_text(
+            "COMPOSE_PROJECT_NAME=agento\n"
             "DISABLE_LLM=0\n"
         )
-        (project_dir / ".env").write_text(env_content)
-        log_info("Created .env with DB connection placeholders")
-    else:
-        # Docker Compose mode
-        try:
-            compose_content = _get_template("docker-compose.yml")
-            (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
-        except TemplateNotFoundError:
-            log_warn("docker-compose.yml template not available yet.")
-
-        try:
-            env_content = _get_template("env.example")
-            (project_dir / "docker" / ".env").write_text(env_content)
-        except TemplateNotFoundError:
-            # Write basic .env
-            (project_dir / "docker" / ".env").write_text(
-                "COMPOSE_PROJECT_NAME=agento\n"
-                "DISABLE_LLM=0\n"
-            )
 
     # Write secrets.env.example
     try:
@@ -149,18 +126,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     log_info(f"Project created at: {project_dir}")
     print()
 
-    if local_mode:
-        print(f"{cyan('Next steps:')}")
-        print(f"  cd {project_name}")
-        print("  # Edit .env with your MySQL connection details")
-        print("  agento doctor                 Check prerequisites")
-        print("  agento setup:upgrade          Apply migrations")
-        print("  agento toolbox start          Start the toolbox locally")
-    else:
-        print(f"{cyan('Next steps:')}")
-        print(f"  cd {project_name}")
-        print("  # Edit docker/.env and secrets.env with your settings")
-        print("  agento up                     Start Docker Compose")
-        print("  agento setup:upgrade          Apply migrations")
-        print("  agento module:add <name>      Add your first module")
+    print(f"{cyan('Next steps:')}")
+    print(f"  cd {project_name}")
+    print("  # Edit docker/.env and secrets.env with your settings")
+    print("  agento up                     Start Docker Compose")
+    print("  agento setup:upgrade          Apply migrations")
+    print("  agento module:add <name>      Add your first module")
     print()

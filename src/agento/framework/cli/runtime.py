@@ -8,7 +8,7 @@ from ..agent_manager.config import AgentManagerConfig
 from ..agent_manager.token_store import get_primary_token, get_token
 from ..consumer_config import ConsumerConfig
 from ..database_config import DatabaseConfig
-from ..db import get_connection
+from ..db import get_connection_or_exit
 from ..log import get_logger
 from ..runner_factory import create_runner
 
@@ -30,7 +30,7 @@ def _resolve_token(token_id: int | None = None):
     """Resolve a Token by explicit id, or fall back to the global primary."""
 
     db_config, _, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         if token_id is not None:
             token = get_token(conn, token_id)
@@ -60,7 +60,7 @@ def cmd_consumer(args: argparse.Namespace) -> None:
     from ..consumer import Consumer
 
     db_config, consumer_config, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         bootstrap(db_conn=conn)
     finally:
@@ -72,13 +72,20 @@ def cmd_consumer(args: argparse.Namespace) -> None:
 
 
 def cmd_setup_upgrade(args: argparse.Namespace) -> None:
+    import sys
+
+    from ..dependency_resolver import DisabledDependencyError
     from ..setup import setup_upgrade
 
     db_config, _, _ = _load_framework_config()
     logger = get_logger("setup")
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
-        result = setup_upgrade(conn, logger, dry_run=args.dry_run)
+        try:
+            result = setup_upgrade(conn, logger, dry_run=args.dry_run)
+        except DisabledDependencyError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
 
         if args.dry_run:
             if not result.has_work:
@@ -120,7 +127,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
     from ..replay import build_replay_command, fetch_job_for_replay
 
     db_config, consumer_config, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         bootstrap(db_conn=conn)
     finally:
@@ -187,7 +194,7 @@ def cmd_rotate(args: argparse.Namespace) -> None:
 
     db_config, _, am_config = _load_framework_config()
     logger = get_logger("agent-manager")
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         results = rotate_all(conn, am_config, logger)
         conn.commit()

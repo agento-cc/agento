@@ -12,12 +12,13 @@ from .channels import registry as channel_registry
 from .commands import clear as clear_commands
 from .commands import register_command
 from .config_resolver import load_db_overrides, read_config_defaults, resolve_module_config
-from .dependency_resolver import resolve_order
+from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import ObserverEntry, get_event_manager
 from .event_manager import clear as clear_event_manager
 from .events import ModuleLoadedEvent, ModuleReadyEvent, ModuleRegisterEvent, ModuleShutdownEvent
 from .job_models import AgentType
 from .module_loader import ModuleManifest, import_class, scan_modules
+from .module_status import filter_enabled
 from .router_registry import clear as clear_routers
 from .router_registry import register_router
 from .runner_factory import clear as clear_runners
@@ -87,7 +88,10 @@ def bootstrap(
     _MODULE_CONFIGS.clear()
     _MANIFESTS.clear()
 
-    manifests = resolve_order(scan_modules(core_dir) + scan_modules(user_dir))
+    all_scanned = scan_modules(core_dir) + scan_modules(user_dir)
+    enabled = filter_enabled(all_scanned)
+    validate_dependencies(enabled, all_scanned)
+    manifests = resolve_order(enabled)
 
     # Resolve module configs (3-level fallback)
     db_overrides = load_db_overrides(db_conn)

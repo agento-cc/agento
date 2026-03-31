@@ -5,8 +5,7 @@ Install Agento and create your first module in 5 minutes.
 ## Prerequisites
 
 - Python 3.11+
-- Docker + Docker Compose V2 (for quickstart path)
-- Node.js 18+ (for local dev path)
+- Docker + Docker Compose V2
 
 Run `agento doctor` after installation to verify prerequisites.
 
@@ -23,21 +22,6 @@ cd my-project
 # Start the runtime
 agento up                            # Starts cron + toolbox + MySQL
 agento setup:upgrade                 # Apply migrations, install crontab
-```
-
-## Path B — Local dev
-
-For framework contributors and module authors:
-
-```bash
-git clone https://github.com/saipix/agento.git && cd agento
-agento dev bootstrap                 # Install Python + Node.js deps
-
-# Provide external MySQL connection
-cp docker/.env.example .env
-nano .env                            # Set CRONDB_HOST, CRONDB_PORT, etc.
-
-agento toolbox start                 # Run toolbox locally
 ```
 
 ## Add Your First Module

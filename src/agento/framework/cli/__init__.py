@@ -1,22 +1,88 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+# Commands that always run on the host (no Docker proxy)
+_LOCAL_COMMANDS = frozenset({
+    "doctor", "init", "up", "down", "logs",
+    "module:list", "module:enable", "module:disable", "module:validate",
+    "make:module",
+})
+
+# Commands that need an interactive TTY (OAuth flows)
+_INTERACTIVE_COMMANDS = frozenset({
+    "token register", "token refresh",
+})
+
+
+def _get_command(argv: list[str]) -> str | None:
+    """Extract command name from argv (first non-flag arg, or two for subcommands)."""
+    parts = [a for a in argv if not a.startswith("-")]
+    if not parts:
+        return None
+    # Check two-word commands first (e.g. "token register")
+    if len(parts) >= 2 and f"{parts[0]} {parts[1]}" in _INTERACTIVE_COMMANDS:
+        return f"{parts[0]} {parts[1]}"
+    return parts[0]
+
+
+def _should_proxy(argv: list[str]) -> bool:
+    """Check if this command should be proxied to the Docker cron container."""
+    if Path("/.dockerenv").exists():
+        return False  # Already in Docker
+    if "--local" in argv:
+        return False  # Escape hatch
+    cmd = _get_command(argv)
+    return cmd is not None and cmd not in _LOCAL_COMMANDS
+
+
+def _proxy_to_docker(argv: list[str]) -> None:
+    """Exec command inside the cron container via docker compose."""
+    from ._project import find_compose_file, find_project_root
+
+    project_root = find_project_root()
+    if not project_root:
+        print("Error: Not inside an agento project. Run 'agento init' first.", file=sys.stderr)
+        sys.exit(1)
+    compose_file = find_compose_file(project_root)
+    if not compose_file:
+        print("Error: docker-compose.yml not found.", file=sys.stderr)
+        sys.exit(1)
+
+    clean_argv = [a for a in argv if a != "--local"]
+    cmd = _get_command(clean_argv)
+    tty_flag = "-it" if cmd in _INTERACTIVE_COMMANDS else "-T"
+    result = subprocess.run([
+        "docker", "compose", "-f", str(compose_file),
+        "exec", tty_flag, "cron",
+        "/opt/cron-agent/run.sh", *clean_argv,
+    ])
+    sys.exit(result.returncode)
 
 
 def main() -> None:
-    import contextlib
+    if _should_proxy(sys.argv[1:]):
+        _proxy_to_docker(sys.argv[1:])
 
     from ..bootstrap import bootstrap
-    with contextlib.suppress(Exception):
+    from ..dependency_resolver import DisabledDependencyError
+
+    try:
         bootstrap()  # May fail without DB — framework commands still work
+    except DisabledDependencyError as e:
+        print(f"Warning: {e}", file=sys.stderr)
+    except Exception:
+        pass  # DB unavailable etc. — framework commands still work
 
     from ..commands import get_commands
     from .compose import cmd_down, cmd_logs, cmd_up
     from .config import cmd_config_get, cmd_config_list, cmd_config_remove, cmd_config_set
-    from .dev import cmd_dev_bootstrap
     from .doctor import cmd_doctor
     from .init import cmd_init
-    from .module import cmd_make_module, cmd_module_validate
+    from .module import cmd_make_module, cmd_module_disable, cmd_module_enable, cmd_module_list, cmd_module_validate
     from .runtime import cmd_consumer, cmd_e2e, cmd_replay, cmd_rotate, cmd_setup_upgrade
     from .token import (
         cmd_token_deregister,
@@ -26,8 +92,6 @@ def main() -> None:
         cmd_token_set,
         cmd_token_usage,
     )
-    from .toolbox import cmd_toolbox_start
-
     parser = argparse.ArgumentParser(
         prog="agento",
         description="Agento — AI Agent Framework",
@@ -40,7 +104,6 @@ def main() -> None:
 
     init_p = sub.add_parser("init", help="Scaffold a new agento project")
     init_p.add_argument("project", help="Project directory name")
-    init_p.add_argument("--local", action="store_true", help="Local dev mode (no Docker, external MySQL)")
     init_p.add_argument("--no-example", action="store_true", dest="no_example", help="Skip example module")
     init_p.set_defaults(func=cmd_init)
 
@@ -50,16 +113,6 @@ def main() -> None:
     logs_p = sub.add_parser("logs", help="Show container logs")
     logs_p.add_argument("service", nargs="?", default=None, help="Service name (cron, toolbox, mysql)")
     logs_p.set_defaults(func=cmd_logs)
-
-    # -- Toolbox --
-    toolbox_p = sub.add_parser("toolbox", help="Toolbox management")
-    toolbox_sub = toolbox_p.add_subparsers(dest="toolbox_command", required=True)
-    toolbox_sub.add_parser("start", help="Start the Node.js toolbox locally").set_defaults(func=cmd_toolbox_start)
-
-    # -- Dev --
-    dev_p = sub.add_parser("dev", help="Development tools")
-    dev_sub = dev_p.add_subparsers(dest="dev_command", required=True)
-    dev_sub.add_parser("bootstrap", help="Set up development environment").set_defaults(func=cmd_dev_bootstrap)
 
     # ── Module-contributed commands (loaded from di.json) ──
 
@@ -132,7 +185,7 @@ def main() -> None:
     replay_p.set_defaults(func=cmd_replay)
 
     # -- Config (core_config_data) --
-    cfg_set_p = sub.add_parser("config-set", help="Set a config value in core_config_data")
+    cfg_set_p = sub.add_parser("config:set", help="Set a config value in core_config_data")
     cfg_set_p.add_argument("path", help="Config path (e.g. my_app/tools/mysql_prod/pass)")
     cfg_set_p.add_argument("value", help="Value to set")
     cfg_set_p.add_argument("--scope", default="default",
@@ -141,15 +194,15 @@ def main() -> None:
                            help="Scope ID (workspace or agent_view ID)")
     cfg_set_p.set_defaults(func=cmd_config_set)
 
-    cfg_get_p = sub.add_parser("config-get", help="Get a config value from core_config_data")
+    cfg_get_p = sub.add_parser("config:get", help="Get a config value from core_config_data")
     cfg_get_p.add_argument("path", help="Config path")
     cfg_get_p.set_defaults(func=cmd_config_get)
 
-    cfg_list_p = sub.add_parser("config-list", help="List config values")
+    cfg_list_p = sub.add_parser("config:list", help="List config values")
     cfg_list_p.add_argument("prefix", nargs="?", default="", help="Filter by path prefix (e.g. module name)")
     cfg_list_p.set_defaults(func=cmd_config_list)
 
-    cfg_rm_p = sub.add_parser("config-remove", help="Remove a config value from DB")
+    cfg_rm_p = sub.add_parser("config:remove", help="Remove a config value from DB")
     cfg_rm_p.add_argument("path", help="Config path to remove")
     cfg_rm_p.add_argument("--scope", default="default",
                           help="Config scope: default, workspace, agent_view")
@@ -175,7 +228,18 @@ def main() -> None:
     make_p.add_argument("--base-dir", default=None, dest="base_dir", help="Base directory for module")
     make_p.set_defaults(func=cmd_make_module)
 
-    # -- Module validation --
+    # -- Module management --
+    en_p = sub.add_parser("module:enable", help="Enable a module")
+    en_p.add_argument("name", help="Module name")
+    en_p.set_defaults(func=cmd_module_enable)
+
+    dis_p = sub.add_parser("module:disable", help="Disable a module")
+    dis_p.add_argument("name", help="Module name")
+    dis_p.set_defaults(func=cmd_module_disable)
+
+    ml_p = sub.add_parser("module:list", help="List all modules and their status")
+    ml_p.set_defaults(func=cmd_module_list)
+
     val_p = sub.add_parser("module:validate", help="Validate module structure and manifests")
     val_p.add_argument("name", nargs="?", default=None, help="Module name (validates all if omitted)")
     val_p.set_defaults(func=cmd_module_validate)

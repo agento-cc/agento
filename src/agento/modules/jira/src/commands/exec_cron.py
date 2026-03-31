@@ -1,4 +1,4 @@
-"""CLI command: exec-cron — Execute a recurring Jira task."""
+"""CLI command: exec:cron — Execute a recurring Jira task."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ import argparse
 class ExecCronCommand:
     @property
     def name(self) -> str:
-        return "exec-cron"
+        return "exec:cron"
 
     @property
     def help(self) -> str:

@@ -7,11 +7,8 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 ## 2026-03-30 — Unified CLI and two installation paths for beta
 
 - **Python CLI replaces bash wrapper.** The `bin/agento` bash script (821 lines) delegated host-side commands and proxied to Docker for runtime commands. This made `uv tool install agento` useless. Now all commands live in the Python package (`src/agento/framework/cli/` subpackage). `bin/agento` is a thin `exec uv run agento "$@"` wrapper, kept for backward compat.
-- **CLI subpackage architecture.** `cli.py` (920 lines) split into `cli/__init__.py` (dispatch), `cli/runtime.py`, `cli/token.py`, `cli/config.py`, `cli/module.py` plus new standalone commands: `cli/doctor.py`, `cli/init.py`, `cli/compose.py`, `cli/toolbox.py`, `cli/dev.py`. Two-tier design: standalone commands (doctor, init, up/down) skip `bootstrap()` and heavy imports; runtime commands (consumer, config, token) require DB.
-- **Two official installation paths for beta:**
-  - **Path A — Docker Compose** (`agento init` → `agento up`): quickstart, self-hosted, demo. Includes MySQL in Compose. Zero external deps beyond Docker.
-  - **Path B — Local dev** (`uv`/`pip` + `npm` + external MySQL): framework contributors, module authors. `agento toolbox start` runs Node.js locally with env-file-based config.
-- **External MySQL for local dev, no auto-install.** `agento doctor` validates DB connectivity. If missing, prints instructions for providing external connection params. Does not install MySQL, configure system services, or create databases automatically. Aligns with `setup:upgrade` as single entry point for all system updates.
+- **CLI subpackage architecture.** `cli.py` (920 lines) split into `cli/__init__.py` (dispatch), `cli/runtime.py`, `cli/token.py`, `cli/config.py`, `cli/module.py` plus new standalone commands: `cli/doctor.py`, `cli/init.py`, `cli/compose.py`. Two-tier design: standalone commands (doctor, init, up/down) skip `bootstrap()` and heavy imports; runtime commands (consumer, config, token) require DB.
+- **Single installation path:** Docker Compose (`agento init` → `agento up`). Includes MySQL in Compose. Zero external deps beyond Docker.
 - **Deferred: GHCR images, PyPI publishing.** Beta is not the right time to add release infrastructure. Contracts still stabilizing (Phase 9.5 runtime, upcoming API/admin/broker). Pre-built images add tagging, compatibility, rollback, and pipeline maintenance overhead with little beta-stage payoff.
 - **Golden path:** `uv tool install agento → agento init → agento up → agento setup:upgrade`.
 
@@ -133,6 +130,6 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 - **httpx over requests**: native async for future migration, `respx` for clean mocking.
 - **Dataclasses over Pydantic**: simple models (<10 fields) from a trusted internal API. Pydantic is 5 MB+ of unneeded validation.
-- **Single CLI with subcommands** (`sync`, `exec-cron`, `exec-todo`, `task-list`) instead of 4 bash scripts.
+- **Single CLI with subcommands** (`sync`, `exec:cron`, `exec:todo`, `task-list`) instead of 4 bash scripts.
 - **Code baked into Docker image** (COPY, not volume mount): venv must be in image. Trade-off: requires rebuild after code changes.
 - **Toolbox REST API is the only Jira interface**: cron container has no Jira credentials. All mutations go through Claude CLI via MCP.

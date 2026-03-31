@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from ..db import get_connection
+from ..db import get_connection_or_exit
 from .runtime import _load_framework_config
 
 
@@ -17,7 +17,7 @@ def cmd_config_set(args: argparse.Namespace) -> None:
     scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
 
     db_config, _, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         encrypted = config_set_auto_encrypt(
             conn, args.path, args.value, scope=scope, scope_id=scope_id
@@ -41,7 +41,7 @@ def cmd_config_remove(args: argparse.Namespace) -> None:
     scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
 
     db_config, _, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         deleted = config_delete(conn, args.path, scope=scope, scope_id=scope_id)
         conn.commit()
@@ -60,7 +60,7 @@ def cmd_config_get(args: argparse.Namespace) -> None:
     is_exact = "/" in path
 
     db_config, _, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         if is_exact:
             _config_get_exact(conn, path)
@@ -197,7 +197,7 @@ def cmd_config_list(args: argparse.Namespace) -> None:
     from ..module_loader import scan_modules
 
     db_config, _, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         prefix = args.prefix or ""
 

@@ -84,17 +84,6 @@ agento up                             # Start containers (cron + toolbox + MySQL
 agento setup:upgrade                  # Apply migrations, install crontab
 ```
 
-### Path B — Local dev
-
-For framework contributors, module authors, and integrators:
-
-```bash
-git clone https://github.com/saipix/agento.git && cd agento
-agento dev bootstrap                  # Install Python + Node.js deps
-# Provide external MySQL connection (set CRONDB_* vars in .env)
-agento toolbox start                  # Run toolbox locally
-```
-
 ### System check
 
 ```bash

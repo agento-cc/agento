@@ -28,7 +28,7 @@ consumer (long-running loop)
 - `publish jira-cron <issue_key>` — publish a recurring task job
 - `publish jira-todo [issue_key]` — publish a TODO task job (or dispatch)
 - `consumer` — start the job consumer loop
-- `exec-cron` / `exec-todo` — direct execution (bypass queue, for debugging)
+- `exec:cron` / `exec:todo` — direct execution (bypass queue, for debugging)
 - `task-list` — show prioritized action list
 - `token register <agent_type> <label> [credentials_path] [--token-limit N]` — register a subscription token (omit path for interactive OAuth)
 - `token list [--agent-type claude|codex] [--all] [--json]` — list registered tokens

@@ -18,7 +18,7 @@ _P_GET_TOKEN = "agento.framework.agent_manager.token_store.get_token"
 _P_AUTH = "agento.framework.agent_manager.auth.authenticate_interactive"
 _P_SAVE = "agento.framework.agent_manager.auth.save_credentials"
 _P_UPDATE_ACTIVE = "agento.framework.agent_manager.update_active_token"
-_P_GET_CONN = "agento.framework.cli.token.get_connection"
+_P_GET_CONN = "agento.framework.cli.token.get_connection_or_exit"
 _FRAMEWORK_CFG = (DatabaseConfig(), ConsumerConfig(), AgentManagerConfig())
 
 

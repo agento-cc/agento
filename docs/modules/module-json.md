@@ -41,6 +41,8 @@ Module manifest — declares metadata, tools, and field schemas. Read by Toolbox
 | `name` | Yes | Module identifier (used in config paths, directory name) |
 | `version` | No | Semantic version |
 | `description` | Yes | Human-readable description (shown in `module:list`) |
+| `sequence` | No | Array of module names this module depends on (Magento `<sequence>`). Dependencies load first. Default: `[]` |
+| `order` | No | Integer sort position within same dependency tier — lower loads earlier. Default: `1000` |
 | `repo` | No | Git repository URL for source code access |
 | `tools` | No | Array of tool definitions |
 | `log_servers` | No | SSH log servers for the AI agent |

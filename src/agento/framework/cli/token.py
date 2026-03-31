@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from ..db import get_connection
+from ..db import get_connection_or_exit
 from ..log import get_logger
 from .runtime import _load_framework_config
 
@@ -18,7 +18,7 @@ def cmd_token_refresh(args: argparse.Namespace) -> None:
     db_config, _, am_config = _load_framework_config()
     logger = get_logger("agent-manager")
 
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         token = get_token(conn, args.token_id)
         if token is None:
@@ -106,7 +106,7 @@ def cmd_token_register(args: argparse.Namespace) -> None:
         save_credentials(auth_result, credentials_path)
         print(f"Credentials saved to: {credentials_path}")
 
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         token = register_token(
             conn,
@@ -128,7 +128,7 @@ def cmd_token_list(args: argparse.Namespace) -> None:
     from ..agent_manager import AgentProvider, get_usage_summaries, list_tokens
 
     db_config, _, am_config = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         agent_type = AgentProvider(args.agent_type) if args.agent_type else None
         tokens = list_tokens(conn, agent_type=agent_type, enabled_only=not args.all)
@@ -187,7 +187,7 @@ def cmd_token_deregister(args: argparse.Namespace) -> None:
 
     db_config, _, _ = _load_framework_config()
     logger = get_logger("agent-manager")
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         found = deregister_token(conn, token_id=args.token_id, logger=logger)
         conn.commit()
@@ -209,7 +209,7 @@ def cmd_token_set(args: argparse.Namespace) -> None:
     agent_type = AgentProvider(args.agent_type)
     token_id = args.token_id
 
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     try:
         found = set_primary_token(conn, agent_type, token_id, logger)
         if not found:
@@ -232,7 +232,7 @@ def cmd_token_usage(args: argparse.Namespace) -> None:
     from ..agent_manager import AgentProvider, get_usage_summaries, list_tokens
 
     db_config, _, _ = _load_framework_config()
-    conn = get_connection(db_config)
+    conn = get_connection_or_exit(db_config)
     window = args.window
     try:
         agent_types = [AgentProvider(args.agent_type)] if args.agent_type else list(AgentProvider)

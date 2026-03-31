@@ -257,16 +257,9 @@ Technical architecture without developer experience is useless for open-source. 
 
 2. **New standalone commands:**
    - `agento doctor` — checks Python, uv, Docker, Compose, Node.js, npm, MySQL connectivity
-   - `agento init <project>` — scaffolds project with Docker Compose config (or `--local` for external MySQL)
+   - `agento init <project>` — scaffolds project with Docker Compose config
    - `agento up` / `agento down` / `agento logs` — Docker Compose lifecycle wrappers
-   - `agento toolbox start` — runs Node.js toolbox locally with env-file-based config
-   - `agento dev bootstrap` — replaces `scripts/bootstrap-dev.sh`
-
-3. **Two official installation paths:**
-   - **Path A — Docker Compose:** `agento init` → `agento up` → `agento setup:upgrade`
-   - **Path B — Local dev:** `uv`/`pip` + `npm` + external MySQL + `agento toolbox start`
-
-4. **Python packaging improvements:** optional deps (`agento[dev]`, `agento[test]`), non-Python file inclusion in wheel (JS, JSON, SQL, templates).
+3. **Python packaging improvements:** optional deps (`agento[dev]`, `agento[test]`), non-Python file inclusion in wheel (JS, JSON, SQL, templates).
 
 5. **Module generator** (`agento make:module`) and **module validation** (`agento module:validate`) — DONE (Phase 5 items from earlier work).
 
@@ -294,7 +287,6 @@ Technical architecture without developer experience is useless for open-source. 
 
 - [x] `agento make:module slack` produces a skeleton that passes `module:validate`
 - [x] `agento doctor` / `agento init` / `agento up` provide a golden path for new users
-- [x] `agento toolbox start` enables local development without full Docker
 - [ ] Documentation covers all capability types with copy-paste examples
 - [ ] Architecture tests run in CI and fail on boundary violations
 - [ ] A developer unfamiliar with the codebase can create a working tool module in <30 minutes
@@ -319,7 +311,7 @@ Phases 1–3 built powerful framework features (module registries, scoped config
    - `Command` protocol in `framework/contracts/`
    - Modules contribute CLI commands via `di.json` `commands` key
    - Bootstrap loads commands; `cli.py` dispatches from registry
-   - Jira module contributes: sync, exec-cron, exec-todo, publish
+   - Jira module contributes: sync, exec:cron, exec:todo, publish
    - Framework `cli.py` has **zero imports from any module**
 
 3. **Architecture boundary enforced:** `grep -r "from agento.modules" src/agento/framework/` returns nothing.

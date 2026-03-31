@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agento.framework.module_validator import validate_module
+from agento.framework.module_validator import validate_all, validate_module
 
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_DIR = ROOT / "app" / "code" / "_example"
@@ -63,6 +63,42 @@ class TestValidateModule:
         errors = validate_module(EXAMPLE_DIR)
         assert errors == [], f"Example module errors: {errors}"
 
+    def test_sequence_not_a_list(self, tmp_path: Path):
+        mod = tmp_path / "bad-seq"
+        mod.mkdir()
+        (mod / "module.json").write_text(json.dumps({
+            "name": "bad-seq",
+            "version": "1.0.0",
+            "description": "Bad sequence",
+            "sequence": "not-a-list",
+        }))
+        errors = validate_module(mod)
+        assert any("'sequence' must be an array" in e for e in errors)
+
+    def test_sequence_entry_not_string(self, tmp_path: Path):
+        mod = tmp_path / "bad-entry"
+        mod.mkdir()
+        (mod / "module.json").write_text(json.dumps({
+            "name": "bad-entry",
+            "version": "1.0.0",
+            "description": "Bad entry",
+            "sequence": [123],
+        }))
+        errors = validate_module(mod)
+        assert any("must be strings" in e for e in errors)
+
+    def test_valid_sequence(self, tmp_path: Path):
+        mod = tmp_path / "good-seq"
+        mod.mkdir()
+        (mod / "module.json").write_text(json.dumps({
+            "name": "good-seq",
+            "version": "1.0.0",
+            "description": "Good sequence",
+            "sequence": ["core"],
+        }))
+        errors = validate_module(mod)
+        assert errors == []
+
     def test_invalid_json_file(self, tmp_path: Path):
         mod = tmp_path / "bad-json"
         mod.mkdir()
@@ -76,3 +112,31 @@ class TestValidateModule:
 
         errors = validate_module(mod)
         assert any("config.json" in e for e in errors)
+
+
+class TestValidateAllSequenceCross:
+    """Cross-module sequence validation: deps must exist on disk."""
+
+    def _make_module(self, parent: Path, name: str, sequence: list[str] | None = None):
+        mod = parent / name
+        mod.mkdir()
+        manifest = {"name": name, "version": "1.0.0", "description": f"{name} module"}
+        if sequence is not None:
+            manifest["sequence"] = sequence
+        (mod / "module.json").write_text(json.dumps(manifest))
+
+    def test_missing_sequence_dep_flagged(self, tmp_path: Path):
+        core = tmp_path / "core_mods"
+        core.mkdir()
+        self._make_module(core, "a", sequence=["nonexistent"])
+        results = validate_all(core, tmp_path / "empty")
+        assert "a" in results
+        assert any("nonexistent" in e and "not found" in e for e in results["a"])
+
+    def test_valid_sequence_dep_passes(self, tmp_path: Path):
+        core = tmp_path / "core_mods"
+        core.mkdir()
+        self._make_module(core, "base")
+        self._make_module(core, "child", sequence=["base"])
+        results = validate_all(core, tmp_path / "empty")
+        assert "child" not in results

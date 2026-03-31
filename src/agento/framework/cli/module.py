@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
+
+
+def _module_dirs() -> tuple[Path, Path]:
+    """Resolve core and user module directories (Docker vs local dev)."""
+    project_root = Path(__file__).resolve().parents[4]
+    core_dir = project_root / "src" / "agento" / "modules"
+    user_dir = Path("/app/code") if Path("/app/code").is_dir() else project_root / "app" / "code"
+    return core_dir, user_dir
 
 
 def cmd_make_module(args: argparse.Namespace) -> None:
-    from pathlib import Path
-
     from ..module_scaffold import scaffold_module
 
     if args.base_dir:
@@ -26,14 +33,51 @@ def cmd_make_module(args: argparse.Namespace) -> None:
     print(f"Module '{args.name}' created at {module_dir}")
 
 
-def cmd_module_validate(args: argparse.Namespace) -> None:
-    from pathlib import Path
+def _set_module_state(name: str, enabled: bool) -> None:
+    """Enable or disable a module by name. Exits if module not found."""
+    from ..module_loader import scan_modules
+    from ..module_status import set_enabled
 
+    core_dir, user_dir = _module_dirs()
+    all_names = {m.name for m in scan_modules(str(core_dir)) + scan_modules(str(user_dir))}
+    if name not in all_names:
+        print(f"Module '{name}' not found")
+        sys.exit(1)
+
+    set_enabled(name, enabled)
+    state = "enabled" if enabled else "disabled"
+    print(f"Module '{name}' {state}")
+
+
+def cmd_module_enable(args: argparse.Namespace) -> None:
+    _set_module_state(args.name, True)
+
+
+def cmd_module_disable(args: argparse.Namespace) -> None:
+    _set_module_state(args.name, False)
+
+
+def cmd_module_list(args: argparse.Namespace) -> None:
+    from ..dependency_resolver import resolve_order
+    from ..module_loader import scan_modules
+    from ..module_status import is_enabled, read_module_status
+
+    core_dir, user_dir = _module_dirs()
+    all_modules = resolve_order(scan_modules(str(core_dir)) + scan_modules(str(user_dir)))
+    status = read_module_status()
+
+    for m in all_modules:
+        enabled = is_enabled(m.name, status)
+        mark = "\u2714" if enabled else "\u2718"
+        state = "enabled" if enabled else "disabled"
+        seq = f" (requires: {', '.join(m.sequence)})" if m.sequence else ""
+        print(f"  {mark} {m.name:20s} {state:10s} {m.version:8s} {m.description}{seq}")
+
+
+def cmd_module_validate(args: argparse.Namespace) -> None:
     from ..module_validator import validate_all, validate_module
 
-    project_root = Path(__file__).resolve().parents[4]
-    core_dir = project_root / "src" / "agento" / "modules"
-    user_dir = Path("/app/code") if Path("/app/code").is_dir() else project_root / "app" / "code"
+    core_dir, user_dir = _module_dirs()
 
     if args.name:
         # Validate specific module

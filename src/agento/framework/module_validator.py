@@ -27,6 +27,16 @@ def validate_module(module_dir: Path) -> list[str]:
 
     Returns list of error messages (empty = valid).
     """
+    errors, _ = _validate_module(module_dir)
+    return errors
+
+
+def _validate_module(module_dir: Path) -> tuple[list[str], dict | None]:
+    """Validate a module and return (errors, parsed_manifest).
+
+    The manifest is returned for cross-validation in validate_all(),
+    avoiding a second read of module.json.
+    """
     errors: list[str] = []
     module_dir = Path(module_dir)
 
@@ -34,21 +44,30 @@ def validate_module(module_dir: Path) -> list[str]:
     manifest_path = module_dir / "module.json"
     if not manifest_path.is_file():
         errors.append("module.json not found")
-        return errors
+        return errors, None
 
     try:
         manifest = json.loads(manifest_path.read_text())
     except json.JSONDecodeError as e:
         errors.append(f"module.json: invalid JSON — {e}")
-        return errors
+        return errors, None
 
     if not isinstance(manifest, dict):
         errors.append("module.json: must be a JSON object")
-        return errors
+        return errors, None
 
     for field in REQUIRED_MANIFEST_FIELDS:
         if field not in manifest:
             errors.append(f"module.json: missing required field '{field}'")
+
+    # Validate sequence
+    sequence = manifest.get("sequence", [])
+    if not isinstance(sequence, list):
+        errors.append("module.json: 'sequence' must be an array")
+    else:
+        for entry in sequence:
+            if not isinstance(entry, str):
+                errors.append(f"module.json: sequence entries must be strings, got {type(entry).__name__}")
 
     # Validate tools
     tools = manifest.get("tools", [])
@@ -124,15 +143,17 @@ def validate_module(module_dir: Path) -> list[str]:
                         f"system.json: field '{field_name}' has invalid type '{field_def['type']}'"
                     )
 
-    return errors
+    return errors, manifest
 
 
 def validate_all(core_dir: Path, user_dir: Path) -> dict[str, list[str]]:
     """Validate all modules in core and user directories.
 
     Returns dict of {module_name: [errors]} for modules with errors.
+    Includes cross-module sequence validation (unresolvable dependencies).
     """
     results: dict[str, list[str]] = {}
+    all_modules: dict[str, dict] = {}  # name -> manifest
 
     for scan_dir in (core_dir, user_dir):
         if not scan_dir.is_dir():
@@ -140,8 +161,19 @@ def validate_all(core_dir: Path, user_dir: Path) -> dict[str, list[str]]:
         for entry in sorted(scan_dir.iterdir()):
             if not entry.is_dir() or entry.name.startswith("_") or entry.name.startswith("."):
                 continue
-            errors = validate_module(entry)
+            errors, manifest = _validate_module(entry)
             if errors:
                 results[entry.name] = errors
+            if manifest is not None:
+                all_modules[manifest.get("name", entry.name)] = manifest
+
+    # Cross-validate sequence references
+    available_names = set(all_modules.keys())
+    for name, manifest in all_modules.items():
+        for dep in manifest.get("sequence", []):
+            if dep not in available_names:
+                results.setdefault(name, []).append(
+                    f"module.json: sequence dependency '{dep}' not found on disk"
+                )
 
     return results

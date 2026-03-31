@@ -36,6 +36,10 @@ docker/.cron.env
 app/code/*
 !app/code/_example/
 
+# Deployment-specific module state (like Magento app/etc/config.php)
+app/etc/*
+!app/etc/.gitkeep
+
 # Build artifacts
 dist/
 

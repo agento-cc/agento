@@ -163,7 +163,7 @@ def run_scenario(
 def cmd_e2e(args) -> None:
     """CLI entry point for `agent e2e`."""
     from .bootstrap import bootstrap
-    from .cli import _load_framework_config
+    from .cli.runtime import _load_framework_config
 
     db_config, consumer_config, _ = _load_framework_config()
     conn = get_connection(db_config)
