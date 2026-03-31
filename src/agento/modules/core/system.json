@@ -1,4 +1,5 @@
 {
+  "timezone": {"type": "string", "label": "IANA timezone (e.g., America/New_York)"},
   "sql_timeout_seconds": {"type": "integer", "label": "SQL query timeout (seconds)"},
   "email_whitelist": {"type": "string", "label": "Allowed email recipients (comma-separated)"},
   "smtp_host": {"type": "string", "label": "SMTP host"},

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -61,7 +61,7 @@ class Job:
         context: str | None = None,
     ) -> Job:
         """Create a minimal Job for CLI / testing (no DB row)."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         return cls(
             id=0, schedule_id=None, type=type, source=source,
             agent_view_id=agent_view_id, priority=priority,

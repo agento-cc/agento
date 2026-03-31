@@ -20,6 +20,7 @@ def get_connection(config: object) -> pymysql.Connection:
         connect_timeout=10,
         read_timeout=30,
         write_timeout=30,
+        init_command="SET time_zone = '+00:00'",
     )
 
 

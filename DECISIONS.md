@@ -4,6 +4,17 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 ---
 
+## 2026-03-31 — UTC-everywhere for timestamps, scoped timezone config
+
+- **All Python datetime calls use `datetime.now(timezone.utc)`, never naive `datetime.now()`.** Bug: container TZ (`Europe/Warsaw`, UTC+2) caused `scheduled_after` on the retry path to be stored 2h ahead of MySQL `NOW()` (UTC). Retries fired late by the timezone offset. Root cause: Python `datetime.now()` returns container-local time, but MySQL TIMESTAMP columns and `NOW()` operate in the server's session timezone (UTC by default).
+- **MySQL session pinned to UTC via `init_command="SET time_zone = '+00:00'"`.** Every PyMySQL connection now explicitly sets the session timezone. This makes `NOW()`, `CURRENT_TIMESTAMP`, and parameter interpretation all UTC — regardless of MySQL server config or container TZ. Belt-and-suspenders with the Python fix: even if someone adds a naive datetime, MySQL interprets it as UTC.
+- **`core/timezone` scoped config** (IANA timezone string, default `"UTC"`). Lives in the `core` module (`system.json` + `config.json`). Supports per-agent_view / per-workspace / global override via the standard 3-level fallback. Purpose: when code needs to reason in local time (idempotency key bucketing, future display/reporting), it reads the configured timezone rather than relying on container TZ. The `get_timezone()` helper in `config_resolver.py` resolves the value and returns a `ZoneInfo` instance.
+- **Why not a `general` module (Magento convention)?** Magento groups locale under `general/locale/timezone`. We chose `core/timezone` because the `core` module already exists and owns framework-level settings. Adding a `general` module for a single field is premature. Can be moved later if `general` gains more fields.
+- **Docker TZ env var unchanged.** After the fix, `TZ=Europe/Warsaw` in docker-compose only affects container-level concerns (cron daemon scheduling, log timestamps). All DB-facing code is timezone-independent.
+- **Idempotency key bucketing stays UTC for now.** `build_idempotency_key()` uses `datetime.now(timezone.utc)` which is correct and consistent. Timezone-aware bucketing (so "9am Warsaw" cron keys align with configured timezone) deferred until the channel has access to scoped config at publish time.
+
+---
+
 ## 2026-03-30 — Unified CLI and two installation paths for beta
 
 - **Python CLI replaces bash wrapper.** The `bin/agento` bash script (821 lines) delegated host-side commands and proxied to Docker for runtime commands. This made `uv tool install agento` useless. Now all commands live in the Python package (`src/agento/framework/cli/` subpackage). `bin/agento` is a thin `exec uv run agento "$@"` wrapper, kept for backward compat.

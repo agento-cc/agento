@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -57,7 +57,7 @@ def _make_runtime_with_agent_view(
     scoped_overrides: dict | None = None,
 ) -> AgentViewRuntime:
     """Create a runtime with a real agent_view + workspace."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     return AgentViewRuntime(
         agent_view=AgentView(
             id=agent_view_id, workspace_id=workspace_id,

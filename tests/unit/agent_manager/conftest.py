@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -33,7 +33,7 @@ def make_token(
     enabled: bool = True,
 ) -> Token:
     """Helper to create Token instances for testing."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     return Token(
         id=id,
         agent_type=agent_type,

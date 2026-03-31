@@ -77,6 +77,19 @@ bin/agento config:list
 bin/agento config:list jira
 ```
 
+## Framework Config Paths
+
+The `core` module provides these framework-level config paths:
+
+| Path | Type | Default | Description |
+|------|------|---------|-------------|
+| `core/timezone` | string | `"UTC"` | IANA timezone (e.g., `Europe/Warsaw`, `America/New_York`). Scoped per agent_view/workspace. |
+| `core/sql_timeout_seconds` | integer | `300` | SQL query timeout |
+| `core/email_whitelist` | string | — | Allowed email recipients (comma-separated) |
+| `core/allowed_domains` | string | — | Allowed browser domains (comma-separated) |
+
+All DB timestamps are stored in UTC. The `core/timezone` setting is for code that needs to reason in local time (e.g., idempotency key bucketing, future display). ENV override: `CONFIG__CORE__TIMEZONE`.
+
 ## Only Overrides
 
 This table stores **only explicit overrides** — values set via `config:set`. Default values from `config.json` are NOT stored here (unlike Magento where defaults are sometimes imported).

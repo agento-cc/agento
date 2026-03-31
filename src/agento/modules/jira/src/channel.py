@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from agento.framework.agent_view_runtime import resolve_publish_priority
 from agento.framework.channels.base import PromptFragments, WorkItem
@@ -141,7 +141,7 @@ class JiraPublisher:
         reference_id: str | None,
         updated: str | None = None,
     ) -> str:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         if agent_type == AgentType.CRON and reference_id:
             return f"jira:cron:{reference_id}:{now.strftime('%Y%m%d_%H%M')}"
         elif agent_type == AgentType.TODO and reference_id:

@@ -1,5 +1,5 @@
 """Tests for agent_view runtime resolver."""
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from agento.framework.agent_view_runtime import (
@@ -14,14 +14,14 @@ from agento.framework.workspace import AgentView, Workspace
 def _make_agent_view(id=1, workspace_id=10, code="developer"):
     return AgentView(
         id=id, workspace_id=workspace_id, code=code, label=code.title(),
-        is_active=True, created_at=datetime.now(), updated_at=datetime.now(),
+        is_active=True, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
     )
 
 
 def _make_workspace(id=10, code="acme"):
     return Workspace(
         id=id, code=code, label=code.title(),
-        is_active=True, created_at=datetime.now(), updated_at=datetime.now(),
+        is_active=True, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
     )
 
 

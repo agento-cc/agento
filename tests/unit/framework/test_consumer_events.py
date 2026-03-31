@@ -124,12 +124,12 @@ class TestFinalizeJobEvents:
 class TestDequeueEvents:
     @patch("agento.framework.consumer.get_connection")
     def test_dequeue_dispatches_job_claimed(self, mock_get_conn):
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         em = get_event_manager()
         em.register("job_claimed", ObserverEntry(name="c", observer_class=_EventCollector))
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         row = {
             "id": 1, "schedule_id": None, "type": "cron", "source": "jira",
             "agent_view_id": None, "priority": 50,
