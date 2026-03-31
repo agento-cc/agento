@@ -2,15 +2,24 @@
 from __future__ import annotations
 
 import argparse
-from typing import Protocol
+import logging
+from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
 class Command(Protocol):
     """Protocol for module-contributed CLI commands (Magento console command pattern)."""
 
     @property
     def name(self) -> str:
         """Subcommand name (e.g. 'sync', 'publish')."""
+        ...
+
+    @property
+    def shortcut(self) -> str:
+        """Short alias (e.g. 'se:up' for 'setup:upgrade'). Empty string = no shortcut."""
         ...
 
     @property
@@ -27,13 +36,25 @@ class Command(Protocol):
         ...
 
 
-# Registry: name → Command instance
+# Registry: name -> Command instance
 _COMMANDS: dict[str, Command] = {}
+
+# Shortcut registry: shortcut -> command name
+_SHORTCUTS: dict[str, str] = {}
 
 
 def register_command(command: Command) -> None:
-    """Register a module-contributed command."""
+    """Register a command with optional shortcut."""
     _COMMANDS[command.name] = command
+    sc = command.shortcut
+    if sc:
+        if sc in _SHORTCUTS:
+            logger.warning(
+                "Shortcut %r already registered for %r, ignoring duplicate from %r",
+                sc, _SHORTCUTS[sc], command.name,
+            )
+        else:
+            _SHORTCUTS[sc] = command.name
 
 
 def get_commands() -> dict[str, Command]:
@@ -41,6 +62,12 @@ def get_commands() -> dict[str, Command]:
     return dict(_COMMANDS)
 
 
+def get_shortcuts() -> dict[str, str]:
+    """Return all registered shortcuts (shortcut -> command name)."""
+    return dict(_SHORTCUTS)
+
+
 def clear() -> None:
     """Reset registry (for testing)."""
     _COMMANDS.clear()
+    _SHORTCUTS.clear()

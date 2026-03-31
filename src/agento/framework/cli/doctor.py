@@ -71,69 +71,84 @@ def _check_mysql_connectivity() -> tuple[bool, str]:
         return False, f"cannot connect to {host}:{port} ({exc})"
 
 
-def cmd_doctor(args: argparse.Namespace) -> None:
-    """Run system prerequisite checks."""
-    print("\nAgento Doctor\n")
+class DoctorCommand:
+    @property
+    def name(self) -> str:
+        return "doctor"
 
-    checks = []
+    @property
+    def shortcut(self) -> str:
+        return ""
 
-    # Python
-    ok, info = _check_python()
-    checks.append(("Python", ok, info))
+    @property
+    def help(self) -> str:
+        return "Check system prerequisites"
 
-    # uv
-    ok, info = _check_binary("uv")
-    checks.append(("uv", ok, info))
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        pass
 
-    # Docker
-    ok, info = _check_binary("docker")
-    checks.append(("Docker", ok, info))
+    def execute(self, args: argparse.Namespace) -> None:
+        print("\nAgento Doctor\n")
 
-    # Docker Compose
-    ok, info = _check_docker_compose()
-    checks.append(("Docker Compose", ok, info))
+        checks = []
 
-    # Node.js
-    ok, info = _check_binary("node")
-    checks.append(("Node.js", ok, info))
+        # Python
+        ok, info = _check_python()
+        checks.append(("Python", ok, info))
 
-    # npm
-    ok, info = _check_binary("npm")
-    checks.append(("npm", ok, info))
+        # uv
+        ok, info = _check_binary("uv")
+        checks.append(("uv", ok, info))
 
-    # MySQL
-    ok_mysql, info_mysql = _check_mysql_connectivity()
-    checks.append(("MySQL", ok_mysql, info_mysql))
+        # Docker
+        ok, info = _check_binary("docker")
+        checks.append(("Docker", ok, info))
 
-    # Display results
-    for name, ok, info in checks:
-        status = "OK" if ok else "MISSING"
-        print(f"  {name:20} {status:8} {info}")
+        # Docker Compose
+        ok, info = _check_docker_compose()
+        checks.append(("Docker Compose", ok, info))
 
-    print()
+        # Node.js
+        ok, info = _check_binary("node")
+        checks.append(("Node.js", ok, info))
 
-    # Determine available modes
-    has_docker = any(name == "Docker" and ok for name, ok, _ in checks)
-    has_compose = any(name == "Docker Compose" and ok for name, ok, _ in checks)
-    has_node = any(name == "Node.js" and ok for name, ok, _ in checks)
+        # npm
+        ok, info = _check_binary("npm")
+        checks.append(("npm", ok, info))
 
-    print("  Available modes:")
-    if has_docker and has_compose:
-        print("    Docker Compose        ready")
-    else:
-        print("    Docker Compose        not available (install Docker + Compose)")
+        # MySQL
+        ok_mysql, info_mysql = _check_mysql_connectivity()
+        checks.append(("MySQL", ok_mysql, info_mysql))
 
-    if has_node and ok_mysql:
-        print("    Local dev             ready (Node.js + external MySQL)")
-    elif has_node:
-        print("    Local dev             partial (Node.js OK, MySQL not configured)")
-    else:
-        print("    Local dev             not available (install Node.js)")
+        # Display results
+        for name, ok, info in checks:
+            status = "OK" if ok else "MISSING"
+            print(f"  {name:20} {status:8} {info}")
 
-    print()
+        print()
 
-    # Exit code: 0 if Python >= 3.11
-    python_ok = any(name == "Python" and ok for name, ok, _ in checks)
-    if not python_ok:
-        log_error("Python >= 3.11 is required.")
-        sys.exit(1)
+        # Determine available modes
+        has_docker = any(name == "Docker" and ok for name, ok, _ in checks)
+        has_compose = any(name == "Docker Compose" and ok for name, ok, _ in checks)
+        has_node = any(name == "Node.js" and ok for name, ok, _ in checks)
+
+        print("  Available modes:")
+        if has_docker and has_compose:
+            print("    Docker Compose        ready")
+        else:
+            print("    Docker Compose        not available (install Docker + Compose)")
+
+        if has_node and ok_mysql:
+            print("    Local dev             ready (Node.js + external MySQL)")
+        elif has_node:
+            print("    Local dev             partial (Node.js OK, MySQL not configured)")
+        else:
+            print("    Local dev             not available (install Node.js)")
+
+        print()
+
+        # Exit code: 0 if Python >= 3.11
+        python_ok = any(name == "Python" and ok for name, ok, _ in checks)
+        if not python_ok:
+            log_error("Python >= 3.11 is required.")
+            sys.exit(1)

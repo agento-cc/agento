@@ -8,7 +8,7 @@ applies pending patches, tracking them in the ``data_patch`` table.
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import pymysql
 
@@ -18,6 +18,7 @@ from .module_loader import ModuleManifest, import_class
 # Contract
 # ---------------------------------------------------------------------------
 
+@runtime_checkable
 class DataPatch(Protocol):
     """Protocol for module data patches."""
 

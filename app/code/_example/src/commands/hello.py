@@ -4,6 +4,10 @@ class HelloCommand:
         return "example:hello"
 
     @property
+    def shortcut(self):
+        return "ex:he"
+
+    @property
     def help(self):
         return "Print a greeting from the example module"
 

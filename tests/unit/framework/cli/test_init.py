@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from agento.framework.cli.init import TemplateNotFoundError, _get_template, cmd_init
+from agento.framework.cli.init import InitCommand, TemplateNotFoundError, _get_template
 
 
 class TestGetTemplate:
@@ -47,7 +47,7 @@ class TestCmdInit:
         original_cwd = Path.cwd
         try:
             Path.cwd = staticmethod(lambda: tmp_path)
-            cmd_init(args)
+            InitCommand().execute(args)
         finally:
             Path.cwd = original_cwd
 
@@ -75,6 +75,6 @@ class TestCmdInit:
         try:
             Path.cwd = staticmethod(lambda: tmp_path)
             with pytest.raises(SystemExit, match="1"):
-                cmd_init(args)
+                InitCommand().execute(args)
         finally:
             Path.cwd = original_cwd

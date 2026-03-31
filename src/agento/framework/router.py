@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .event_manager import get_event_manager
 from .events import RoutingAmbiguousEvent, RoutingFailedEvent, RoutingResolvedEvent
@@ -53,6 +53,7 @@ class RoutingDecision:
     ambiguous: bool = False
 
 
+@runtime_checkable
 class Router(Protocol):
     @property
     def name(self) -> str: ...

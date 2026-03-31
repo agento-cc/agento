@@ -6,27 +6,32 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .agent_manager.auth import clear_auth_strategies, register_auth_strategy
+from .agent_manager.auth import AuthStrategy, clear_auth_strategies, register_auth_strategy
 from .agent_manager.models import AgentProvider
 from .channels import registry as channel_registry
+from .channels.base import Channel
+from .commands import Command
 from .commands import clear as clear_commands
 from .commands import register_command
 from .onboarding import clear as clear_onboardings
 from .onboarding import register_onboarding
 from .config_resolver import load_db_overrides, read_config_defaults, resolve_module_config
 from .dependency_resolver import resolve_order, validate_dependencies
-from .event_manager import ObserverEntry, get_event_manager
+from .event_manager import Observer, ObserverEntry, get_event_manager
 from .event_manager import clear as clear_event_manager
 from .events import ModuleLoadedEvent, ModuleReadyEvent, ModuleRegisterEvent, ModuleShutdownEvent
 from .job_models import AgentType
 from .module_loader import ModuleManifest, import_class, scan_modules
 from .module_status import filter_enabled
+from .router import Router
 from .router_registry import clear as clear_routers
 from .router_registry import register_router
+from .runner import Runner
 from .runner_factory import clear as clear_runners
 from .runner_factory import register_runner as register_runner_factory
 from .workflows import clear as clear_workflows
 from .workflows import register_workflow
+from .workflows.base import Workflow
 from .workflows.blank import BlankWorkflow
 
 logger = logging.getLogger(__name__)
@@ -164,6 +169,12 @@ def _load_observers(m: ModuleManifest) -> None:
         for decl in observer_list:
             try:
                 cls = import_class(m.path, decl["class"])
+                if not issubclass(cls, Observer):
+                    logger.error(
+                        "Observer %r from module %s does not implement Observer protocol, skipping",
+                        decl.get("name"), m.name,
+                    )
+                    continue
                 entry = ObserverEntry(
                     name=decl["name"],
                     observer_class=cls,
@@ -185,7 +196,14 @@ def _load_channels(m: ModuleManifest) -> None:
     for decl in m.provides.get("channels", []):
         try:
             cls = import_class(m.path, decl["class"])
-            channel_registry.register_channel(cls())
+            instance = cls()
+            if not isinstance(instance, Channel):
+                logger.error(
+                    "Channel %r from module %s does not implement Channel protocol, skipping",
+                    decl.get("name"), m.name,
+                )
+                continue
+            channel_registry.register_channel(instance)
             logger.debug("Registered channel %r from module %s", decl["name"], m.name)
         except Exception:
             logger.exception("Failed to load channel %r from module %s", decl.get("name"), m.name)
@@ -195,6 +213,12 @@ def _load_workflows(m: ModuleManifest) -> None:
     for decl in m.provides.get("workflows", []):
         try:
             cls = import_class(m.path, decl["class"])
+            if not issubclass(cls, Workflow):
+                logger.error(
+                    "Workflow %r from module %s does not extend Workflow, skipping",
+                    decl.get("type"), m.name,
+                )
+                continue
             agent_type = AgentType(decl["type"])
             register_workflow(agent_type, cls)
             logger.debug("Registered workflow %r from module %s", decl["type"], m.name)
@@ -206,6 +230,12 @@ def _load_runtimes(m: ModuleManifest) -> None:
     for decl in m.provides.get("runtimes", []):
         try:
             cls = import_class(m.path, decl["class"])
+            if not issubclass(cls, Runner):
+                logger.error(
+                    "Runtime %r from module %s does not implement Runner protocol, skipping",
+                    decl.get("provider"), m.name,
+                )
+                continue
 
             def _make_factory(runner_cls: type):
                 def factory(**kwargs: object):
@@ -223,8 +253,15 @@ def _load_auth_strategies(m: ModuleManifest) -> None:
     for decl in m.provides.get("auth_strategies", []):
         try:
             cls = import_class(m.path, decl["class"])
+            instance = cls()
+            if not isinstance(instance, AuthStrategy):
+                logger.error(
+                    "Auth strategy %r from module %s does not implement AuthStrategy protocol, skipping",
+                    decl.get("provider"), m.name,
+                )
+                continue
             provider = AgentProvider(decl["provider"])
-            register_auth_strategy(provider, cls())
+            register_auth_strategy(provider, instance)
             logger.debug("Registered auth strategy %r from module %s", decl["provider"], m.name)
         except Exception:
             logger.exception("Failed to load auth strategy %r from module %s", decl.get("provider"), m.name)
@@ -234,7 +271,14 @@ def _load_commands(m: ModuleManifest) -> None:
     for decl in m.provides.get("commands", []):
         try:
             cls = import_class(m.path, decl["class"])
-            register_command(cls())
+            instance = cls()
+            if not isinstance(instance, Command):
+                logger.error(
+                    "Command %r from module %s does not implement Command protocol, skipping",
+                    decl.get("name"), m.name,
+                )
+                continue
+            register_command(instance)
             logger.debug("Registered command %r from module %s", decl["name"], m.name)
         except Exception:
             logger.exception("Failed to load command %r from module %s", decl.get("name"), m.name)
@@ -256,7 +300,14 @@ def _load_routers(m: ModuleManifest) -> None:
     for decl in m.provides.get("routers", []):
         try:
             cls = import_class(m.path, decl["class"])
-            register_router(cls(), order=decl.get("order", 1000))
+            instance = cls()
+            if not isinstance(instance, Router):
+                logger.error(
+                    "Router %r from module %s does not implement Router protocol, skipping",
+                    decl.get("name"), m.name,
+                )
+                continue
+            register_router(instance, order=decl.get("order", 1000))
             logger.debug("Registered router %r from module %s", decl["name"], m.name)
         except Exception:
             logger.exception("Failed to load router %r from module %s", decl.get("name"), m.name)

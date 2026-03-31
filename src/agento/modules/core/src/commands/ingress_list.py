@@ -11,6 +11,10 @@ class IngressListCommand:
         return "ingress:list"
 
     @property
+    def shortcut(self) -> str:
+        return "in:li"
+
+    @property
     def help(self) -> str:
         return "List ingress identity bindings"
 

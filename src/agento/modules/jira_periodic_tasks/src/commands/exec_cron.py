@@ -10,6 +10,10 @@ class ExecCronCommand:
         return "jira:periodic:exec"
 
     @property
+    def shortcut(self) -> str:
+        return "ji:pe:ex"
+
+    @property
     def help(self) -> str:
         return "Execute a recurring Jira task"
 

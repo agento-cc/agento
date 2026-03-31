@@ -10,6 +10,10 @@ class IngressBindCommand:
         return "ingress:bind"
 
     @property
+    def shortcut(self) -> str:
+        return "in:bi"
+
+    @property
     def help(self) -> str:
         return "Bind an inbound identity to an agent_view"
 

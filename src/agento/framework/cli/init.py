@@ -33,103 +33,119 @@ def _get_template(name: str) -> str:
     raise TemplateNotFoundError(name)
 
 
-def cmd_init(args: argparse.Namespace) -> None:
-    """Scaffold a new agento project."""
-    project_name = args.project
-    project_dir = Path.cwd() / project_name
+class InitCommand:
+    @property
+    def name(self) -> str:
+        return "init"
 
-    if project_dir.exists():
-        log_error(f"Directory already exists: {project_dir}")
-        sys.exit(1)
+    @property
+    def shortcut(self) -> str:
+        return ""
 
-    log_info(f"Initializing agento project: {project_name}")
+    @property
+    def help(self) -> str:
+        return "Scaffold a new agento project"
 
-    # Create directory structure
-    dirs = [
-        ".agento",
-        "app/code",
-        "workspace/systems",
-        "workspace/tmp",
-        "logs",
-        "tokens",
-        "storage",
-        "docker",
-    ]
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("project", help="Project directory name")
+        parser.add_argument("--no-example", action="store_true", dest="no_example", help="Skip example module")
 
-    for d in dirs:
-        (project_dir / d).mkdir(parents=True, exist_ok=True)
+    def execute(self, args: argparse.Namespace) -> None:
+        project_name = args.project
+        project_dir = Path.cwd() / project_name
 
-    # Write project.json
-    project_meta = {
-        "name": project_name,
-        "version": "0.1.0",
-        "created_at": datetime.now(UTC).isoformat(),
-    }
-    (project_dir / ".agento" / "project.json").write_text(
-        json.dumps(project_meta, indent=2) + "\n"
-    )
+        if project_dir.exists():
+            log_error(f"Directory already exists: {project_dir}")
+            sys.exit(1)
 
-    # Write .gitignore
-    try:
-        gitignore = _get_template("gitignore")
-        (project_dir / ".gitignore").write_text(gitignore)
-    except TemplateNotFoundError:
-        # Template not available yet — write a basic one
-        (project_dir / ".gitignore").write_text(
-            "# Agento project\n"
-            "app/code/*/\n"
-            "!app/code/_example/\n"
-            "logs/\n"
-            "tokens/\n"
-            "storage/\n"
-            "secrets.env\n"
-            "docker/.env\n"
-            "docker/.cron.env\n"
-            "docker/.toolbox.env\n"
+        log_info(f"Initializing agento project: {project_name}")
+
+        # Create directory structure
+        dirs = [
+            ".agento",
+            "app/code",
+            "workspace/systems",
+            "workspace/tmp",
+            "logs",
+            "tokens",
+            "storage",
+            "docker",
+        ]
+
+        for d in dirs:
+            (project_dir / d).mkdir(parents=True, exist_ok=True)
+
+        # Write project.json
+        project_meta = {
+            "name": project_name,
+            "version": "0.1.0",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        (project_dir / ".agento" / "project.json").write_text(
+            json.dumps(project_meta, indent=2) + "\n"
         )
 
-    # Docker Compose config
-    try:
-        compose_content = _get_template("docker-compose.yml")
-        (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
-    except TemplateNotFoundError:
-        log_warn("docker-compose.yml template not available yet.")
+        # Write .gitignore
+        try:
+            gitignore = _get_template("gitignore")
+            (project_dir / ".gitignore").write_text(gitignore)
+        except TemplateNotFoundError:
+            # Template not available yet -- write a basic one
+            (project_dir / ".gitignore").write_text(
+                "# Agento project\n"
+                "app/code/*/\n"
+                "!app/code/_example/\n"
+                "logs/\n"
+                "tokens/\n"
+                "storage/\n"
+                "secrets.env\n"
+                "docker/.env\n"
+                "docker/.cron.env\n"
+                "docker/.toolbox.env\n"
+            )
 
-    try:
-        env_content = _get_template("env.example")
-        (project_dir / "docker" / ".env").write_text(env_content)
-    except TemplateNotFoundError:
-        # Write basic .env
-        (project_dir / "docker" / ".env").write_text(
-            "COMPOSE_PROJECT_NAME=agento\n"
-            "DISABLE_LLM=0\n"
-        )
+        # Docker Compose config
+        try:
+            compose_content = _get_template("docker-compose.yml")
+            (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
+        except TemplateNotFoundError:
+            log_warn("docker-compose.yml template not available yet.")
 
-    # Write secrets.env.example
-    try:
-        secrets_content = _get_template("secrets.env.example")
-        (project_dir / "secrets.env.example").write_text(secrets_content)
-    except TemplateNotFoundError:
-        (project_dir / "secrets.env.example").write_text(
-            "# Agento secrets — DO NOT commit this file\n"
-            "# Copy to secrets.env and fill in your values\n"
-            "\n"
-            "# Jira credentials (only needed if using Jira module)\n"
-            "JIRA_USER=\n"
-            "JIRA_TOKEN=\n"
-            "JIRA_HOST=\n"
-            "\n"
-            "# Encryption key for config values\n"
-            "AGENTO_ENCRYPTION_KEY=\n"
-        )
+        try:
+            env_content = _get_template("env.example")
+            (project_dir / "docker" / ".env").write_text(env_content)
+        except TemplateNotFoundError:
+            # Write basic .env
+            (project_dir / "docker" / ".env").write_text(
+                "COMPOSE_PROJECT_NAME=agento\n"
+                "DISABLE_LLM=0\n"
+            )
 
-    log_info(f"Project created at: {project_dir}")
-    print()
+        # Write secrets.env.example
+        try:
+            secrets_content = _get_template("secrets.env.example")
+            (project_dir / "secrets.env.example").write_text(secrets_content)
+        except TemplateNotFoundError:
+            (project_dir / "secrets.env.example").write_text(
+                "# Agento secrets — DO NOT commit this file\n"
+                "# Copy to secrets.env and fill in your values\n"
+                "\n"
+                "# Jira credentials (only needed if using Jira module)\n"
+                "JIRA_USER=\n"
+                "JIRA_TOKEN=\n"
+                "JIRA_HOST=\n"
+                "\n"
+                "# Encryption key for config values\n"
+                "AGENTO_ENCRYPTION_KEY=\n"
+            )
 
-    print(f"{cyan('Next steps:')}")
-    print(f"  cd {project_name}")
-    print("  # Edit docker/.env and secrets.env with your settings")
-    print("  agento up                     Start Docker Compose")
-    print("  agento setup:upgrade          Apply migrations")
-    print("  agento module:add <name>      Add your first module")
-    print()
+        log_info(f"Project created at: {project_dir}")
+        print()
+
+        print(f"{cyan('Next steps:')}")
+        print(f"  cd {project_name}")
+        print("  # Edit docker/.env and secrets.env with your settings")
+        print("  agento up                     Start Docker Compose")
+        print("  agento setup:upgrade          Apply migrations")
+        print("  agento module:add <name>      Add your first module")
+        print()

@@ -25,60 +25,105 @@ def _get_compose_cmd() -> list[str]:
     return ["docker", "compose", "-f", str(compose_file)]
 
 
-def cmd_up(args: argparse.Namespace) -> None:
-    """Start the agento runtime via Docker Compose."""
-    compose = _get_compose_cmd()
+class UpCommand:
+    @property
+    def name(self) -> str:
+        return "up"
 
-    log_info("Starting containers...")
-    result = subprocess.run([*compose, "up", "-d"])
-    if result.returncode != 0:
-        log_error("Failed to start containers.")
-        sys.exit(result.returncode)
+    @property
+    def shortcut(self) -> str:
+        return ""
 
-    # Wait for MySQL health
-    log_info("Waiting for MySQL...")
-    for _ in range(30):
-        check = subprocess.run(
-            [*compose, "exec", "-T", "mysql", "mysqladmin", "ping", "-h", "localhost", "--silent"],
-            capture_output=True,
-        )
-        if check.returncode == 0:
-            break
-        time.sleep(2)
-    else:
-        log_warn("MySQL may not be ready yet. Continuing anyway...")
+    @property
+    def help(self) -> str:
+        return "Start the agento runtime (Docker Compose)"
 
-    log_info("Containers started.")
-    print()
-    print("Next steps:")
-    print("  agento setup:upgrade          Apply migrations and install crontab")
-    print("  agento token register claude   Register an agent token")
-    print("  agento logs                    View container logs")
-    print()
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        pass
+
+    def execute(self, args: argparse.Namespace) -> None:
+        compose = _get_compose_cmd()
+
+        log_info("Starting containers...")
+        result = subprocess.run([*compose, "up", "-d"])
+        if result.returncode != 0:
+            log_error("Failed to start containers.")
+            sys.exit(result.returncode)
+
+        # Wait for MySQL health
+        log_info("Waiting for MySQL...")
+        for _ in range(30):
+            check = subprocess.run(
+                [*compose, "exec", "-T", "mysql", "mysqladmin", "ping", "-h", "localhost", "--silent"],
+                capture_output=True,
+            )
+            if check.returncode == 0:
+                break
+            time.sleep(2)
+        else:
+            log_warn("MySQL may not be ready yet. Continuing anyway...")
+
+        log_info("Containers started.")
+        print()
+        print("Next steps:")
+        print("  agento setup:upgrade          Apply migrations and install crontab")
+        print("  agento token:register claude   Register an agent token")
+        print("  agento logs                    View container logs")
+        print()
 
 
-def cmd_down(args: argparse.Namespace) -> None:
-    """Stop the agento runtime."""
-    compose = _get_compose_cmd()
+class DownCommand:
+    @property
+    def name(self) -> str:
+        return "down"
 
-    log_info("Stopping containers...")
-    result = subprocess.run([*compose, "down"])
-    if result.returncode != 0:
-        log_error("Failed to stop containers.")
-        sys.exit(result.returncode)
+    @property
+    def shortcut(self) -> str:
+        return ""
 
-    log_info("Containers stopped.")
+    @property
+    def help(self) -> str:
+        return "Stop the agento runtime"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        pass
+
+    def execute(self, args: argparse.Namespace) -> None:
+        compose = _get_compose_cmd()
+
+        log_info("Stopping containers...")
+        result = subprocess.run([*compose, "down"])
+        if result.returncode != 0:
+            log_error("Failed to stop containers.")
+            sys.exit(result.returncode)
+
+        log_info("Containers stopped.")
 
 
-def cmd_logs(args: argparse.Namespace) -> None:
-    """Show container logs."""
-    compose = _get_compose_cmd()
+class LogsCommand:
+    @property
+    def name(self) -> str:
+        return "logs"
 
-    cmd = [*compose, "logs", "-f"]
-    if hasattr(args, "service") and args.service:
-        cmd.append(args.service)
+    @property
+    def shortcut(self) -> str:
+        return ""
 
-    import contextlib
+    @property
+    def help(self) -> str:
+        return "Show container logs"
 
-    with contextlib.suppress(KeyboardInterrupt):
-        subprocess.run(cmd)
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("service", nargs="?", default=None, help="Service name (cron, toolbox, mysql)")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        compose = _get_compose_cmd()
+
+        cmd = [*compose, "logs", "-f"]
+        if hasattr(args, "service") and args.service:
+            cmd.append(args.service)
+
+        import contextlib
+
+        with contextlib.suppress(KeyboardInterrupt):
+            subprocess.run(cmd)

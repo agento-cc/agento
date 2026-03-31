@@ -10,6 +10,10 @@ class ExecTodoCommand:
         return "exec:todo"
 
     @property
+    def shortcut(self) -> str:
+        return "ex:to"
+
+    @property
     def help(self) -> str:
         return "Execute next TODO task (or specific issue)"
 

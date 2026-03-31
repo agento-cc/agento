@@ -7,69 +7,6 @@ from ..db import get_connection_or_exit
 from .runtime import _load_framework_config
 
 
-def cmd_config_set(args: argparse.Namespace) -> None:
-    from ..core_config import config_set_auto_encrypt
-    from ..event_manager import get_event_manager
-    from ..events import ConfigSavedEvent
-
-    scope = getattr(args, "scope", "default")
-    scope_id = getattr(args, "scope_id", 0)
-    scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
-
-    db_config, _, _ = _load_framework_config()
-    conn = get_connection_or_exit(db_config)
-    try:
-        encrypted = config_set_auto_encrypt(
-            conn, args.path, args.value, scope=scope, scope_id=scope_id
-        )
-        conn.commit()
-        get_event_manager().dispatch(
-            "agento_config_saved",
-            ConfigSavedEvent(path=args.path, encrypted=encrypted),
-        )
-        label = " (encrypted)" if encrypted else ""
-        print(f"Set: {args.path}{label}{scope_label}")
-    finally:
-        conn.close()
-
-
-def cmd_config_remove(args: argparse.Namespace) -> None:
-    from ..core_config import config_delete
-
-    scope = getattr(args, "scope", "default")
-    scope_id = getattr(args, "scope_id", 0)
-    scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
-
-    db_config, _, _ = _load_framework_config()
-    conn = get_connection_or_exit(db_config)
-    try:
-        deleted = config_delete(conn, args.path, scope=scope, scope_id=scope_id)
-        conn.commit()
-        if deleted:
-            print(f"Removed: {args.path}{scope_label}")
-        else:
-            print(f"Not found: {args.path}{scope_label}")
-    finally:
-        conn.close()
-
-
-def cmd_config_get(args: argparse.Namespace) -> None:
-    path = args.path
-    # Exact path: has / (e.g. core/allowed_domains, jira/tools/mysql_.../host)
-    # Prefix/tree: no / (e.g. jira, core)
-    is_exact = "/" in path
-
-    db_config, _, _ = _load_framework_config()
-    conn = get_connection_or_exit(db_config)
-    try:
-        if is_exact:
-            _config_get_exact(conn, path)
-        else:
-            _config_get_tree(conn, path)
-    finally:
-        conn.close()
-
-
 def _config_get_exact(conn, path: str) -> None:
     """Display config value for exact path, deduplicated across scopes."""
     from ..core_config import config_get
@@ -185,69 +122,6 @@ def _format_scope_tag(conn, scope: str, scope_id: int) -> str:
     return f"{scope}/{scope_id}"
 
 
-def cmd_config_list(args: argparse.Namespace) -> None:
-    from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
-    from ..config_resolver import (
-        load_db_overrides,
-        read_config_defaults,
-        resolve_module_config_with_sources,
-        resolve_tool_field,
-    )
-    from ..core_config import config_list
-    from ..module_loader import scan_modules
-
-    db_config, _, _ = _load_framework_config()
-    conn = get_connection_or_exit(db_config)
-    try:
-        prefix = args.prefix or ""
-
-        # Show resolved module config (3-level fallback with sources)
-        manifests = scan_modules(CORE_MODULES_DIR) + scan_modules(USER_MODULES_DIR)
-        db_overrides = load_db_overrides(conn)
-        shown_module_config = False
-
-        for m in manifests:
-            if prefix and not m.name.startswith(prefix):
-                continue
-            if m.config:
-                config_defaults = read_config_defaults(m.path)
-                resolved = resolve_module_config_with_sources(
-                    m, config_defaults, db_overrides
-                )
-                for field_name, rv in resolved.items():
-                    display = "****" if rv.source == "db" and _is_field_obscure(m, field_name) else _format_value(rv.value)
-                    print(f"  {m.name}/{field_name} = {display}  [{rv.source}]")
-                    shown_module_config = True
-
-            # Show resolved tool config
-            for tool in m.tools:
-                if prefix and not f"{m.name}/tools/{tool['name']}".startswith(prefix):
-                    continue
-                config_defaults = read_config_defaults(m.path)
-                for field_name, field_schema in tool.get("fields", {}).items():
-                    rv = resolve_tool_field(
-                        m.name, tool["name"], field_name,
-                        field_schema, config_defaults, db_overrides,
-                    )
-                    is_obscure = field_schema.get("type") == "obscure"
-                    display = "****" if is_obscure and rv.value else _format_value(rv.value)
-                    print(f"  {m.name}/tools/{tool['name']}/{field_name} = {display}  [{rv.source}]")
-                    shown_module_config = True
-
-        # Also show raw DB overrides not covered by module manifests
-        if not shown_module_config:
-            entries = config_list(conn, prefix=prefix)
-            if not entries:
-                print("No config entries found.")
-                return
-            for entry in entries:
-                enc = " [encrypted]" if entry["encrypted"] else ""
-                scope_label = f"{entry['scope']}/{entry['scope_id']}"
-                print(f"  {entry['path']} = {entry['value']}{enc}  [{scope_label}]")
-    finally:
-        conn.close()
-
-
 def _is_field_obscure(manifest, field_name: str) -> bool:
     """Check if a module config field is obscure type."""
     schema = manifest.config.get(field_name, {})
@@ -261,3 +135,197 @@ def _format_value(value: object) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
+
+
+class ConfigSetCommand:
+    @property
+    def name(self) -> str:
+        return "config:set"
+
+    @property
+    def shortcut(self) -> str:
+        return "co:se"
+
+    @property
+    def help(self) -> str:
+        return "Set a config value in core_config_data"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("path", help="Config path (e.g. my_app/tools/mysql_prod/pass)")
+        parser.add_argument("value", help="Value to set")
+        parser.add_argument("--scope", default="default",
+                           help="Config scope: default, workspace, agent_view")
+        parser.add_argument("--scope-id", type=int, default=0,
+                           help="Scope ID (workspace or agent_view ID)")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..core_config import config_set_auto_encrypt
+        from ..event_manager import get_event_manager
+        from ..events import ConfigSavedEvent
+
+        scope = getattr(args, "scope", "default")
+        scope_id = getattr(args, "scope_id", 0)
+        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            encrypted = config_set_auto_encrypt(
+                conn, args.path, args.value, scope=scope, scope_id=scope_id
+            )
+            conn.commit()
+            get_event_manager().dispatch(
+                "agento_config_saved",
+                ConfigSavedEvent(path=args.path, encrypted=encrypted),
+            )
+            label = " (encrypted)" if encrypted else ""
+            print(f"Set: {args.path}{label}{scope_label}")
+        finally:
+            conn.close()
+
+
+class ConfigGetCommand:
+    @property
+    def name(self) -> str:
+        return "config:get"
+
+    @property
+    def shortcut(self) -> str:
+        return "co:ge"
+
+    @property
+    def help(self) -> str:
+        return "Get a config value from core_config_data"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("path", help="Config path")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        path = args.path
+        is_exact = "/" in path
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            if is_exact:
+                _config_get_exact(conn, path)
+            else:
+                _config_get_tree(conn, path)
+        finally:
+            conn.close()
+
+
+class ConfigListCommand:
+    @property
+    def name(self) -> str:
+        return "config:list"
+
+    @property
+    def shortcut(self) -> str:
+        return "co:li"
+
+    @property
+    def help(self) -> str:
+        return "List config values"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("prefix", nargs="?", default="", help="Filter by path prefix (e.g. module name)")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
+        from ..config_resolver import (
+            load_db_overrides,
+            read_config_defaults,
+            resolve_module_config_with_sources,
+            resolve_tool_field,
+        )
+        from ..core_config import config_list
+        from ..module_loader import scan_modules
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            prefix = args.prefix or ""
+
+            manifests = scan_modules(CORE_MODULES_DIR) + scan_modules(USER_MODULES_DIR)
+            db_overrides = load_db_overrides(conn)
+            shown_module_config = False
+
+            for m in manifests:
+                if prefix and not m.name.startswith(prefix):
+                    continue
+                if m.config:
+                    config_defaults = read_config_defaults(m.path)
+                    resolved = resolve_module_config_with_sources(
+                        m, config_defaults, db_overrides
+                    )
+                    for field_name, rv in resolved.items():
+                        display = "****" if rv.source == "db" and _is_field_obscure(m, field_name) else _format_value(rv.value)
+                        print(f"  {m.name}/{field_name} = {display}  [{rv.source}]")
+                        shown_module_config = True
+
+                for tool in m.tools:
+                    if prefix and not f"{m.name}/tools/{tool['name']}".startswith(prefix):
+                        continue
+                    config_defaults = read_config_defaults(m.path)
+                    for field_name, field_schema in tool.get("fields", {}).items():
+                        rv = resolve_tool_field(
+                            m.name, tool["name"], field_name,
+                            field_schema, config_defaults, db_overrides,
+                        )
+                        is_obscure = field_schema.get("type") == "obscure"
+                        display = "****" if is_obscure and rv.value else _format_value(rv.value)
+                        print(f"  {m.name}/tools/{tool['name']}/{field_name} = {display}  [{rv.source}]")
+                        shown_module_config = True
+
+            if not shown_module_config:
+                entries = config_list(conn, prefix=prefix)
+                if not entries:
+                    print("No config entries found.")
+                    return
+                for entry in entries:
+                    enc = " [encrypted]" if entry["encrypted"] else ""
+                    scope_label = f"{entry['scope']}/{entry['scope_id']}"
+                    print(f"  {entry['path']} = {entry['value']}{enc}  [{scope_label}]")
+        finally:
+            conn.close()
+
+
+class ConfigRemoveCommand:
+    @property
+    def name(self) -> str:
+        return "config:remove"
+
+    @property
+    def shortcut(self) -> str:
+        return "co:re"
+
+    @property
+    def help(self) -> str:
+        return "Remove a config value from DB"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("path", help="Config path to remove")
+        parser.add_argument("--scope", default="default",
+                          help="Config scope: default, workspace, agent_view")
+        parser.add_argument("--scope-id", type=int, default=0,
+                          help="Scope ID (workspace or agent_view ID)")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..core_config import config_delete
+
+        scope = getattr(args, "scope", "default")
+        scope_id = getattr(args, "scope_id", 0)
+        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            deleted = config_delete(conn, args.path, scope=scope, scope_id=scope_id)
+            conn.commit()
+            if deleted:
+                print(f"Removed: {args.path}{scope_label}")
+            else:
+                print(f"Not found: {args.path}{scope_label}")
+        finally:
+            conn.close()

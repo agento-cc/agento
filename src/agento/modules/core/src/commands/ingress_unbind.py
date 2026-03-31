@@ -10,6 +10,10 @@ class IngressUnbindCommand:
         return "ingress:unbind"
 
     @property
+    def shortcut(self) -> str:
+        return "in:un"
+
+    @property
     def help(self) -> str:
         return "Remove an ingress identity binding"
 

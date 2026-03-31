@@ -32,6 +32,10 @@ class PublishCommand:
         return "publish"
 
     @property
+    def shortcut(self) -> str:
+        return ""
+
+    @property
     def help(self) -> str:
         return "Publish a job to the queue"
 

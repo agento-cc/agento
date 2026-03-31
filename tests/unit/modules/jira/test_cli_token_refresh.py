@@ -77,8 +77,8 @@ class TestTokenRefresh:
             patch(_P_SAVE) as mock_save,
         ):
             mock_stdin.isatty.return_value = True
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(2))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(2))
 
         mock_auth.assert_called_once_with(AgentProvider.CODEX, mock_logger.return_value)
         mock_save.assert_called_once_with(_AUTH_RESULT, token.credentials_path)
@@ -90,8 +90,8 @@ class TestTokenRefresh:
             patch(_P_GET_TOKEN, return_value=None),
             pytest.raises(SystemExit, match="1"),
         ):
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(99))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(99))
 
     def test_refresh_disabled_token(self, mock_conn_fn, mock_config, mock_logger):
         token = _make_token(enabled=False)
@@ -101,8 +101,8 @@ class TestTokenRefresh:
             patch(_P_GET_TOKEN, return_value=token),
             pytest.raises(SystemExit, match="1"),
         ):
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(2))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(2))
 
     def test_refresh_no_tty(self, mock_conn_fn, mock_config, mock_logger):
         token = _make_token()
@@ -114,8 +114,8 @@ class TestTokenRefresh:
             pytest.raises(SystemExit, match="1"),
         ):
             mock_stdin.isatty.return_value = False
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(2))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(2))
 
     def test_refresh_auth_failure(self, mock_conn_fn, mock_config, mock_logger):
         token = _make_token()
@@ -128,8 +128,8 @@ class TestTokenRefresh:
             pytest.raises(SystemExit, match="1"),
         ):
             mock_stdin.isatty.return_value = True
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(2))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(2))
 
     def test_refresh_primary_updates_symlink(self, mock_conn_fn, mock_config, mock_logger):
         token = _make_token(is_primary=True)
@@ -143,8 +143,8 @@ class TestTokenRefresh:
             patch(_P_UPDATE_ACTIVE) as mock_update,
         ):
             mock_stdin.isatty.return_value = True
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(2))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(2))
 
         mock_update.assert_called_once()
 
@@ -160,7 +160,7 @@ class TestTokenRefresh:
             patch(_P_UPDATE_ACTIVE) as mock_update,
         ):
             mock_stdin.isatty.return_value = True
-            from agento.framework.cli.token import cmd_token_refresh
-            cmd_token_refresh(_make_args(2))
+            from agento.framework.cli.token import TokenRefreshCommand
+            TokenRefreshCommand().execute(_make_args(2))
 
         mock_update.assert_not_called()

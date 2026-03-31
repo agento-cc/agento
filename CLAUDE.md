@@ -77,9 +77,9 @@ agento config:list [prefix]
 agento config:remove <path> [--scope=<scope>] [--scope-id=<id>]
 
 # Tokens
-agento token list
-agento token register claude <label> [path]
-agento token set claude <id>
+agento token:list
+agento token:register claude <label> [path]
+agento token:set claude <id>
 
 # Ingress identity binding (route inbound requests to agent_views)
 agento ingress:bind <type> <value> <agent_view_code>   # e.g. ingress:bind jira jira developer

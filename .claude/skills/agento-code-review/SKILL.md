@@ -98,3 +98,6 @@ Summarize findings in sections:
 4. **Suggestions** — optional improvements (keep brief, respect "surgical changes" rule)
 
 If everything passes, confirm the code looks good.
+
+PUNISHMENT:
+- Never merge automatically anything. Only merge when you are directly asked to.

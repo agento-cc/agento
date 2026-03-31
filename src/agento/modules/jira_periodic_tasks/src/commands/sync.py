@@ -14,6 +14,10 @@ class SyncCommand:
         return "jira:periodic:sync"
 
     @property
+    def shortcut(self) -> str:
+        return "ji:pe:sy"
+
+    @property
     def help(self) -> str:
         return "Sync Jira recurring tasks to crontab"
 
