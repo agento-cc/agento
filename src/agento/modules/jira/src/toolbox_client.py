@@ -34,5 +34,17 @@ class ToolboxClient:
             raise ToolboxAPIError(response.status_code, response.text)
         return response.json().get("comments", [])
 
+    def jira_request(self, method: str, path: str, body: dict | None = None) -> dict:
+        payload: dict = {"method": method, "path": path}
+        if body is not None:
+            payload["body"] = body
+        response = self._client.post("/api/jira/request", json=payload)
+        if response.status_code != 200:
+            raise ToolboxAPIError(response.status_code, response.text)
+        data = response.json()
+        if not data.get("ok", True):
+            raise ToolboxAPIError(data.get("status", 0), str(data.get("data", "")))
+        return data.get("data", {})
+
     def close(self) -> None:
         self._client.close()

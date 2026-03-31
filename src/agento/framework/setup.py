@@ -5,6 +5,7 @@ Runs the full setup sequence in order:
 2. Module SQL migrations (dependency order)
 3. Data patches (topological order by ``require()``)
 4. Cron installation
+5. Module onboarding (interactive, skippable)
 """
 from __future__ import annotations
 
@@ -43,6 +44,8 @@ class SetupResult:
     module_migrations: dict[str, list[str]] = field(default_factory=dict)
     data_patches: dict[str, list[str]] = field(default_factory=dict)
     cron_changed: bool = False
+    onboardings_run: list[str] = field(default_factory=list)
+    onboardings_skipped: list[str] = field(default_factory=list)
 
     @property
     def has_work(self) -> bool:
@@ -51,6 +54,8 @@ class SetupResult:
             or self.module_migrations
             or self.data_patches
             or self.cron_changed
+            or self.onboardings_run
+            or self.onboardings_skipped
         )
 
 
@@ -59,6 +64,7 @@ def setup_upgrade(
     logger: logging.Logger,
     *,
     dry_run: bool = False,
+    skip_onboarding: bool = False,
     core_dir: str = CORE_MODULES_DIR,
     user_dir: str = USER_MODULES_DIR,
 ) -> SetupResult:
@@ -118,6 +124,24 @@ def setup_upgrade(
             "agento_crontab_installed",
             CrontabInstalledEvent(job_count=len(jobs)),
         )
+
+    # 5. Module onboarding (interactive, skippable)
+    if not dry_run and not skip_onboarding:
+        from .bootstrap import get_module_config
+        from .onboarding import get_onboardings
+
+        for module_name, onboarding in get_onboardings().items():
+            if onboarding.is_complete(conn):
+                continue
+            answer = input(
+                f"\n  Module '{module_name}' needs onboarding: "
+                f"{onboarding.describe()}\n  Proceed? [Y/n] "
+            )
+            if answer.strip().lower() in ("", "y", "yes"):
+                onboarding.run(conn, get_module_config(module_name), logger)
+                result.onboardings_run.append(module_name)
+            else:
+                result.onboardings_skipped.append(module_name)
 
     em.dispatch(
         "agento_setup_complete",

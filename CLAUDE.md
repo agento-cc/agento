@@ -26,8 +26,8 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
 - **Agent view config:** Scoped DB paths `agent/provider`, `agent/claude/model`, `agent/scheduling/priority`, `agent/instructions/agents_md`, `agent/instructions/soul_md` — resolved with agent_view → workspace → global fallback.
 - **Security:** Toolbox = only container with secrets. Agent has NO credentials.
 - **DB tables:** singular names (e.g., `job`, `schedule`, `oauth_token`). Exception: `core_config_data` (Magento convention).
-- **Setup:** `setup:upgrade` on deploy — applies schema migrations, data patches, installs crontab. Single entry point for all system updates after module file changes.
-- **Module setup files:** `sql/*.sql` (schema migrations), `data_patch.json` (data patches), `cron.json` (cron jobs)
+- **Setup:** `setup:upgrade` on deploy — applies schema migrations, data patches, installs crontab, runs module onboarding. Single entry point for all system updates after module file changes. Use `--skip-onboarding` for CI/CD.
+- **Module setup files:** `sql/*.sql` (schema migrations), `data_patch.json` (data patches), `cron.json` (cron jobs), `di.json` onboarding (interactive external system setup)
 - **Migration tracking:** `schema_migration` table (with `module` column), `data_patch` table
 - **Events:** `agento_<area>_<action>` for framework events, `<vendor>_<module>_<event>` for third-party. Prefer domain/lifecycle events, not interception. See [docs/architecture/events.md](docs/architecture/events.md).
 - **Logs:** consumer → JSON structured, publisher/sync → text. Never delete while consumer runs.
@@ -57,8 +57,9 @@ cd docker && docker compose restart cron toolbox
 cd docker && docker compose build cron toolbox && docker compose up -d --force-recreate
 
 # Setup (after module changes or deploy)
-agento setup:upgrade                                   # Apply migrations, data patches, install crontab
+agento setup:upgrade                                   # Apply migrations, data patches, install crontab, run onboarding
 agento setup:upgrade --dry-run                         # Preview pending work
+agento setup:upgrade --skip-onboarding                 # Skip interactive module onboarding (for CI/CD)
 
 # Modules
 agento module:add <name> --tool mysql:<tool_name>:<description>

@@ -11,6 +11,8 @@ from .agent_manager.models import AgentProvider
 from .channels import registry as channel_registry
 from .commands import clear as clear_commands
 from .commands import register_command
+from .onboarding import clear as clear_onboardings
+from .onboarding import register_onboarding
 from .config_resolver import load_db_overrides, read_config_defaults, resolve_module_config
 from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import ObserverEntry, get_event_manager
@@ -83,6 +85,7 @@ def bootstrap(
     clear_runners()
     clear_auth_strategies()
     clear_commands()
+    clear_onboardings()
     clear_routers()
     clear_event_manager()
     _MODULE_CONFIGS.clear()
@@ -132,6 +135,7 @@ def bootstrap(
         _load_runtimes(m)
         _load_auth_strategies(m)
         _load_commands(m)
+        _load_onboarding(m)
         _load_routers(m)
 
         # Dispatch module_loaded (capabilities registered)
@@ -234,6 +238,18 @@ def _load_commands(m: ModuleManifest) -> None:
             logger.debug("Registered command %r from module %s", decl["name"], m.name)
         except Exception:
             logger.exception("Failed to load command %r from module %s", decl.get("name"), m.name)
+
+
+def _load_onboarding(m: ModuleManifest) -> None:
+    class_path = m.provides.get("onboarding")
+    if not class_path:
+        return
+    try:
+        cls = import_class(m.path, class_path)
+        register_onboarding(m.name, cls())
+        logger.debug("Registered onboarding from module %s", m.name)
+    except Exception:
+        logger.exception("Failed to load onboarding from module %s", m.name)
 
 
 def _load_routers(m: ModuleManifest) -> None:

@@ -53,3 +53,45 @@ def test_jira_search_http_error():
 
     assert exc_info.value.status_code == 500
     assert "Internal Server Error" in exc_info.value.body
+
+
+@respx.mock
+def test_jira_request_success():
+    respx.post("http://toolbox:3001/api/jira/request").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True, "status": 200, "data": [{"id": "f1", "name": "Summary"}],
+        })
+    )
+
+    client = ToolboxClient("http://toolbox:3001")
+    result = client.jira_request("GET", "/rest/api/3/field")
+
+    assert result == [{"id": "f1", "name": "Summary"}]
+
+
+@respx.mock
+def test_jira_request_jira_error():
+    respx.post("http://toolbox:3001/api/jira/request").mock(
+        return_value=httpx.Response(200, json={
+            "ok": False, "status": 403, "data": {"errorMessages": ["Forbidden"]},
+        })
+    )
+
+    client = ToolboxClient("http://toolbox:3001")
+    with pytest.raises(ToolboxAPIError) as exc_info:
+        client.jira_request("POST", "/rest/api/3/field", {"name": "Test"})
+
+    assert exc_info.value.status_code == 403
+
+
+@respx.mock
+def test_jira_request_toolbox_error():
+    respx.post("http://toolbox:3001/api/jira/request").mock(
+        return_value=httpx.Response(500, text="Internal Server Error")
+    )
+
+    client = ToolboxClient("http://toolbox:3001")
+    with pytest.raises(ToolboxAPIError) as exc_info:
+        client.jira_request("GET", "/rest/api/3/myself")
+
+    assert exc_info.value.status_code == 500

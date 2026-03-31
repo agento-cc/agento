@@ -82,7 +82,10 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> None:
     conn = get_connection_or_exit(db_config)
     try:
         try:
-            result = setup_upgrade(conn, logger, dry_run=args.dry_run)
+            skip_onboarding = getattr(args, "skip_onboarding", False)
+            result = setup_upgrade(
+                conn, logger, dry_run=args.dry_run, skip_onboarding=skip_onboarding,
+            )
         except DisabledDependencyError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
@@ -118,6 +121,10 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> None:
                 print(f"Applied {len(patches)} data patch(es) for {mod}")
             if result.cron_changed:
                 print("Crontab updated")
+            for mod in result.onboardings_run:
+                print(f"Onboarding completed for {mod}")
+            for mod in result.onboardings_skipped:
+                print(f"Onboarding skipped for {mod}")
     finally:
         conn.close()
 

@@ -1,5 +1,7 @@
 import express from 'express';
 
+import { createJiraProxyHandler } from './jira-proxy.js';
+
 export function register(server, { app, log, moduleConfigs }) {
   const cfg = moduleConfigs?.jira || {};
   const config = {
@@ -105,4 +107,7 @@ export function register(server, { app, log, moduleConfigs }) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // Generic Jira API proxy (for onboarding and admin operations)
+  app.post('/api/jira/request', express.json(), createJiraProxyHandler(config, log));
 }

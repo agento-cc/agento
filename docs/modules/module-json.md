@@ -116,7 +116,7 @@ Registers capabilities your module provides — channels, workflows, runtimes, C
 }
 ```
 
-Each section is optional — include only what your module provides.
+Each section is optional — include only what your module provides. The `onboarding` key is a single class path string (not an array), since a module has at most one onboarding flow.
 
 | Section | Key Fields | Registry |
 |---------|-----------|----------|
@@ -124,6 +124,7 @@ Each section is optional — include only what your module provides.
 | `workflows` | `type`, `class` | Workflow registry — `get_workflow_class(AgentType)` |
 | `runtimes` | `provider`, `class` | Runner factory — `create_runner(AgentProvider)` |
 | `commands` | `name`, `class` | CLI command registry — adds `bin/agento <name>` subcommand |
+| `onboarding` | (single class path string) | Onboarding registry — interactive setup during `setup:upgrade` |
 
 Class paths are dotted relative to the module directory: `src.channel.JiraChannel` resolves to `<module>/src/channel.py` → `JiraChannel`.
 
@@ -253,6 +254,54 @@ class SyncCommand:
 ```
 
 After bootstrap, the command appears as `bin/agento sync --dry-run`. Framework commands (consumer, setup:upgrade, config, token, rotate) are built-in; module commands extend the CLI dynamically.
+
+### Onboarding
+
+Modules can declare an interactive onboarding flow that runs during `setup:upgrade`. This is useful for modules that need to configure external systems (e.g., create Jira custom fields, set up third-party API resources) before they can work.
+
+Declare an onboarding class in `di.json`:
+
+```json
+{
+  "onboarding": "src.onboarding.MyOnboarding"
+}
+```
+
+Unlike other `di.json` sections (which are arrays), `onboarding` is a single class path string — a module has at most one onboarding flow.
+
+Onboarding classes implement the `ModuleOnboarding` protocol:
+
+```python
+import pymysql
+import logging
+
+class MyOnboarding:
+    def is_complete(self, conn: pymysql.Connection) -> bool:
+        """Check if onboarding was already completed.
+        Typically checks if required config values exist in core_config_data."""
+        ...
+
+    def describe(self) -> str:
+        """Human-readable one-liner shown when prompting the user."""
+        return "Configure external system X for module Y"
+
+    def run(self, conn: pymysql.Connection, config: dict, logger: logging.Logger) -> None:
+        """Execute the interactive onboarding flow.
+        config is the resolved module config (3-level fallback).
+        Use input() for user prompts. Save results to core_config_data."""
+        ...
+```
+
+**Lifecycle:**
+- Runs as step 5 of `setup:upgrade` (after migrations, data patches, and cron)
+- Skipped when `is_complete()` returns `True` (idempotent)
+- Skipped with `--skip-onboarding` flag (for CI/CD)
+- Skipped in `--dry-run` mode
+- User is prompted per module before running ("Proceed? [Y/n]")
+
+**Error handling:** Check before creating. On failure, print a clear error and return — the user can fix the issue and re-run `setup:upgrade`.
+
+See `src/agento/modules/jira_periodic_tasks/src/onboarding.py` for a complete example.
 
 ## Reference
 

@@ -322,13 +322,55 @@ EOF
 
 The `command` references a CLI subcommand contributed via `di.json`. Installed by `setup:upgrade` into the system crontab.
 
+## 15. Declare Onboarding (Optional)
+
+If your module needs to configure external systems (create API resources, set up custom fields, etc.) before it can work, declare an interactive onboarding flow in `di.json`:
+
+```json
+{
+  "onboarding": "src.onboarding.CrmOnboarding"
+}
+```
+
+```python
+# src/onboarding.py
+import pymysql
+import logging
+
+from agento.framework.bootstrap import get_module_config
+from agento.framework.config_resolver import load_db_overrides
+from agento.framework.core_config import config_set
+
+class CrmOnboarding:
+    def is_complete(self, conn: pymysql.Connection) -> bool:
+        overrides = load_db_overrides(conn)
+        return "my_crm/api_workspace_id" in overrides
+
+    def describe(self) -> str:
+        return "Configure CRM API workspace"
+
+    def run(self, conn: pymysql.Connection, config: dict, logger: logging.Logger) -> None:
+        workspace_id = input("  CRM workspace ID: ").strip()
+        if not workspace_id:
+            print("  Error: Workspace ID is required.")
+            return
+
+        config_set(conn, "my_crm/api_workspace_id", workspace_id)
+        conn.commit()
+        print(f"  Saved workspace ID: {workspace_id}")
+```
+
+Onboarding runs as step 5 of `setup:upgrade` — after migrations, data patches, and cron. It's skipped when already complete, in `--dry-run`, or with `--skip-onboarding` (for CI/CD). The user is prompted before each module's onboarding runs.
+
+See [di.json onboarding](module-json.md#onboarding) for the full protocol reference.
+
 ## Module Structure (Final)
 
 ```
 modules/my-crm/
   module.json                 # Tool definitions + metadata
   config.json                 # Default non-secret values (hosts, ports)
-  di.json                     # Capability bindings: channels, workflows, commands (optional)
+  di.json                     # Capability bindings: channels, workflows, commands, onboarding (optional)
   system.json                 # Config field schemas with types (optional)
   events.json                 # Event observer declarations (optional)
   data_patch.json             # Data patch declarations (optional)
@@ -337,6 +379,7 @@ modules/my-crm/
     001_create_tables.sql
   src/                        # Python code (runs in cron container)
     channel.py                # Channel implementation (optional)
+    onboarding.py             # Interactive onboarding (optional)
     observers.py              # Observer classes (optional)
     patches/
       seed_defaults.py        # Data patch classes (optional)

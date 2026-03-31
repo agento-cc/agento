@@ -12,9 +12,9 @@ _LOCAL_COMMANDS = frozenset({
     "make:module",
 })
 
-# Commands that need an interactive TTY (OAuth flows)
+# Commands that need an interactive TTY (OAuth flows, onboarding prompts)
 _INTERACTIVE_COMMANDS = frozenset({
-    "token register", "token refresh",
+    "token register", "token refresh", "setup:upgrade",
 })
 
 
@@ -128,6 +128,8 @@ def main() -> None:
 
     setup_p = sub.add_parser("setup:upgrade", help="Apply schema migrations, data patches, and install crontab")
     setup_p.add_argument("--dry-run", action="store_true", help="Show pending work without applying")
+    setup_p.add_argument("--skip-onboarding", action="store_true", dest="skip_onboarding",
+                         help="Skip interactive module onboarding prompts")
     setup_p.set_defaults(func=cmd_setup_upgrade)
 
     # -- Agent Manager: token subcommands --

@@ -1,5 +1,6 @@
 {
   "config_class": "src.config.PeriodicTasksConfig",
+  "onboarding": "src.onboarding.PeriodicTasksOnboarding",
   "workflows": [
     {"type": "cron", "class": "src.workflows.cron.CronWorkflow"}
   ],

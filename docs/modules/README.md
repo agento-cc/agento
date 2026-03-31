@@ -30,7 +30,7 @@ modules/
 | Directory | Purpose | Used By |
 |-----------|---------|---------|
 | `module.json` | Tool definitions with field schemas | Toolbox (registers MCP tools) |
-| `di.json` | Channel, workflow, runtime class bindings | Bootstrap (populates registries) |
+| `di.json` | Channel, workflow, runtime, onboarding class bindings | Bootstrap (populates registries) |
 | `system.json` | Config field schemas with types and labels | Config resolver (3-level fallback) |
 | `events.json` | Event observer declarations | Bootstrap (wires observers) |
 | `config.json` | Non-secret default values (hosts, ports, DB names) | Toolbox (config fallback) |
