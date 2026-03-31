@@ -36,17 +36,27 @@ def _get_module_dirs() -> list[Path]:
     ]
 
 
+def _get_declared_dependencies(module_dir: Path) -> set[str]:
+    """Read module.json and return the set of declared sequence dependencies."""
+    manifest = module_dir / "module.json"
+    if not manifest.is_file():
+        return set()
+    data = json.loads(manifest.read_text())
+    return set(data.get("sequence", []))
+
+
 class TestModuleIsolation:
     def test_no_cross_module_imports(self):
-        """No module should import from another module."""
+        """No module should import from another module (unless declared in sequence)."""
         violations = []
         for module_dir in _get_module_dirs():
             module_name = module_dir.name
+            allowed = _get_declared_dependencies(module_dir)
             for py_file in module_dir.rglob("*.py"):
                 for imp in _get_imports(py_file):
                     if imp.startswith("agento.modules."):
                         imported_module = imp.split(".")[2]
-                        if imported_module != module_name:
+                        if imported_module != module_name and imported_module not in allowed:
                             violations.append(
                                 f"{py_file.relative_to(ROOT)}: imports agento.modules.{imported_module}"
                             )

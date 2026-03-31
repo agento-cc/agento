@@ -14,10 +14,7 @@ class TestJiraConfig:
             "toolbox_url": "http://localhost:3001",
             "user": "bot@test.com",
             "jira_projects": ["TEST"],
-            "jira_status": "Cykliczne",
-            "jira_frequency_field": "customfield_99",
             "jira_assignee": "user@test.com",
-            "frequency_map": {"Daily": "0 8 * * *"},
         }
         config = JiraConfig.from_dict(data)
 
@@ -25,13 +22,10 @@ class TestJiraConfig:
         assert config.user == "bot@test.com"
         assert config.jira_projects == ["TEST"]
         assert config.jira_assignee == "user@test.com"
-        assert config.frequency_map == {"Daily": "0 8 * * *"}
 
     def test_from_dict_multiple_projects(self):
         data = {
             "jira_projects": ["AI", "K3"],
-            "jira_status": "Cykliczne",
-            "jira_frequency_field": "cf",
         }
         config = JiraConfig.from_dict(data)
 
@@ -41,8 +35,6 @@ class TestJiraConfig:
     def test_from_dict_comma_separated_projects(self):
         data = {
             "jira_projects": "AI, K3",
-            "jira_status": "S",
-            "jira_frequency_field": "cf",
         }
         config = JiraConfig.from_dict(data)
 
@@ -63,7 +55,6 @@ class TestJiraConfig:
         assert config.toolbox_url == ""
         assert config.user == ""
         assert config.jira_assignee == ""
-        assert config.frequency_map == {}
 
 
 class TestDatabaseConfig:

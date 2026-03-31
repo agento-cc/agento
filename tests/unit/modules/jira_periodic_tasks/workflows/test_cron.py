@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from agento.framework.channels.base import PromptFragments
 from agento.modules.jira.src.channel import JiraChannel
-from agento.modules.jira.src.workflows.cron import CronWorkflow
+from agento.modules.jira_periodic_tasks.src.workflows.cron import CronWorkflow
 
 
 def _mock_channel(name="test", **overrides):

@@ -1,0 +1,5 @@
+{
+  "jobs": [
+    {"name": "jira_sync", "schedule": "0 * * * *", "command": "jira:periodic:sync"}
+  ]
+}

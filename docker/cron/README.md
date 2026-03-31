@@ -8,7 +8,7 @@ Python application that automates Jira task execution using Claude Code, with a 
 
 ```
 cron (every minute)
-  ├── sync         → queries Jira, updates crontab, syncs schedules table
+  ├── jira:periodic:sync → queries Jira, updates crontab, syncs schedules table
   ├── publish      → inserts jobs into MySQL queue (publisher)
   │
 consumer (long-running loop)
@@ -24,11 +24,11 @@ consumer (long-running loop)
 - Crontab never executes agents directly — it only publishes jobs
 
 **CLI commands** (`agent`):
-- `sync` — queries Jira for "Cykliczne" issues, updates crontab + schedules table
+- `jira:periodic:sync` — queries Jira for periodic task issues, updates crontab + schedules table
 - `publish jira-cron <issue_key>` — publish a recurring task job
 - `publish jira-todo [issue_key]` — publish a TODO task job (or dispatch)
 - `consumer` — start the job consumer loop
-- `exec:cron` / `exec:todo` — direct execution (bypass queue, for debugging)
+- `jira:periodic:exec` / `exec:todo` — direct execution (bypass queue, for debugging)
 - `task-list` — show prioritized action list
 - `token register <agent_type> <label> [credentials_path] [--token-limit N]` — register a subscription token (omit path for interactive OAuth)
 - `token list [--agent-type claude|codex] [--all] [--json]` — list registered tokens
@@ -55,8 +55,8 @@ app/
     claude_runner.py      # Runs Claude CLI as subprocess and parses JSON result with token stats
     crontab.py            # Manages crontab entries with JIRA-SYNC markers for safe updates
     lock.py               # mkdir-based file lock with stale lock detection
-    sync.py               # Syncs Jira recurring tasks to crontab + MySQL schedules table
-    exec_cron_task.py     # Executes a recurring Jira task via Claude with Polish prompt template
+    # Periodic task sync and execution moved to jira_periodic_tasks module
+    # See: src/agento/modules/jira_periodic_tasks/
     exec_todo_task.py     # Executes a one-time TODO Jira task via Claude (6-step workflow)
     task_list.py          # Builds prioritized action list from 7 Jira query angles
     db.py                 # MySQL connection factory using PyMySQL with DictCursor
@@ -172,7 +172,7 @@ tail -f logs/publisher.log          # Publisher: job enqueue events
 tail -f logs/consumer.log           # Consumer: job execution (structured JSON)
 
 # Preview sync without modifying crontab
-docker compose exec cron /opt/cron-agent/run.sh sync --dry-run
+docker compose exec cron /opt/cron-agent/run.sh jira:periodic:sync --dry-run
 
 # Show prioritized task list
 docker compose exec cron /opt/cron-agent/run.sh task-list --json

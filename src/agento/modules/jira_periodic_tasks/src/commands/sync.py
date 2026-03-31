@@ -1,17 +1,17 @@
-"""CLI command: sync — Jira recurring tasks to crontab."""
+"""CLI command: jira:periodic:sync — Jira recurring tasks to crontab."""
 from __future__ import annotations
 
 import argparse
 
-from agento.modules.jira.src.crontab import CrontabManager
-from agento.modules.jira.src.sync import JiraCronSync
 from agento.modules.jira.src.toolbox_client import ToolboxClient
+from agento.modules.jira_periodic_tasks.src.crontab import CrontabManager
+from agento.modules.jira_periodic_tasks.src.sync import JiraCronSync
 
 
 class SyncCommand:
     @property
     def name(self) -> str:
-        return "sync"
+        return "jira:periodic:sync"
 
     @property
     def help(self) -> str:
@@ -34,9 +34,10 @@ class SyncCommand:
             conn.close()
 
         jira_config = get_module_config("jira")
+        periodic_config = get_module_config("jira_periodic_tasks")
         logger = get_logger("sync-jira-cron", "/app/logs/sync-jira-cron.log", stderr=False)
         toolbox = ToolboxClient(jira_config.toolbox_url)
         crontab = CrontabManager()
 
-        syncer = JiraCronSync(jira_config, toolbox, crontab, logger, db_config=db_config)
+        syncer = JiraCronSync(jira_config, periodic_config, toolbox, crontab, logger, db_config=db_config)
         syncer.sync(dry_run=args.dry_run)

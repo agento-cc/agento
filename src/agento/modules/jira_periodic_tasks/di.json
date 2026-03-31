@@ -1,0 +1,10 @@
+{
+  "config_class": "src.config.PeriodicTasksConfig",
+  "workflows": [
+    {"type": "cron", "class": "src.workflows.cron.CronWorkflow"}
+  ],
+  "commands": [
+    {"name": "jira:periodic:sync", "class": "src.commands.sync.SyncCommand"},
+    {"name": "jira:periodic:exec", "class": "src.commands.exec_cron.ExecCronCommand"}
+  ]
+}

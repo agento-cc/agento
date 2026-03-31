@@ -9,9 +9,9 @@ import respx
 
 from agento.framework.consumer import Consumer
 from agento.modules.jira.src.channel import publish_cron
-from agento.modules.jira.src.crontab import MARKER_BEGIN, MARKER_END, CrontabManager
-from agento.modules.jira.src.sync import JiraCronSync
 from agento.modules.jira.src.toolbox_client import ToolboxClient
+from agento.modules.jira_periodic_tasks.src.crontab import MARKER_BEGIN, MARKER_END, CrontabManager
+from agento.modules.jira_periodic_tasks.src.sync import JiraCronSync
 
 from .conftest import fetch_all_jobs, fetch_all_schedules, fetch_job
 
@@ -20,7 +20,7 @@ class TestCronSync:
 
     @respx.mock
     def test_cron_sync_creates_schedules_and_crontab(
-        self, int_config, int_db_config, jira_cykliczne_fixture
+        self, int_config, int_periodic_config, int_db_config, jira_cykliczne_fixture
     ):
         """Sync fetches Cykliczne issues, writes crontab entries with ENVLOAD, upserts schedules."""
         # Mock Jira
@@ -42,9 +42,9 @@ class TestCronSync:
         toolbox = ToolboxClient(int_config.toolbox_url)
         logger = logging.getLogger("test")
 
-        with patch("agento.modules.jira.src.crontab.subprocess.run", side_effect=mock_subprocess_run):
+        with patch("agento.modules.jira_periodic_tasks.src.crontab.subprocess.run", side_effect=mock_subprocess_run):
             crontab_mgr = CrontabManager()
-            syncer = JiraCronSync(int_config, toolbox, crontab_mgr, logger, db_config=int_db_config)
+            syncer = JiraCronSync(int_config, int_periodic_config, toolbox, crontab_mgr, logger, db_config=int_db_config)
             syncer.sync()
 
         # Assert crontab content

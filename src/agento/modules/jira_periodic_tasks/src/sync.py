@@ -4,40 +4,42 @@ import logging
 
 from agento.framework.db import get_connection
 from agento.framework.lock import FileLock, LockHeld
+from agento.modules.jira.src.toolbox_client import ToolboxClient
 
 from .crontab import CronEntry, CrontabManager
-from .toolbox_client import ToolboxClient
 
 
 class JiraCronSync:
 
     def __init__(
         self,
-        config: object,
+        jira_config: object,
+        periodic_config: object,
         toolbox: ToolboxClient,
         crontab: CrontabManager,
         logger: logging.Logger,
         *,
         db_config: object | None = None,
     ):
-        self.config = config
-        self.db_config = db_config
+        self.jira_config = jira_config
+        self.periodic_config = periodic_config
         self.toolbox = toolbox
         self.crontab = crontab
         self.logger = logger
+        self.db_config = db_config
 
     def build_jql(self) -> str:
-        jql = f'{self.config.jira_project_jql} AND status = "{self.config.jira_status}"'
-        if self.config.jira_assignee:
-            jql += f' AND assignee = "{self.config.jira_assignee}"'
+        jql = f'{self.jira_config.jira_project_jql} AND status = "{self.periodic_config.jira_status}"'
+        if self.jira_config.jira_assignee:
+            jql += f' AND assignee = "{self.jira_config.jira_assignee}"'
         return jql
 
     def resolve_frequency(self, freq_value: str) -> str | None:
-        return self.config.frequency_map.get(freq_value)
+        return self.periodic_config.frequency_map.get(freq_value)
 
     def parse_issues(self, response: dict) -> list[CronEntry]:
         entries: list[CronEntry] = []
-        freq_field = self.config.jira_frequency_field
+        freq_field = self.periodic_config.jira_frequency_field
 
         for issue in response.get("issues", []):
             key = issue["key"]
@@ -77,18 +79,18 @@ class JiraCronSync:
 
     def _do_sync(self, dry_run: bool) -> None:
         self.logger.debug(
-            f"Starting Jira->cron sync (projects={self.config.jira_projects}, "
-            f"status={self.config.jira_status})"
+            f"Starting Jira->cron sync (projects={self.jira_config.jira_projects}, "
+            f"status={self.periodic_config.jira_status})"
         )
 
         response = self.toolbox.jira_search(
             jql=self.build_jql(),
-            fields=["key", "summary", self.config.jira_frequency_field],
+            fields=["key", "summary", self.periodic_config.jira_frequency_field],
             max_results=50,
         )
 
         issues = response.get("issues", [])
-        self.logger.debug(f"Found {len(issues)} issues in Jira with status '{self.config.jira_status}'.")
+        self.logger.debug(f"Found {len(issues)} issues in Jira with status '{self.periodic_config.jira_status}'.")
 
         entries = self.parse_issues(response)
         self.logger.debug(f"Generated {len(entries)} cron entries.")
@@ -119,7 +121,7 @@ class JiraCronSync:
     def _upsert_schedules(self, entries: list[CronEntry]) -> int:
         """Sync schedules table with current Jira entries. Returns count synced."""
         try:
-            conn = get_connection(self.db_config or self.config)
+            conn = get_connection(self.db_config or self.jira_config)
         except Exception:
             self.logger.warning("Cannot connect to MySQL for schedules upsert, skipping.")
             return 0

@@ -16,6 +16,7 @@ from agento.framework.database_config import DatabaseConfig
 from agento.framework.migrate import migrate
 from agento.modules.claude.src.output_parser import ClaudeResult
 from agento.modules.jira.src.config import JiraConfig
+from agento.modules.jira_periodic_tasks.src.config import PeriodicTasksConfig
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -116,9 +117,16 @@ def int_config() -> JiraConfig:
         toolbox_url="http://toolbox:3001",
         user="agenty@example.com",
         jira_projects=["AI"],
+        jira_assignee="agenty@example.com",
+    )
+
+
+@pytest.fixture
+def int_periodic_config() -> PeriodicTasksConfig:
+    """PeriodicTasksConfig for integration tests."""
+    return PeriodicTasksConfig(
         jira_status="Cykliczne",
         jira_frequency_field="customfield_10709",
-        jira_assignee="agenty@example.com",
         frequency_map={
             "Co 5min": "*/5 * * * *",
             "Co 30min": "*/30 * * * *",
@@ -136,14 +144,16 @@ def int_config() -> JiraConfig:
 def _bootstrap_registries():
     """Populate registries from core modules (once per session)."""
     bootstrap()
-    # Override jira module config with integration test values
+    # Override module configs with integration test values
     set_module_config("jira", JiraConfig(
         toolbox_url="http://toolbox:3001",
         user="agenty@example.com",
         jira_projects=["AI"],
+        jira_assignee="agenty@example.com",
+    ))
+    set_module_config("jira_periodic_tasks", PeriodicTasksConfig(
         jira_status="Cykliczne",
         jira_frequency_field="customfield_10709",
-        jira_assignee="agenty@example.com",
         frequency_map={
             "Co 5min": "*/5 * * * *",
             "Co 30min": "*/30 * * * *",

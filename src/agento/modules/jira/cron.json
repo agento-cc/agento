@@ -1,6 +1,5 @@
 {
     "jobs": [
-        {"name": "jira_sync", "schedule": "0 * * * *", "command": "sync"},
         {"name": "jira_publish_todo", "schedule": "* * * * *", "command": "publish jira-todo"},
         {"name": "jira_publish_mention", "schedule": "* * * * *", "command": "publish jira-mention"}
     ]

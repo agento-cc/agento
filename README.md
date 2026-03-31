@@ -11,21 +11,21 @@ Self-hosted agent automation platform with modular integrations, Python executio
 Agento enforces a strict security boundary between the AI sandbox and credentials. The sandbox where agents run has **zero access** to secrets. The toolbox is the only container that holds credentials, exposed via an MCP server that the agent calls through controlled tool interfaces.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   Docker Network                 │
-│                                                  │
-│  ┌──────────┐  ┌───────────┐  ┌──────────────┐ │
-│  │  Sandbox  │  │  Toolbox   │  │     Cron     │ │
-│  │ Claude/   │  │  Node.js   │  │   Python     │ │
-│  │ Codex     │  │  MCP Server│  │  Consumer    │ │
-│  │           │  │            │  │  + Scheduler │ │
-│  │ NO secrets│  │ Credentials│  │  Job Queue   │ │
-│  └──────────┘  └───────────┘  └──────────────┘ │
-│                      │                           │
-│                ┌─────┴─────┐                    │
-│                │   MySQL   │                    │
-│                └───────────┘                    │
-└─────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│                    Docker Network                     │
+│                                                       │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐ │
+│  │   Sandbox   │   │   Toolbox   │   │     Cron    │ │
+│  │   Claude/   │   │   Node.js   │   │    Python   │ │
+│  │   Codex     │   │  MCP Server │   │   Consumer  │ │
+│  │             │   │             │   │ + Scheduler │ │
+│  │ NO secrets  │   │ Credentials │   │  Job Queue  │ │
+│  └─────────────┘   └──────┬──────┘   └─────────────┘ │
+│                           │                           │
+│                     ┌─────┴─────┐                     │
+│                     │   MySQL   │                     │
+│                     └───────────┘                     │
+└───────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start

@@ -10,10 +10,12 @@ isolation: worktree
 color: yellow
 ---
 
+0. Work in git worktree. Name it with 3 words dash separated describing well the chages planned.
 1. Implement given plan.
-2. After implementation run agento-code-review skill with fresh context after finishing implementation. This is a quality gate. 
+2. After implementation run sub-agent-code-review. This is a quality gate. 
 3. Fix all code review findings. You won't commit any change until everything is green from agento-code-review.
 4. Commit your work with a descriptive message to the worktree branch.
 5. Wait for user review and APPROVAL. 
 
-Only then, when user directly approves - merge worktree into main branch.
+PUNISHMET:
+- You MUST keep changes on worktree branch! You will be punished if you merge or move them to user's branch.

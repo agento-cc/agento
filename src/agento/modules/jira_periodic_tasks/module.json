@@ -1,0 +1,7 @@
+{
+  "name": "jira_periodic_tasks",
+  "version": "1.0.0",
+  "description": "Jira periodic/recurring task sync and execution",
+  "sequence": ["jira"],
+  "order": 101
+}

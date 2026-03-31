@@ -1,0 +1,5 @@
+{
+  "jira_status": {"type": "string", "label": "Jira issue status identifying periodic tasks"},
+  "jira_frequency_field": {"type": "string", "label": "Jira custom field key for cron frequency"},
+  "frequency_map": {"type": "json", "label": "Frequency label to cron expression map"}
+}

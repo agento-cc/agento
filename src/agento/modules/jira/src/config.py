@@ -16,11 +16,8 @@ class JiraConfig:
     toolbox_url: str = ""
     user: str = ""
     jira_projects: list[str] = field(default_factory=list)
-    jira_status: str = ""
-    jira_frequency_field: str = ""
     jira_assignee: str = ""
     jira_assignee_account_id: str = ""
-    frequency_map: dict[str, str] = field(default_factory=dict)
 
     @property
     def jira_project_jql(self) -> str:
@@ -39,9 +36,6 @@ class JiraConfig:
             toolbox_url=data.get("toolbox_url", ""),
             user=data.get("user", ""),
             jira_projects=projects,
-            jira_status=data.get("jira_status", ""),
-            jira_frequency_field=data.get("jira_frequency_field", ""),
             jira_assignee=data.get("jira_assignee", ""),
             jira_assignee_account_id=data.get("jira_assignee_account_id", ""),
-            frequency_map=data.get("frequency_map", {}),
         )

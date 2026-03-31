@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agento.modules.jira.src.crontab import MARKER_BEGIN, MARKER_END, CronEntry, CrontabManager
+from agento.modules.jira_periodic_tasks.src.crontab import MARKER_BEGIN, MARKER_END, CronEntry, CrontabManager
 
 
 def test_extract_unmanaged_with_markers():

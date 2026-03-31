@@ -24,8 +24,7 @@ workspace/app/*
 secrets.env
 docker/.cron.env
 docker/.toolbox.env
-docker/toolbox/node_modules
-src/agento/toolbox/node_modules
+node_modules/
 
 # Generated config files (created by bin/agento install)
 workspace/SOUL.md

@@ -8,6 +8,7 @@ import pytest
 from agento.framework.consumer_config import ConsumerConfig
 from agento.framework.database_config import DatabaseConfig
 from agento.modules.jira.src.config import JiraConfig
+from agento.modules.jira_periodic_tasks.src.config import PeriodicTasksConfig
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -32,9 +33,15 @@ def sample_config() -> JiraConfig:
         toolbox_url="http://toolbox:3001",
         user="agenty@example.com",
         jira_projects=["AI"],
+        jira_assignee="",
+    )
+
+
+@pytest.fixture
+def sample_periodic_config() -> PeriodicTasksConfig:
+    return PeriodicTasksConfig(
         jira_status="Cykliczne",
         jira_frequency_field="customfield_10709",
-        jira_assignee="",
         frequency_map={
             "Co 5min": "*/5 * * * *",
             "Co 30min": "*/30 * * * *",

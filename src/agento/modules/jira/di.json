@@ -4,13 +4,10 @@
     {"name": "jira", "class": "src.channel.JiraChannel"}
   ],
   "workflows": [
-    {"type": "cron", "class": "src.workflows.cron.CronWorkflow"},
     {"type": "todo", "class": "src.workflows.todo.TodoWorkflow"},
     {"type": "followup", "class": "src.workflows.followup.FollowupWorkflow"}
   ],
   "commands": [
-    {"name": "sync", "class": "src.commands.sync.SyncCommand"},
-    {"name": "exec:cron", "class": "src.commands.exec_cron.ExecCronCommand"},
     {"name": "exec:todo", "class": "src.commands.exec_todo.ExecTodoCommand"},
     {"name": "publish", "class": "src.commands.publish.PublishCommand"}
   ]

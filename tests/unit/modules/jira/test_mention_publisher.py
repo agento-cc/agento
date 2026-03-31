@@ -22,8 +22,6 @@ def _make_config(**overrides) -> JiraConfig:
         toolbox_url="http://toolbox:3001",
         user="mieszko@example.com",
         jira_projects=["AI"],
-        jira_status="Cykliczne",
-        jira_frequency_field="customfield_10709",
         jira_assignee="agenty@example.com",
         jira_assignee_account_id=AGENT_ACCOUNT_ID,
     )
