@@ -316,6 +316,37 @@ export async function loadModuleConfigs(dbOverrides = null) {
   return moduleConfigs;
 }
 
+/**
+ * Register module REST API routes on the Express app at startup.
+ * This ensures endpoints like /api/jira/request are available before any
+ * MCP session connects (needed by setup:upgrade onboarding).
+ */
+export async function registerModuleRestApis(context) {
+  const modules = scanModules();
+  const dbOverrides = await loadDbOverrides();
+  const moduleConfigs = await loadModuleConfigs(dbOverrides);
+  const enrichedContext = { ...context, moduleConfigs };
+
+  const sorted = [...modules].sort((a, b) => (a.order || 100) - (b.order || 100));
+
+  for (const mod of sorted) {
+    const files = discoverToolboxFiles(mod._path);
+    for (const file of files) {
+      try {
+        const toolModule = await import(file);
+        if (typeof toolModule.register === 'function') {
+          // Pass a stub server — only Express routes matter at startup
+          const stubServer = { tool: () => {} };
+          await toolModule.register(stubServer, enrichedContext);
+          context.log('startup', 'OK', `Registered REST APIs from ${mod.name}/toolbox/${path.basename(file)}`);
+        }
+      } catch (err) {
+        context.log('startup', 'ERROR', `Failed to load ${file}: ${err.message}`);
+      }
+    }
+  }
+}
+
 export async function registerTools(server, context, agentViewId = null, preloadedOverrides = null) {
   const modules = scanModules();
 

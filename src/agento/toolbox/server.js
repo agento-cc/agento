@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
-import { registerTools, loadModuleConfigs, loadScopedDbOverrides } from './config-loader.js';
+import { registerTools, registerModuleRestApis, loadScopedDbOverrides } from './config-loader.js';
 import { logToolbox, logPublisher, createScopedLogger } from './log.js';
 import * as db from './db.js';
 import * as playwright from './playwright-client.js';
@@ -113,117 +113,6 @@ app.all('/mcp', async (req, res) => {
   }
 });
 
-// REST API for internal services (publisher)
-// Jira credentials resolved via 3-level config fallback (ENV > DB > config.json)
-let jiraConfig = null;
-
-async function getJiraConfig() {
-  if (!jiraConfig) {
-    const moduleConfigs = await loadModuleConfigs();
-    jiraConfig = moduleConfigs.jira || {};
-  }
-  return jiraConfig;
-}
-
-app.post('/api/jira/search', express.json(), async (req, res) => {
-  const { jql, fields = [], maxResults = 50 } = req.body;
-
-  if (!jql) {
-    return res.status(400).json({ error: 'jql is required' });
-  }
-
-  const cfg = await getJiraConfig();
-  const user = cfg.jira_user;
-  const token = cfg.jira_token;
-  const host = cfg.jira_host;
-
-  if (!user || !token) {
-    return res.status(500).json({ error: 'jira/jira_user or jira/jira_token not configured' });
-  }
-
-  const auth = Buffer.from(`${user}:${token}`).toString('base64');
-
-  try {
-    const response = await fetch(`${host}/rest/api/3/search/jql`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ jql, fields, maxResults }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      logPublisher('api/jira/search', 'ERROR', `HTTP ${response.status}: ${text}`);
-      return res.status(response.status).json({ error: text });
-    }
-
-    const data = await response.json();
-    const count = (data.issues || []).length;
-    logPublisher('api/jira/search', 'OK', `jql="${jql}" -> ${count} results`);
-    res.json(data);
-  } catch (err) {
-    logPublisher('api/jira/search', 'ERROR', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/jira/issue/comments', express.json(), async (req, res) => {
-  const { issue_key } = req.body;
-
-  if (!issue_key) {
-    return res.status(400).json({ error: 'issue_key is required' });
-  }
-
-  const cfg = await getJiraConfig();
-  const user = cfg.jira_user;
-  const token = cfg.jira_token;
-  const host = cfg.jira_host;
-
-  if (!user || !token) {
-    return res.status(500).json({ error: 'jira/jira_user or jira/jira_token not configured' });
-  }
-
-  const auth = Buffer.from(`${user}:${token}`).toString('base64');
-
-  try {
-    const response = await fetch(
-      `${host}/rest/api/2/issue/${encodeURIComponent(issue_key)}/comment?maxResults=100`,
-      {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Accept': 'application/json',
-        },
-      },
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      logPublisher('api/jira/issue/comments', 'ERROR', `HTTP ${response.status}: ${text}`);
-      return res.status(response.status).json({ error: text });
-    }
-
-    const data = await response.json();
-    const comments = (data.comments || []).map((c) => ({
-      id: c.id,
-      author: {
-        displayName: c.author?.displayName,
-        emailAddress: c.author?.emailAddress,
-        accountId: c.author?.accountId,
-      },
-      body: c.body,
-      created: c.created,
-    }));
-    logPublisher('api/jira/issue/comments', 'OK', `issue=${issue_key} -> ${comments.length} comments`);
-    res.json({ comments });
-  } catch (err) {
-    logPublisher('api/jira/issue/comments', 'ERROR', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 const HEALTHCHECK_TIMEOUT_MS = 10_000;
 
 async function runHealthchecks(healthchecks) {
@@ -285,20 +174,22 @@ app.get('/health', async (req, res) => {
   res.json(response);
 });
 
-// Start Playwright MCP child process, then listen
-playwright.initPlaywright()
-  .then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Toolbox MCP server listening on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    logToolbox('playwright', 'ERROR', `Failed to start Playwright MCP: ${err.message}. Browser tools will be unavailable.`);
-    // Start server anyway — non-browser tools should still work
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Toolbox MCP server listening on port ${PORT} (without Playwright)`);
-    });
+// Register module REST APIs and start Playwright in parallel, then listen
+Promise.allSettled([
+  registerModuleRestApis(context)
+    .then(() => logToolbox('startup', 'OK', 'Module REST APIs registered')),
+  playwright.initPlaywright(),
+]).then(([restResult, playwrightResult]) => {
+  if (restResult.status === 'rejected') {
+    logToolbox('startup', 'ERROR', `Module REST API registration failed: ${restResult.reason?.message}`);
+  }
+  if (playwrightResult.status === 'rejected') {
+    logToolbox('playwright', 'ERROR', `Failed to start Playwright MCP: ${playwrightResult.reason?.message}. Browser tools will be unavailable.`);
+  }
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Toolbox MCP server listening on port ${PORT}`);
   });
+});
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
