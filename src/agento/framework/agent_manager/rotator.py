@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pymysql
 
@@ -83,7 +83,7 @@ def rotate_tokens(
         previous_token_id=previous_token.id if previous_token else None,
         new_token_id=best.id,
         reason=reason,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 

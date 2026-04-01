@@ -1,7 +1,6 @@
 """Tests for onboarding registry (follows commands.py pattern)."""
 from __future__ import annotations
 
-import logging
 from unittest.mock import MagicMock
 
 from agento.framework.onboarding import clear, get_onboardings, register_onboarding

@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .agent_config_writer import populate_agent_configs
 from .agent_manager.models import AgentProvider
@@ -450,7 +450,7 @@ class Consumer:
                     )
 
                     if decision.should_retry:
-                        scheduled_after = datetime.now(timezone.utc) + timedelta(seconds=decision.delay_seconds)
+                        scheduled_after = datetime.now(UTC) + timedelta(seconds=decision.delay_seconds)
                         with conn.cursor() as cur:
                             cur.execute(
                                 """

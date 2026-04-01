@@ -10,11 +10,8 @@ from .agent_manager.auth import AuthStrategy, clear_auth_strategies, register_au
 from .agent_manager.models import AgentProvider
 from .channels import registry as channel_registry
 from .channels.base import Channel
-from .commands import Command
+from .commands import Command, register_command
 from .commands import clear as clear_commands
-from .commands import register_command
-from .onboarding import clear as clear_onboardings
-from .onboarding import register_onboarding
 from .config_resolver import load_db_overrides, read_config_defaults, resolve_module_config
 from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import Observer, ObserverEntry, get_event_manager
@@ -23,6 +20,8 @@ from .events import ModuleLoadedEvent, ModuleReadyEvent, ModuleRegisterEvent, Mo
 from .job_models import AgentType
 from .module_loader import ModuleManifest, import_class, scan_modules
 from .module_status import filter_enabled
+from .onboarding import clear as clear_onboardings
+from .onboarding import register_onboarding
 from .router import Router
 from .router_registry import clear as clear_routers
 from .router_registry import register_router

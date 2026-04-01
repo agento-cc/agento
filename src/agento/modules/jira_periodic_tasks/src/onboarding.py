@@ -104,10 +104,10 @@ class PeriodicTasksOnboarding:
         conn.commit()
 
         # 8. Summary
-        print(f"\n  Onboarding complete for jira_periodic_tasks:")
+        print("\n  Onboarding complete for jira_periodic_tasks:")
         print(f"    Status: {status_name} (id: {status_id})")
         print(f"    Frequency field: {field_id}")
-        print(f"    Config saved to core_config_data")
+        print("    Config saved to core_config_data")
 
 
 def _resolve_admin_auth(db_overrides: dict) -> dict | None:

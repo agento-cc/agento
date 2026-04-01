@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from agento.framework.agent_manager.models import AgentProvider, RotationResult, Token, UsageSummary
 
@@ -93,7 +93,7 @@ class TestUsageSummary:
 
 class TestRotationResult:
     def test_creation(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = RotationResult(
             agent_type=AgentProvider.CLAUDE,
             previous_token_id=1,
@@ -112,6 +112,6 @@ class TestRotationResult:
             previous_token_id=None,
             new_token_id=1,
             reason="initial",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         assert result.previous_token_id is None

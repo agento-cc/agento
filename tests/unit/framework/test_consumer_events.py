@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -124,12 +125,12 @@ class TestFinalizeJobEvents:
 class TestDequeueEvents:
     @patch("agento.framework.consumer.get_connection")
     def test_dequeue_dispatches_job_claimed(self, mock_get_conn):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         em = get_event_manager()
         em.register("job_claimed", ObserverEntry(name="c", observer_class=_EventCollector))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         row = {
             "id": 1, "schedule_id": None, "type": "cron", "source": "jira",
             "agent_view_id": None, "priority": 50,

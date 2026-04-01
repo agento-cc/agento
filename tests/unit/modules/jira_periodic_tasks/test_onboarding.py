@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from agento.modules.jira.src.toolbox_client import ToolboxAPIError
 from agento.modules.jira_periodic_tasks.src.onboarding import PeriodicTasksOnboarding
 
