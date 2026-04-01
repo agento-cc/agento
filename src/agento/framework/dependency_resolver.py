@@ -111,3 +111,32 @@ def resolve_order(manifests: list[ModuleManifest]) -> list[ModuleManifest]:
         )
 
     return result
+
+
+def get_transitive_dependents(
+    module_name: str, manifests: list[ModuleManifest]
+) -> list[str]:
+    """Find all modules that transitively depend on *module_name*.
+
+    Builds reverse adjacency from ``sequence`` fields and does BFS.
+    Returns sorted list excluding the target itself.
+    """
+    # Build reverse adjacency: dep -> list of modules that depend on it
+    reverse: dict[str, list[str]] = defaultdict(list)
+    all_names = {m.name for m in manifests}
+    for m in manifests:
+        for dep in m.sequence:
+            if dep in all_names:
+                reverse[dep].append(m.name)
+
+    # BFS from module_name
+    visited: set[str] = set()
+    queue = list(reverse.get(module_name, []))
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        queue.extend(reverse.get(current, []))
+
+    return sorted(visited)

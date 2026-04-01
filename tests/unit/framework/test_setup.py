@@ -213,3 +213,137 @@ class TestSetupEvents:
 
         cron_events = [e for e in _EventCollector.events if isinstance(e, CrontabInstalledEvent)]
         assert len(cron_events) == 0
+
+
+class _FakeOnboarding:
+    """Fake onboarding for testing strict flow."""
+
+    def __init__(self, complete_after: int = 1):
+        self._call_count = 0
+        self._complete_after = complete_after
+        self._description = "Configure test module"
+
+    def is_complete(self, conn) -> bool:
+        return self._call_count >= self._complete_after
+
+    def run(self, conn, config, logger) -> None:
+        self._call_count += 1
+
+    def describe(self) -> str:
+        return self._description
+
+
+class TestStrictOnboarding:
+    """Tests for the strict onboarding flow in setup:upgrade."""
+
+    def _run(self, tmp_path, onboardings, select_returns, all_scanned=None):
+        """Helper: run setup_upgrade with mocked onboarding + select."""
+        core_dir, user_dir = _setup_modules(tmp_path)
+        conn, _ = _mock_conn()
+
+        with patch("agento.framework.setup.install_crontab", return_value=False), \
+             patch("agento.framework.setup.get_current_crontab", return_value=""), \
+             patch("agento.framework.setup.migrate", return_value=[]), \
+             patch("agento.framework.onboarding.get_onboardings", return_value=onboardings), \
+             patch("agento.framework.bootstrap.get_module_config", return_value={}), \
+             patch("agento.framework.setup.select", side_effect=select_returns) as mock_select, \
+             patch("agento.framework.setup.set_enabled") as mock_set_enabled:
+
+            # If we need custom all_scanned manifests, mock scan_modules
+            if all_scanned is not None:
+                with patch("agento.framework.setup.scan_modules", return_value=all_scanned):
+                    result = setup_upgrade(conn, logging.getLogger("test"),
+                                         core_dir=core_dir, user_dir=user_dir)
+            else:
+                result = setup_upgrade(conn, logging.getLogger("test"),
+                                     core_dir=core_dir, user_dir=user_dir)
+
+        return result, mock_select, mock_set_enabled
+
+    def test_onboarding_succeeds_first_try(self, tmp_path):
+        """User selects 'Proceed', onboarding completes on first run."""
+        onboarding = _FakeOnboarding(complete_after=1)
+        result, _mock_select, _ = self._run(
+            tmp_path,
+            onboardings={"jira": onboarding},
+            select_returns=[0],  # Proceed
+        )
+        assert "jira" in result.onboardings_run
+        assert result.onboardings_disabled == []
+
+    def test_onboarding_fails_retry_succeeds(self, tmp_path):
+        """Onboarding fails first time, user retries, succeeds."""
+        onboarding = _FakeOnboarding(complete_after=2)
+        result, _mock_select, _ = self._run(
+            tmp_path,
+            onboardings={"jira": onboarding},
+            select_returns=[0, 0],  # Proceed, then Retry
+        )
+        assert "jira" in result.onboardings_run
+        assert result.onboardings_disabled == []
+
+    def test_user_disables_module(self, tmp_path):
+        """User skips, then disables module."""
+        onboarding = _FakeOnboarding(complete_after=999)  # never completes
+        result, _, mock_set_enabled = self._run(
+            tmp_path,
+            onboardings={"jira": onboarding},
+            select_returns=[1, 1],  # Skip, then Disable
+        )
+        assert "jira" in result.onboardings_disabled
+        mock_set_enabled.assert_any_call("jira", False)
+
+    def test_user_disables_module_with_dependents(self, tmp_path):
+        """Disabling a module also disables its transitive dependents."""
+        from agento.framework.module_loader import ModuleManifest
+
+        jira_onboarding = _FakeOnboarding(complete_after=999)
+        manifests = [
+            ModuleManifest(name="jira", version="1.0.0", description="", path=Path("/fake/jira")),
+            ModuleManifest(name="jira_periodic_tasks", version="1.0.0", description="",
+                          path=Path("/fake/jira_periodic_tasks"), sequence=["jira"]),
+        ]
+
+        result, _, mock_set_enabled = self._run(
+            tmp_path,
+            onboardings={"jira": jira_onboarding},
+            select_returns=[1, 1],  # Skip, then Disable
+            all_scanned=manifests,
+        )
+        assert "jira" in result.onboardings_disabled
+        assert "jira_periodic_tasks" in result.onboardings_disabled
+        mock_set_enabled.assert_any_call("jira", False)
+        mock_set_enabled.assert_any_call("jira_periodic_tasks", False)
+
+    def test_user_quits(self, tmp_path):
+        """User selects Quit -> SystemExit raised."""
+        onboarding = _FakeOnboarding(complete_after=999)
+        with pytest.raises(SystemExit):
+            self._run(
+                tmp_path,
+                onboardings={"jira": onboarding},
+                select_returns=[1, 2],  # Skip, then Quit
+            )
+
+    def test_disabled_dependents_skipped_in_subsequent_iterations(self, tmp_path):
+        """After disabling jira, jira_periodic_tasks is skipped even if it has onboarding."""
+        from agento.framework.module_loader import ModuleManifest
+
+        jira_onboarding = _FakeOnboarding(complete_after=999)
+        jpt_onboarding = _FakeOnboarding(complete_after=999)
+
+        manifests = [
+            ModuleManifest(name="jira", version="1.0.0", description="", path=Path("/fake/jira")),
+            ModuleManifest(name="jira_periodic_tasks", version="1.0.0", description="",
+                          path=Path("/fake/jira_periodic_tasks"), sequence=["jira"]),
+        ]
+
+        result, mock_select, _ = self._run(
+            tmp_path,
+            onboardings={"jira": jira_onboarding, "jira_periodic_tasks": jpt_onboarding},
+            select_returns=[1, 1],  # Skip jira, Disable jira
+            all_scanned=manifests,
+        )
+        # jira_periodic_tasks should NOT trigger any select call since it was disabled with jira
+        assert mock_select.call_count == 2  # only the 2 calls for jira
+        assert "jira_periodic_tasks" in result.onboardings_disabled

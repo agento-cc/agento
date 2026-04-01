@@ -6,6 +6,7 @@ import pytest
 from agento.framework.dependency_resolver import (
     CyclicDependencyError,
     DisabledDependencyError,
+    get_transitive_dependents,
     resolve_order,
     validate_dependencies,
 )
@@ -156,3 +157,43 @@ class TestValidateDependencies:
         all_scanned = [_m("x", sequence=["y"]), _m("y")]
         with pytest.raises(DisabledDependencyError, match="agento module:enable y"):
             validate_dependencies(enabled, all_scanned)
+
+
+class TestGetTransitiveDependents:
+    """Find all modules that transitively depend on a given module."""
+
+    def test_direct_dependent(self):
+        manifests = [_m("jira"), _m("jira_periodic_tasks", sequence=["jira"])]
+        result = get_transitive_dependents("jira", manifests)
+        assert result == ["jira_periodic_tasks"]
+
+    def test_transitive_chain(self):
+        """A <- B <- C: dependents of A are [B, C]."""
+        manifests = [
+            _m("a"),
+            _m("b", sequence=["a"]),
+            _m("c", sequence=["b"]),
+        ]
+        result = get_transitive_dependents("a", manifests)
+        assert result == ["b", "c"]
+
+    def test_no_dependents(self):
+        manifests = [_m("a"), _m("b")]
+        result = get_transitive_dependents("a", manifests)
+        assert result == []
+
+    def test_diamond_dependency_no_duplicates(self):
+        """A <- B, A <- C, B <- D, C <- D: dependents of A are [B, C, D]."""
+        manifests = [
+            _m("a"),
+            _m("b", sequence=["a"]),
+            _m("c", sequence=["a"]),
+            _m("d", sequence=["b", "c"]),
+        ]
+        result = get_transitive_dependents("a", manifests)
+        assert result == ["b", "c", "d"]
+
+    def test_nonexistent_module(self):
+        manifests = [_m("a")]
+        result = get_transitive_dependents("nonexistent", manifests)
+        assert result == []

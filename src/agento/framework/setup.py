@@ -10,12 +10,14 @@ Runs the full setup sequence in order:
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pymysql
 
 from .bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
+from .cli.terminal import select
 from .crontab import (
     assemble,
     build_managed_block,
@@ -25,12 +27,12 @@ from .crontab import (
     install_crontab,
 )
 from .data_patch import apply_patch, get_all_pending, resolve_patch_order
-from .dependency_resolver import resolve_order, validate_dependencies
+from .dependency_resolver import get_transitive_dependents, resolve_order, validate_dependencies
 from .event_manager import get_event_manager
 from .events import CrontabInstalledEvent, SetupBeforeEvent, SetupCompleteEvent
 from .migrate import get_pending, migrate
 from .module_loader import scan_modules
-from .module_status import filter_enabled
+from .module_status import filter_enabled, set_enabled
 
 FRAMEWORK_SQL_DIR = Path(__file__).parent / "sql"
 FRAMEWORK_CRON_JSON = Path(__file__).parent / "cron.json"
@@ -46,6 +48,7 @@ class SetupResult:
     cron_changed: bool = False
     onboardings_run: list[str] = field(default_factory=list)
     onboardings_skipped: list[str] = field(default_factory=list)
+    onboardings_disabled: list[str] = field(default_factory=list)
 
     @property
     def has_work(self) -> bool:
@@ -56,6 +59,7 @@ class SetupResult:
             or self.cron_changed
             or self.onboardings_run
             or self.onboardings_skipped
+            or self.onboardings_disabled
         )
 
 
@@ -127,21 +131,55 @@ def setup_upgrade(
 
     # 5. Module onboarding (interactive, skippable)
     if not dry_run and not skip_onboarding:
-        from .bootstrap import get_module_config
-        from .onboarding import get_onboardings
+        from .bootstrap import get_module_config  # lazy: avoids circular with bootstrap
+        from .onboarding import get_onboardings  # lazy: loaded after module bootstrap
+
+        disabled_this_run: set[str] = set()
 
         for module_name, onboarding in get_onboardings().items():
+            if module_name in disabled_this_run:
+                continue
             if onboarding.is_complete(conn):
                 continue
-            answer = input(
-                f"\n  Module '{module_name}' needs onboarding: "
-                f"{onboarding.describe()}\n  Proceed? [Y/n] "
+
+            choice = select(
+                f"Module '{module_name}' needs onboarding: {onboarding.describe()}",
+                ["Proceed with onboarding", "Skip (choose action)"],
             )
-            if answer.strip().lower() in ("", "y", "yes"):
+
+            if choice == 0:
                 onboarding.run(conn, get_module_config(module_name), logger)
+
+            while not onboarding.is_complete(conn):
+                dependents = get_transitive_dependents(module_name, all_scanned)
+                dep_label = f" (with dependents: {', '.join(dependents)})" if dependents else ""
+
+                action = select(
+                    f"Module '{module_name}' onboarding is not complete.",
+                    [
+                        "Retry",
+                        f"Disable {module_name}{dep_label}",
+                        "Quit",
+                    ],
+                )
+
+                if action == 0:  # Retry
+                    onboarding.run(conn, get_module_config(module_name), logger)
+                elif action == 1:  # Disable
+                    set_enabled(module_name, False)
+                    disabled_this_run.add(module_name)
+                    result.onboardings_disabled.append(module_name)
+                    for dep in dependents:
+                        set_enabled(dep, False)
+                        disabled_this_run.add(dep)
+                        result.onboardings_disabled.append(dep)
+                    break
+                else:  # Quit
+                    print("Setup aborted.")
+                    sys.exit(1)
+
+            if module_name not in disabled_this_run:
                 result.onboardings_run.append(module_name)
-            else:
-                result.onboardings_skipped.append(module_name)
 
     em.dispatch(
         "agento_setup_complete",
