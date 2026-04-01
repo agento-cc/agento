@@ -1,30 +1,101 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
-  pypi:
+  test:
     runs-on: ubuntu-latest
-    environment: release
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: cronagent_root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv build
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --group dev
+      - run: uv run ruff check src/ tests/
+      - run: uv run pytest -q
+        env:
+          TEST_MYSQL_HOST: 127.0.0.1
+          TEST_MYSQL_PORT: "3306"
+          TEST_MYSQL_USER: root
+          TEST_MYSQL_PASSWORD: cronagent_root
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd src/agento/toolbox && npm ci && npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv build --no-sources
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
 
-  github-release:
+  attach-assets:
+    needs: publish
     runs-on: ubuntu-latest
-    needs: pypi
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v4
         with:
-          generate_release_notes: true
+          name: dist
+          path: dist/
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+  smoke-test:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@v4
+      - run: |
+          uv venv /tmp/smoke
+          source /tmp/smoke/bin/activate
+          VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//')
+          for i in 1 2 3 4 5; do
+            uv pip install "agento==${VERSION}" && break
+            echo "PyPI not ready yet, retrying in 15s..."
+            sleep 15
+          done
+          agento --help

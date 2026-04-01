@@ -52,11 +52,11 @@ claude = "agento.modules.claude"
 codex = "agento.modules.codex"
 
 [project.urls]
-Homepage = "https://github.com/saipix/agento"
-Repository = "https://github.com/saipix/agento"
-Documentation = "https://github.com/saipix/agento/tree/master/docs"
-Issues = "https://github.com/saipix/agento/issues"
-Changelog = "https://github.com/saipix/agento/blob/master/CHANGELOG.md"
+Homepage = "https://github.com/agento-cc/agento"
+Repository = "https://github.com/agento-cc/agento"
+Documentation = "https://github.com/agento-cc/agento/tree/main/docs"
+Issues = "https://github.com/agento-cc/agento/issues"
+Changelog = "https://github.com/agento-cc/agento/blob/main/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "app/code"]
