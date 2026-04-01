@@ -7,6 +7,41 @@ from ..db import get_connection_or_exit
 from .runtime import _load_framework_config
 
 
+def _validate_config_path(path: str) -> bool:
+    """Validate config path against module system.json. Returns False if invalid."""
+    from ..core_config import _find_module_dir
+
+    parts = path.split("/")
+    module_name = parts[0]
+
+    module_dir = _find_module_dir(module_name)
+    if module_dir is None:
+        print(f"Error: Module '{module_name}' not found.")
+        return False
+
+    # Tool config paths (module/tools/tool_name/field) — skip field validation
+    if len(parts) == 4 and parts[1] == "tools":
+        return True
+
+    # Module config paths (module/field) — validate against system.json
+    if len(parts) == 2:
+        field_name = parts[1]
+        system_path = module_dir / "system.json"
+        if system_path.exists():
+            import json as _json
+            try:
+                system = _json.loads(system_path.read_text())
+                if field_name not in system:
+                    known = ", ".join(sorted(system.keys()))
+                    print(f"Error: Field '{field_name}' not found in {module_name}/system.json")
+                    print(f"  Available fields: {known}")
+                    return False
+            except (ValueError, OSError):
+                pass
+
+    return True
+
+
 def _config_get_exact(conn, path: str) -> None:
     """Display config value for exact path, deduplicated across scopes."""
     from ..core_config import config_get
@@ -152,7 +187,7 @@ class ConfigSetCommand:
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("path", help="Config path (e.g. my_app/tools/mysql_prod/pass)")
-        parser.add_argument("value", help="Value to set")
+        parser.add_argument("value", nargs="?", default=None, help="Value to set")
         parser.add_argument("--scope", default="default",
                            help="Config scope: default, workspace, agent_view")
         parser.add_argument("--scope-id", type=int, default=0,
@@ -162,6 +197,17 @@ class ConfigSetCommand:
         from ..core_config import config_set_auto_encrypt
         from ..event_manager import get_event_manager
         from ..events import ConfigSavedEvent
+
+        if "/" not in args.path:
+            print(f"Error: Invalid config path '{args.path}' — expected module/field format (e.g. jira/jira_token)")
+            return
+
+        if not _validate_config_path(args.path):
+            return
+
+        if args.value is None:
+            print(f"Error: Missing value for '{args.path}'")
+            return
 
         scope = getattr(args, "scope", "default")
         scope_id = getattr(args, "scope_id", 0)

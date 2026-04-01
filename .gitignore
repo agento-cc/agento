@@ -54,3 +54,5 @@ docker/toolbox/session.json
 
 # Claude worktrees
 .claude/worktrees/
+
+.mcp

@@ -137,9 +137,9 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",  # URL
-            "user@example.com",                             # email
             "my-api-token",                                 # token
             "",                                             # additional projects (skip)
+            "",                                             # admin token (skip)
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
@@ -152,7 +152,7 @@ class TestRun:
         # Other config saved via config_set
         set_calls = {c.args[1]: c.args[2] for c in mock_config_set.call_args_list}
         assert set_calls["jira/jira_host"] == "https://myteam.atlassian.net"
-        assert set_calls["jira/jira_user"] == "user@example.com"
+        assert set_calls["jira/jira_user"] == "agent@example.com"
         assert set_calls["jira/jira_assignee"] == "Agent Bot"
         assert set_calls["jira/jira_assignee_account_id"] == "abc123"
         assert set_calls["jira/user"] == "agent@example.com"
@@ -197,7 +197,6 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
-            "user@example.com",
             "bad-token",
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
@@ -221,7 +220,6 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
-            "user@example.com",
             "my-token",
             "",  # no additional projects
         ])
@@ -250,9 +248,9 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
-            "user@example.com",
             "my-token",
             " WEB , API ",  # additional with whitespace
+            "",             # admin token (skip)
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
@@ -276,9 +274,9 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
-            "user@example.com",
             "my-token",
-            "AI",  # duplicate of auto-detected
+            "AI",   # duplicate of auto-detected
+            "",     # admin token (skip)
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 

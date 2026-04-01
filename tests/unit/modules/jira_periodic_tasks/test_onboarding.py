@@ -105,7 +105,7 @@ def _make_toolbox_mock(responses=None):
     if responses:
         default_responses.update(responses)
 
-    def jira_request_side_effect(method, path, body=None):
+    def jira_request_side_effect(method, path, body=None, **kwargs):
         key = (method, path)
         for k, v in default_responses.items():
             if k == key:
@@ -126,17 +126,14 @@ class TestRun:
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.config_set")
     def test_happy_path(self, mock_config_set, mock_get_config, mock_toolbox_cls, monkeypatch):
-        mock_get_config.return_value = {
-            "toolbox_url": "http://toolbox:3001",
-            "jira_projects": ["AI"],
-        }
+        mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
         toolbox = _make_toolbox_mock()
         mock_toolbox_cls.return_value = toolbox
 
-        inputs = iter(["", "", ""])  # accept defaults
+        inputs = iter(["", ""])  # status name, field name (project read from DB)
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
-        conn = _mock_conn({})
+        conn = _mock_conn({"jira/jira_projects": '["AI"]'})
         ob = PeriodicTasksOnboarding()
         config = {"frequency_map": {"Every 5min": "*/5 * * * *", "Daily at 8:00": "0 8 * * *"}}
 
@@ -147,6 +144,44 @@ class TestRun:
         assert calls["jira_periodic_tasks/jira_status"] == "Periodic"
         assert calls["jira_periodic_tasks/jira_frequency_field"] == "customfield_10100"
         conn.commit.assert_called_once()
+
+    @patch("agento.modules.jira_periodic_tasks.src.onboarding.ToolboxClient")
+    @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
+    @patch("agento.modules.jira_periodic_tasks.src.onboarding.config_set")
+    def test_uses_admin_auth_for_field_creation(self, mock_config_set, mock_get_config, mock_toolbox_cls, monkeypatch, capsys):
+        mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
+        toolbox = _make_toolbox_mock({
+            ("GET", "/rest/api/3/field"): [],  # field not found, will create
+            ("POST", "/rest/api/3/field"): {"id": "customfield_10200", "name": "Frequency"},
+            ("GET", "/rest/api/3/field/customfield_10200/context"): {"values": [{"id": "ctx1"}]},
+            ("GET", "/rest/api/3/field/customfield_10200/context/ctx1/option"): {"values": []},
+            ("POST", "/rest/api/3/field/customfield_10200/context/ctx1/option"): {},
+        })
+        mock_toolbox_cls.return_value = toolbox
+
+        inputs = iter(["", ""])  # status, field
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        conn = _mock_conn({
+            "jira/jira_projects": '["AI"]',
+            "jira/jira_user": "agent@example.com",
+            "jira/jira_admin_token": "admin-secret",
+        })
+        ob = PeriodicTasksOnboarding()
+        config = {"frequency_map": {"Every 5min": "*/5 * * * *"}}
+        ob.run(conn, config, logging.getLogger("test"))
+
+        output = capsys.readouterr().out
+        assert "Using admin credentials" in output
+
+        # Verify admin auth was passed to field creation call
+        create_call = [
+            c for c in toolbox.jira_request.call_args_list
+            if c.args[0] == "POST" and c.args[1] == "/rest/api/3/field"
+        ]
+        assert len(create_call) == 1
+        assert create_call[0].kwargs.get("auth_user") == "agent@example.com"
+        assert create_call[0].kwargs.get("auth_token") == "admin-secret"
 
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
@@ -177,20 +212,17 @@ class TestRun:
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
     def test_aborts_on_status_creation_failure(self, mock_get_config, mock_toolbox_cls, monkeypatch, capsys):
-        mock_get_config.return_value = {
-            "toolbox_url": "http://toolbox:3001",
-            "jira_projects": ["AI"],
-        }
+        mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
         toolbox = _make_toolbox_mock({
             ("GET", "/rest/api/3/project/AI/statuses"): [{"statuses": []}],
             ("POST", "/rest/api/3/statuses"): ToolboxAPIError(403, "Forbidden"),
         })
         mock_toolbox_cls.return_value = toolbox
 
-        inputs = iter(["", ""])
+        inputs = iter([""])  # status name (project read from DB)
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
-        conn = _mock_conn({})
+        conn = _mock_conn({"jira/jira_projects": '["AI"]'})
         ob = PeriodicTasksOnboarding()
         ob.run(conn, {}, logging.getLogger("test"))
 
@@ -200,20 +232,17 @@ class TestRun:
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
     def test_aborts_on_field_creation_failure(self, mock_get_config, mock_toolbox_cls, monkeypatch, capsys):
-        mock_get_config.return_value = {
-            "toolbox_url": "http://toolbox:3001",
-            "jira_projects": ["AI"],
-        }
+        mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
         toolbox = _make_toolbox_mock({
             ("GET", "/rest/api/3/field"): [],  # field not found
             ("POST", "/rest/api/3/field"): ToolboxAPIError(403, "Admin required"),
         })
         mock_toolbox_cls.return_value = toolbox
 
-        inputs = iter(["", "", ""])  # project, status, field
+        inputs = iter(["", ""])  # status, field (project read from DB)
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
-        conn = _mock_conn({})
+        conn = _mock_conn({"jira/jira_projects": '["AI"]'})
         ob = PeriodicTasksOnboarding()
         ob.run(conn, {}, logging.getLogger("test"))
 
@@ -224,19 +253,16 @@ class TestRun:
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.config_set")
     def test_aborts_on_option_sync_failure(self, mock_config_set, mock_get_config, mock_toolbox_cls, monkeypatch, capsys):
-        mock_get_config.return_value = {
-            "toolbox_url": "http://toolbox:3001",
-            "jira_projects": ["AI"],
-        }
+        mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
         toolbox = _make_toolbox_mock({
             ("GET", "/rest/api/3/field/customfield_10100/context"): ToolboxAPIError(500, "Server error"),
         })
         mock_toolbox_cls.return_value = toolbox
 
-        inputs = iter(["", "", ""])
+        inputs = iter(["", ""])  # status, field (project read from DB)
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
-        conn = _mock_conn({})
+        conn = _mock_conn({"jira/jira_projects": '["AI"]'})
         ob = PeriodicTasksOnboarding()
         config = {"frequency_map": {"Every 5min": "*/5 * * * *"}}
         ob.run(conn, config, logging.getLogger("test"))
@@ -250,10 +276,7 @@ class TestRun:
     @patch("agento.modules.jira_periodic_tasks.src.onboarding.get_module_config")
     def test_does_not_match_multiselect_field(self, mock_get_config, mock_toolbox_cls, monkeypatch, capsys):
         """_find_field should not match multiselect or cascading select fields."""
-        mock_get_config.return_value = {
-            "toolbox_url": "http://toolbox:3001",
-            "jira_projects": ["AI"],
-        }
+        mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
         toolbox = _make_toolbox_mock({
             ("GET", "/rest/api/3/field"): [
                 {"name": "Frequency", "id": "customfield_99", "custom": True,
@@ -266,10 +289,10 @@ class TestRun:
         })
         mock_toolbox_cls.return_value = toolbox
 
-        inputs = iter(["", "", ""])
+        inputs = iter(["", ""])  # status, field (project read from DB)
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
-        conn = _mock_conn({})
+        conn = _mock_conn({"jira/jira_projects": '["AI"]'})
         ob = PeriodicTasksOnboarding()
         config = {"frequency_map": {"Every 5min": "*/5 * * * *"}}
         ob.run(conn, config, logging.getLogger("test"))

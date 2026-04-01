@@ -19,7 +19,10 @@ export function createJiraProxyHandler(config, log) {
       return res.status(400).json({ error: `Invalid method: ${method}` });
     }
 
-    const { user, token, host } = config;
+    const { host } = config;
+    // Allow per-request auth override (for admin operations)
+    const user = req.body.auth_user || config.user;
+    const token = req.body.auth_token || config.token;
 
     if (!user || !token || !host) {
       return res.status(500).json({ error: 'Jira API not configured (jira_host/jira_user/jira_token)' });

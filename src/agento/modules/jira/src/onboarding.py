@@ -82,23 +82,17 @@ class JiraOnboarding:
 
         jira_host, auto_project_key = _parse_jira_url(url_input)
 
-        # 4. Collect credentials
-        jira_user = input("  Jira API user email: ").strip()
-        if not jira_user:
-            print("  Error: Jira API user email is required.")
-            return
-
+        # 4. Collect token
         jira_token = input("  Jira API token: ").strip()
         if not jira_token:
             print("  Error: Jira API token is required.")
             return
 
-        # 5. Save credentials to DB
+        # 5. Save host + token to DB
         config_set(conn, "jira/jira_host", jira_host)
-        config_set(conn, "jira/jira_user", jira_user)
         config_set_auto_encrypt(conn, "jira/jira_token", jira_token)
 
-        # 6. Verify via /myself
+        # 6. Verify via /myself — also gets user email and identity
         try:
             myself = toolbox.jira_request("GET", "/rest/api/3/myself")
         except ToolboxAPIError as e:
@@ -113,13 +107,17 @@ class JiraOnboarding:
             print("  Error: Could not detect Jira account ID from /myself response.")
             return
 
-        # 7. Save identity
+        if not email:
+            print("  Error: Could not detect email from /myself response.")
+            return
+
+        # 7. Save identity + user
+        config_set(conn, "jira/jira_user", email)
         config_set(conn, "jira/jira_assignee", display_name)
         config_set(conn, "jira/jira_assignee_account_id", account_id)
-        if email:
-            config_set(conn, "jira/user", email)
+        config_set(conn, "jira/user", email)
 
-        print(f"  Detected identity: {display_name} ({email or jira_user})")
+        print(f"  Detected identity: {display_name} ({email})")
 
         # 8. Project keys
         projects = []
@@ -148,14 +146,26 @@ class JiraOnboarding:
             print("  Error: At least one valid project key is required.")
             return
 
-        # 9. Save projects and commit
+        # 9. Save projects
         config_set(conn, "jira/jira_projects", json.dumps(projects))
+
+        # 10. Optional admin credentials
+        print("\n  Optional: Jira admin credentials (for a user with 'Administer Jira' permission).")
+        print("  This enables auto-configuration of statuses, custom fields, and screens.")
+        admin_token = input("  Jira admin API token (Enter to skip): ").strip()
+        has_admin = False
+        if admin_token:
+            config_set_auto_encrypt(conn, "jira/jira_admin_token", admin_token)
+            has_admin = True
+            print("  Admin token saved.")
+
         conn.commit()
 
-        # 10. Summary
+        # 11. Summary
         print("\n  Onboarding complete for jira:")
         print(f"    Host: {jira_host}")
-        print(f"    User: {jira_user}")
+        print(f"    User: {email}")
         print(f"    Identity: {display_name} (account: {account_id})")
         print(f"    Projects: {', '.join(projects)}")
+        print(f"    Admin token: {'configured' if has_admin else 'not configured'}")
         print("    Config saved to core_config_data")

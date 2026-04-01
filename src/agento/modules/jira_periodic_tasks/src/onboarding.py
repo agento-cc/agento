@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 import pymysql
@@ -7,6 +8,7 @@ import pymysql
 from agento.framework.bootstrap import get_module_config
 from agento.framework.config_resolver import load_db_overrides, read_config_defaults
 from agento.framework.core_config import config_set
+from agento.framework.encryptor import get_encryptor
 from agento.modules.jira.src.toolbox_client import ToolboxAPIError, ToolboxClient
 
 
@@ -39,14 +41,25 @@ class PeriodicTasksOnboarding:
             print(f"  Error: Toolbox not reachable at {toolbox_url}: {e}")
             return
 
-        # 2. Prompt for project key
-        jira_projects = jira_config.get("jira_projects") if isinstance(jira_config, dict) else getattr(jira_config, "jira_projects", None)
-        default_project = jira_projects[0] if jira_projects else ""
-        prompt_suffix = f" [{default_project}]" if default_project else ""
-        project_key = input(f"  Jira project key{prompt_suffix}: ").strip() or default_project
-        if not project_key:
-            print("  Error: Project key is required.")
-            return
+        # 2. Read DB overrides (fresh — jira onboarding may have just saved values)
+        db_overrides = load_db_overrides(conn)
+
+        # Resolve admin credentials if available (for creating statuses, fields, etc.)
+        admin_auth = _resolve_admin_auth(db_overrides)
+        if admin_auth:
+            print("  Using admin credentials for configuration changes")
+
+        # Get project key
+        jira_projects_entry = db_overrides.get("jira/jira_projects")
+        jira_projects = json.loads(jira_projects_entry[0]) if jira_projects_entry and jira_projects_entry[0] else None
+        if jira_projects:
+            project_key = jira_projects[0]
+            print(f"  Using project: {project_key} (from jira module config)")
+        else:
+            project_key = input("  Jira project key: ").strip()
+            if not project_key:
+                print("  Error: Project key is required.")
+                return
 
         try:
             toolbox.jira_request("GET", f"/rest/api/3/project/{project_key}")
@@ -62,7 +75,7 @@ class PeriodicTasksOnboarding:
             print(f"  Found existing status '{status_name}' (id: {status_id})")
         else:
             print(f"  Status '{status_name}' not found in project. Attempting to create...")
-            status_id = _create_status(toolbox, project_key, status_name)
+            status_id = _create_status(toolbox, project_key, status_name, admin_auth)
             if not status_id:
                 return
 
@@ -74,16 +87,16 @@ class PeriodicTasksOnboarding:
             print(f"  Found existing field '{field_name}' (id: {field_id})")
         else:
             print(f"  Field '{field_name}' not found. Creating...")
-            field_id = _create_field(toolbox, field_name)
+            field_id = _create_field(toolbox, field_name, admin_auth)
             if not field_id:
                 return
 
         # 5. Add dropdown options
-        if not _sync_field_options(toolbox, field_id, config, logger):
+        if not _sync_field_options(toolbox, field_id, config, logger, admin_auth):
             return
 
         # 6. Screen mapping (best-effort for company-managed projects)
-        _try_screen_mapping(toolbox, project_key, field_id, logger)
+        _try_screen_mapping(toolbox, project_key, field_id, logger, admin_auth)
 
         # 7. Save config to DB
         config_set(conn, "jira_periodic_tasks/jira_status", status_name)
@@ -95,6 +108,20 @@ class PeriodicTasksOnboarding:
         print(f"    Status: {status_name} (id: {status_id})")
         print(f"    Frequency field: {field_id}")
         print(f"    Config saved to core_config_data")
+
+
+def _resolve_admin_auth(db_overrides: dict) -> dict | None:
+    """Read admin token from DB, paired with jira_user. Returns {auth_user, auth_token} or None."""
+    admin_token_entry = db_overrides.get("jira/jira_admin_token")
+    if not admin_token_entry or not admin_token_entry[0]:
+        return None
+    user_entry = db_overrides.get("jira/jira_user")
+    if not user_entry or not user_entry[0]:
+        return None
+    admin_token = admin_token_entry[0]
+    if admin_token_entry[1]:
+        admin_token = get_encryptor().decrypt(admin_token)
+    return {"auth_user": user_entry[0], "auth_token": admin_token}
 
 
 def _find_status(toolbox: ToolboxClient, project_key: str, status_name: str) -> str | None:
@@ -110,10 +137,13 @@ def _find_status(toolbox: ToolboxClient, project_key: str, status_name: str) -> 
     return None
 
 
-def _create_status(toolbox: ToolboxClient, project_key: str, status_name: str) -> str | None:
+def _create_status(
+    toolbox: ToolboxClient, project_key: str, status_name: str,
+    admin_auth: dict | None = None,
+) -> str | None:
+    auth_kw = admin_auth or {}
     try:
-        # Get project details to find workflow scheme
-        project = toolbox.jira_request("GET", f"/rest/api/3/project/{project_key}")
+        project = toolbox.jira_request("GET", f"/rest/api/3/project/{project_key}", **auth_kw)
 
         payload = {
             "statuses": [{
@@ -126,7 +156,7 @@ def _create_status(toolbox: ToolboxClient, project_key: str, status_name: str) -
             },
         }
 
-        data = toolbox.jira_request("POST", "/rest/api/3/statuses", payload)
+        data = toolbox.jira_request("POST", "/rest/api/3/statuses", payload, **auth_kw)
         # Response is a list of created statuses
         if isinstance(data, list) and len(data) > 0:
             status_id = data[0].get("id")
@@ -156,13 +186,16 @@ def _find_field(toolbox: ToolboxClient, field_name: str) -> str | None:
     return None
 
 
-def _create_field(toolbox: ToolboxClient, field_name: str) -> str | None:
+def _create_field(
+    toolbox: ToolboxClient, field_name: str, admin_auth: dict | None = None,
+) -> str | None:
+    auth_kw = admin_auth or {}
     try:
         data = toolbox.jira_request("POST", "/rest/api/3/field", {
             "name": field_name,
             "type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
             "searcherKey": "com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher",
-        })
+        }, **auth_kw)
         field_id = data.get("id")
         if field_id:
             print(f"  Created field '{field_name}' (id: {field_id})")
@@ -176,6 +209,7 @@ def _create_field(toolbox: ToolboxClient, field_name: str) -> str | None:
 
 def _sync_field_options(
     toolbox: ToolboxClient, field_id: str, config: dict, logger: logging.Logger,
+    admin_auth: dict | None = None,
 ) -> bool:
     """Sync dropdown options. Returns True on success, False on error."""
     # Get frequency_map keys from config defaults
@@ -192,9 +226,11 @@ def _sync_field_options(
     if not desired_options:
         return True
 
+    auth_kw = admin_auth or {}
+
     # Get field contexts
     try:
-        ctx_data = toolbox.jira_request("GET", f"/rest/api/3/field/{field_id}/context")
+        ctx_data = toolbox.jira_request("GET", f"/rest/api/3/field/{field_id}/context", **auth_kw)
     except ToolboxAPIError as e:
         print(f"  Error: Could not get field contexts: {e}")
         return False
@@ -209,7 +245,7 @@ def _sync_field_options(
     # Get existing options
     try:
         opt_data = toolbox.jira_request(
-            "GET", f"/rest/api/3/field/{field_id}/context/{context_id}/option"
+            "GET", f"/rest/api/3/field/{field_id}/context/{context_id}/option", **auth_kw
         )
     except ToolboxAPIError:
         opt_data = {}
@@ -227,6 +263,7 @@ def _sync_field_options(
             "POST",
             f"/rest/api/3/field/{field_id}/context/{context_id}/option",
             {"options": [{"value": v} for v in missing]},
+            **auth_kw,
         )
         print(f"  Added {len(missing)} field option(s): {', '.join(missing)}")
         return True
@@ -237,16 +274,18 @@ def _sync_field_options(
 
 def _try_screen_mapping(
     toolbox: ToolboxClient, project_key: str, field_id: str, logger: logging.Logger,
+    admin_auth: dict | None = None,
 ) -> None:
+    auth_kw = admin_auth or {}
     try:
         # Get project screen schemes
-        project = toolbox.jira_request("GET", f"/rest/api/3/project/{project_key}")
+        project = toolbox.jira_request("GET", f"/rest/api/3/project/{project_key}", **auth_kw)
         # Team-managed projects handle field mapping automatically
         if project.get("style") == "next-gen":
             return
 
         # For company-managed: try to add field to default screen
-        screens_data = toolbox.jira_request("GET", "/rest/api/3/screens")
+        screens_data = toolbox.jira_request("GET", "/rest/api/3/screens", **auth_kw)
         screens = screens_data.get("values", []) if isinstance(screens_data, dict) else []
         if not screens:
             return
@@ -255,7 +294,7 @@ def _try_screen_mapping(
         screen_id = default_screen["id"]
 
         # Get screen tabs
-        tabs = toolbox.jira_request("GET", f"/rest/api/3/screens/{screen_id}/tabs")
+        tabs = toolbox.jira_request("GET", f"/rest/api/3/screens/{screen_id}/tabs", **auth_kw)
         if not tabs:
             return
 
@@ -268,6 +307,7 @@ def _try_screen_mapping(
             "POST",
             f"/rest/api/3/screens/{screen_id}/tabs/{tab_id}/fields",
             {"fieldId": field_id},
+            **auth_kw,
         )
         print(f"  Added field to screen '{default_screen.get('name', screen_id)}'")
     except ToolboxAPIError:
