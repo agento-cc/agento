@@ -30,9 +30,11 @@ Bypasses all onboarding prompts. Useful for CI/CD pipelines where interactive in
 Set the required config values before running `setup:upgrade`:
 
 ```bash
-agento config:set jira/api/url https://mycompany.atlassian.net
-agento config:set jira/api/email user@example.com
-agento config:set jira/api/token <token>
+agento config:set jira/jira_host https://mycompany.atlassian.net
+agento config:set jira/jira_user user@example.com
+agento config:set jira/jira_token <token>
+agento config:set jira/jira_assignee_account_id <account_id>
+agento config:set jira/jira_projects '["PROJECT_KEY"]'
 agento setup:upgrade
 ```
 

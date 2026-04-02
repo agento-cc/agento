@@ -246,8 +246,8 @@ class TestStrictOnboarding:
              patch("agento.framework.setup.migrate", return_value=[]), \
              patch("agento.framework.onboarding.get_onboardings", return_value=onboardings), \
              patch("agento.framework.bootstrap.get_module_config", return_value={}), \
-             patch("agento.framework.setup.select", side_effect=select_returns) as mock_select, \
-             patch("agento.framework.setup.set_enabled") as mock_set_enabled:
+             patch("agento.framework.cli.terminal.select", side_effect=select_returns) as mock_select, \
+             patch("agento.framework.module_status.set_enabled") as mock_set_enabled:
 
             # If we need custom all_scanned manifests, mock scan_modules
             if all_scanned is not None:

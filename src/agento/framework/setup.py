@@ -17,7 +17,6 @@ from pathlib import Path
 import pymysql
 
 from .bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
-from .cli.terminal import select
 from .crontab import (
     assemble,
     build_managed_block,
@@ -27,12 +26,12 @@ from .crontab import (
     install_crontab,
 )
 from .data_patch import apply_patch, get_all_pending, resolve_patch_order
-from .dependency_resolver import get_transitive_dependents, resolve_order, validate_dependencies
+from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import get_event_manager
 from .events import CrontabInstalledEvent, SetupBeforeEvent, SetupCompleteEvent
 from .migrate import get_pending, migrate
 from .module_loader import scan_modules
-from .module_status import filter_enabled, set_enabled
+from .module_status import filter_enabled
 
 FRAMEWORK_SQL_DIR = Path(__file__).parent / "sql"
 FRAMEWORK_CRON_JSON = Path(__file__).parent / "cron.json"
@@ -47,7 +46,6 @@ class SetupResult:
     data_patches: dict[str, list[str]] = field(default_factory=dict)
     cron_changed: bool = False
     onboardings_run: list[str] = field(default_factory=list)
-    onboardings_skipped: list[str] = field(default_factory=list)
     onboardings_disabled: list[str] = field(default_factory=list)
 
     @property
@@ -58,7 +56,6 @@ class SetupResult:
             or self.data_patches
             or self.cron_changed
             or self.onboardings_run
-            or self.onboardings_skipped
             or self.onboardings_disabled
         )
 
@@ -132,6 +129,9 @@ def setup_upgrade(
     # 5. Module onboarding (interactive, skippable)
     if not dry_run and not skip_onboarding:
         from .bootstrap import get_module_config  # lazy: avoids circular with bootstrap
+        from .cli.terminal import select
+        from .dependency_resolver import get_transitive_dependents
+        from .module_status import set_enabled
         from .onboarding import get_onboardings  # lazy: loaded after module bootstrap
 
         disabled_this_run: set[str] = set()
@@ -173,6 +173,8 @@ def setup_upgrade(
                         set_enabled(dep, False)
                         disabled_this_run.add(dep)
                         result.onboardings_disabled.append(dep)
+                    dep_msg = f" and dependents: {', '.join(dependents)}" if dependents else ""
+                    logger.info("Disabled %s%s during onboarding", module_name, dep_msg)
                     break
                 else:  # Quit
                     print("Setup aborted.")

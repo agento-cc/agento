@@ -26,7 +26,7 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
 - **Agent view config:** Scoped DB paths `agent/provider`, `agent/claude/model`, `agent/scheduling/priority`, `agent/instructions/agents_md`, `agent/instructions/soul_md` — resolved with agent_view → workspace → global fallback.
 - **Security:** Toolbox = only container with secrets. Agent has NO credentials.
 - **DB tables:** singular names (e.g., `job`, `schedule`, `oauth_token`). Exception: `core_config_data` (Magento convention).
-- **Setup:** `setup:upgrade` on deploy — applies schema migrations, data patches, installs crontab, runs module onboarding. Single entry point for all system updates after module file changes. Use `--skip-onboarding` for CI/CD.
+- **Setup:** `setup:upgrade` on deploy — applies schema migrations, data patches, installs crontab, runs module onboarding (strict: complete, disable+dependents, or quit). Use `--skip-onboarding` for CI/CD. Manual alternative: pre-set config values via `config:set`. See [docs/cli/onboarding.md](docs/cli/onboarding.md).
 - **Module setup files:** `sql/*.sql` (schema migrations), `data_patch.json` (data patches), `cron.json` (cron jobs), `di.json` onboarding (interactive external system setup)
 - **Migration tracking:** `schema_migration` table (with `module` column), `data_patch` table
 - **Events:** `agento_<area>_<action>` for framework events, `<vendor>_<module>_<event>` for third-party. Prefer domain/lifecycle events, not interception. See [docs/architecture/events.md](docs/architecture/events.md).

@@ -37,11 +37,13 @@ def _select_tty(prompt: str, options: list[str]) -> int:
     old_settings = termios.tcgetattr(fd)
     selected = 0
 
-    def _render() -> None:
+    def _render(*, move_up: bool = True) -> None:
         use_color = _supports_color()
-        sys.stdout.write(f"\033[{len(options)}A")
+        if move_up:
+            sys.stdout.write(f"\033[{len(options)}A")
         for i, opt in enumerate(options):
-            sys.stdout.write("\033[2K\r")
+            if move_up:
+                sys.stdout.write("\033[2K\r")
             if i == selected:
                 prefix = ">"
                 if use_color:
@@ -53,15 +55,8 @@ def _select_tty(prompt: str, options: list[str]) -> int:
         sys.stdout.flush()
 
     try:
-        # Print prompt and initial options
         sys.stdout.write(f"\n  {prompt}\n")
-        for i, opt in enumerate(options):
-            prefix = ">" if i == selected else " "
-            if i == selected and _supports_color():
-                sys.stdout.write(f"  {_BOLD}{_CYAN}{prefix} {opt}{_NC}\n")
-            else:
-                sys.stdout.write(f"  {prefix} {opt}\n")
-        sys.stdout.flush()
+        _render(move_up=False)
 
         tty.setraw(fd)
         while True:

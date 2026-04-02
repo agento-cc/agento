@@ -157,8 +157,6 @@ class SetupUpgradeCommand:
                     print("Crontab updated")
                 for mod in result.onboardings_run:
                     print(f"Onboarding completed for {mod}")
-                for mod in result.onboardings_skipped:
-                    print(f"Onboarding skipped for {mod}")
                 if result.onboardings_disabled:
                     print(f"Modules disabled during onboarding: {', '.join(result.onboardings_disabled)}")
         finally:
