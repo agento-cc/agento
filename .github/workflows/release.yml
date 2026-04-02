@@ -91,7 +91,7 @@ jobs:
           source /tmp/smoke/bin/activate
           VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//')
           for i in 1 2 3 4 5; do
-            uv pip install "agento==${VERSION}" && break
+            uv pip install "agento-core==${VERSION}" && break
             echo "PyPI not ready yet, retrying in 15s..."
             sleep 15
           done
