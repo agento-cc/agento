@@ -83,19 +83,65 @@ Analyze changed files and check if documentation should have been updated alongs
 
 Flag any stale or missing documentation as a finding.
 
-## Step 5: Code Review
+## Step 5: Security Review ⚠️ CRITICAL
+
+**This step is mandatory and must never be skipped or abbreviated.** Security issues are blocking — they must be resolved before any code ships.
+
+### 5a. Secrets & Sensitive Data Exposure
+Scan every changed line for:
+- **Hardcoded credentials**: API keys, tokens, passwords, connection strings, private keys
+- **PII leakage**: email addresses, usernames, customer IDs, phone numbers
+- **Internal infrastructure**: hardcoded IPs, internal hostnames/URLs, company-specific domains
+- **Environment bleed**: values that should come from ENV/config but are hardcoded instead
+
+If a secret is found, flag as **CRITICAL** and stop the review until resolved.
+
+### 5b. Security Boundary Enforcement
+The Toolbox/Agent separation is the project's core security model. Verify:
+- **Agent code must NEVER hold, read, or pass credentials** — all secret access goes through Toolbox
+- No new direct DB connections or secret-bearing config in Agent-side code
+- No changes that blur the boundary (e.g., passing tokens between containers, shared secret stores)
+
+A boundary violation is a **CRITICAL** finding.
+
+### 5c. Injection & Input Safety
+Review all changed code that handles external input:
+- **SQL injection**: PyMySQL queries must use parameterized queries (`%s` placeholders), never string formatting/f-strings
+- **Command injection**: no unsanitized input passed to `subprocess`, `os.system`, or shell commands
+- **Path traversal**: file operations must validate/sanitize paths — no user-controlled `../` sequences
+- **SSRF**: httpx requests must not accept unvalidated user-supplied URLs
+- **XSS**: any user-generated content rendered in output must be escaped
+
+### 5d. Logging & Error Message Safety
+- **No secrets in logs**: tokens, passwords, API keys must never appear in log output (check f-strings in `logger.*` calls)
+- **No internals in error responses**: stack traces, file paths, config values, SQL queries must not leak to external callers
+- **Redaction**: sensitive fields should be masked when logged (e.g., `token=****`)
+
+### 5e. Dependency Security
+For any newly added or modified imports/dependencies:
+- **Known vulnerabilities**: is the package/version affected by known CVEs?
+- **Deprecated packages**: is the dependency abandoned, archived, or superseded?
+- **Unnecessary new dependencies**: does the change introduce a dependency where stdlib or existing deps suffice?
+
+### 5f. Authentication & Authorization
+If the change touches auth flows, token handling, or access control:
+- OAuth tokens scoped correctly and refreshed/revoked properly
+- No privilege escalation paths (e.g., agent_view A accessing agent_view B's config)
+- Token storage follows project conventions (encrypted config, not plaintext files)
+
+## Step 6: Code Review
 Review the changes in the angle of:
-- Security
 - Performance
 - Dead code - we don't tolerate dead code, not used methods, classes, config files. We don't tolerate approach "maybe we will use it in the future".
 
-## Step 6: Report
+## Step 7: Report
 
-Summarize findings in sections:
-1. **Linter/type errors** — from ruff, basedpyright, eslint (with file:line references)
-2. **Rule violations** — project convention issues found in changed files
-3. **Documentation gaps** — docs that should have been updated alongside the code changes
-4. **Suggestions** — optional improvements (keep brief, respect "surgical changes" rule)
+Summarize findings in sections (ordered by severity):
+1. **🔴 Security findings** — secrets, boundary violations, injection risks, auth issues (BLOCKING — must fix before merge)
+2. **Linter/type errors** — from ruff, basedpyright, eslint (with file:line references)
+3. **Rule violations** — project convention issues found in changed files
+4. **Documentation gaps** — docs that should have been updated alongside the code changes
+5. **Suggestions** — optional improvements (keep brief, respect "surgical changes" rule)
 
 If everything passes, confirm the code looks good.
 
