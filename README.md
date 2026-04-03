@@ -1,8 +1,8 @@
 # Agento
 
-[![CI](https://github.com/saipix/agento/actions/workflows/ci.yml/badge.svg)](https://github.com/saipix/agento/actions/workflows/ci.yml)
+[![CI](https://github.com/agento-cc/agento/actions/workflows/ci.yml/badge.svg)](https://github.com/agento-cc/agento/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
 Self-hosted agent automation platform with modular integrations, Python execution runtime, Node.js toolbox, scoped config, and extension modules. Automates tasks using AI agents (Claude Code, OpenAI Codex) in Docker containers.
 
@@ -14,13 +14,13 @@ Agento enforces a strict security boundary between the AI sandbox and credential
 ┌───────────────────────────────────────────────────────┐
 │                    Docker Network                     │
 │                                                       │
-│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐ │
-│  │   Sandbox   │   │   Toolbox   │   │     Cron    │ │
-│  │   Claude/   │   │   Node.js   │   │    Python   │ │
-│  │   Codex     │   │  MCP Server │   │   Consumer  │ │
-│  │             │   │             │   │ + Scheduler │ │
-│  │ NO secrets  │   │ Credentials │   │  Job Queue  │ │
-│  └─────────────┘   └──────┬──────┘   └─────────────┘ │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐  │
+│  │   Sandbox   │   │   Toolbox   │   │     Cron    │  │
+│  │   Claude/   │   │   Node.js   │   │    Python   │  │
+│  │   Codex     │   │  MCP Server │   │   Consumer  │  │
+│  │             │   │             │   │ + Scheduler │  │
+│  │ NO secrets  │   │ Credentials │   │  Job Queue  │  │
+│  └─────────────┘   └──────┬──────┘   └─────────────┘  │
 │                           │                           │
 │                     ┌─────┴─────┐                     │
 │                     │   MySQL   │                     │
@@ -31,7 +31,7 @@ Agento enforces a strict security boundary between the AI sandbox and credential
 ## Quick Start
 
 ```bash
-uv tool install agento                # Install the CLI
+uv tool install agento-core           # Install the CLI
 agento init my-project                # Scaffold a new project
 cd my-project
 agento up                             # Start Docker Compose
@@ -72,12 +72,12 @@ Every module contains a `module.json` manifest and optional companion files:
 
 ## Installation
 
-### Path A — Docker Compose (recommended)
+### Docker Compose (recommended)
 
 For end users, demos, PoC, and self-hosting:
 
 ```bash
-uv tool install agento               # or: pip install agento
+uv tool install agento-core          # or: pip install agento-core
 agento init my-project                # Scaffold project with Docker Compose
 cd my-project
 agento up                             # Start containers (cron + toolbox + MySQL)

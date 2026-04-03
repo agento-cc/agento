@@ -21,7 +21,7 @@ packages = ["src/agento"]
 
 [project]
 name = "agento-core"
-version = "0.1.4"
+version = "0.1.5"
 description = "AI Agent Framework — automates tasks using AI agents in Docker containers"
 requires-python = ">=3.12"
 dependencies = [
@@ -43,7 +43,6 @@ classifiers = [
 
 [project.scripts]
 agento = "agento.framework.cli:main"
-agent = "agento.framework.cli:main"
 
 [project.entry-points."agento.modules"]
 jira = "agento.modules.jira"
