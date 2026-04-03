@@ -22,7 +22,7 @@ def find_project_root(start: Path | None = None) -> Path | None:
         if pyproject.is_file():
             try:
                 text = pyproject.read_text()
-                if 'name = "agento"' in text:
+                if 'name = "agento"' in text or 'name = "agento-core"' in text:
                     return directory
             except OSError:
                 continue
