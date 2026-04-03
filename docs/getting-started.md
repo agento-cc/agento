@@ -13,7 +13,7 @@ Run `agento doctor` after installation to verify prerequisites.
 
 ```bash
 # Install the CLI
-uv tool install agento              # or: pip install agento
+uv tool install agento-core         # or: pip install agento-core
 
 # Create a project directory and install
 mkdir my-project && cd my-project
