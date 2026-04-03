@@ -14,12 +14,12 @@ def _get_compose_cmd() -> list[str]:
     """Get the base docker compose command with the project's compose file."""
     project_root = find_project_root()
     if project_root is None:
-        log_error("Not inside an agento project. Run 'agento init <project>' first.")
+        log_error("Not inside an agento project. Run 'agento install' first.")
         sys.exit(1)
 
     compose_file = find_compose_file(project_root)
     if compose_file is None:
-        log_error("docker-compose.yml not found. Run 'agento init <project>' first.")
+        log_error("docker-compose.yml not found. Run 'agento install' first.")
         sys.exit(1)
 
     return ["docker", "compose", "-f", str(compose_file)]

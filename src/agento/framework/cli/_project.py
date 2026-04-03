@@ -8,13 +8,13 @@ def find_project_root(start: Path | None = None) -> Path | None:
     """Walk up from start (default: cwd) looking for an agento project root.
 
     Detection order:
-    1. .agento/project.json — created by `agento init`
+    1. .agento/project.json — created by `agento install`
     2. pyproject.toml with name = "agento" — git clone dev mode
     """
     current = (start or Path.cwd()).resolve()
 
     for directory in [current, *current.parents]:
-        # agento init'd project
+        # agento install'd project
         if (directory / ".agento" / "project.json").is_file():
             return directory
         # git clone dev mode

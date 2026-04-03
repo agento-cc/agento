@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Commands that always run on the host (no Docker proxy)
 _LOCAL_COMMANDS = frozenset({
-    "doctor", "init", "install", "up", "down", "logs",
+    "doctor", "install", "up", "down", "logs",
     "module:list", "module:enable", "module:disable", "module:validate",
     "make:module",
     # Shortcuts for local commands
@@ -46,7 +46,7 @@ def _proxy_to_docker(argv: list[str]) -> None:
 
     project_root = find_project_root()
     if not project_root:
-        print("Error: Not inside an agento project. Run 'agento init' first.", file=sys.stderr)
+        print("Error: Not inside an agento project. Run 'agento install' first.", file=sys.stderr)
         sys.exit(1)
     compose_file = find_compose_file(project_root)
     if not compose_file:
@@ -70,7 +70,6 @@ def _register_framework_commands() -> None:
     from .compose import DownCommand, LogsCommand, UpCommand
     from .config import ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSetCommand
     from .doctor import DoctorCommand
-    from .init import InitCommand
     from .install import InstallCommand
     from .module import (
         MakeModuleCommand,
@@ -91,7 +90,7 @@ def _register_framework_commands() -> None:
 
     for cmd_cls in [
         UpCommand, DownCommand, LogsCommand,
-        DoctorCommand, InitCommand, InstallCommand,
+        DoctorCommand, InstallCommand,
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
         ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand,
         ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, E2eCommand,
@@ -112,7 +111,7 @@ _GROUP_LABELS = {
 }
 
 _STANDALONE_GROUPS = {
-    "doctor": "project", "init": "project", "install": "project", "up": "project",
+    "doctor": "project", "install": "project", "up": "project",
     "down": "project", "logs": "project",
     "consumer": "job", "publish": "job", "replay": "job", "rotate": "job",
     "e2e": "test",
@@ -208,6 +207,21 @@ def main() -> None:
     args = parser.parse_args(argv)
 
     if args.command is None:
+        from ._project import find_project_root
+        from .terminal import select
+
+        if find_project_root() is None:
+            print()
+            print("  Welcome to Agento — AI Agent Framework")
+            choice = select("Would you like to set up a new project?", [
+                "Yes, set up a new project",
+                "No, show help",
+            ])
+            if choice == 0:
+                from .install import InstallCommand
+                InstallCommand().execute(argparse.Namespace())
+                sys.exit(0)
+
         print(_format_help(commands))
         sys.exit(0)
 

@@ -30,6 +30,7 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
 - **Module setup files:** `sql/*.sql` (schema migrations), `data_patch.json` (data patches), `cron.json` (cron jobs), `di.json` onboarding (interactive external system setup)
 - **Migration tracking:** `schema_migration` table (with `module` column), `data_patch` table
 - **Events:** `agento_<area>_<action>` for framework events, `<vendor>_<module>_<event>` for third-party. Prefer domain/lifecycle events, not interception. See [docs/architecture/events.md](docs/architecture/events.md).
+- **Interactive prompts:** Always use `terminal.select()` (arrow-key selection) for user choices. Never use Y/n text prompts. For text input (paths, port numbers), use `input()` with defaults shown in brackets.
 - **Logs:** consumer → JSON structured, publisher/sync → text. Never delete while consumer runs.
 - **Code via volume mounts** — after changes: `docker compose restart cron` (Python) or `docker compose restart toolbox` (JS). Rebuild only for dependency changes (`pyproject.toml` / `package.json`).
 
@@ -45,7 +46,7 @@ cd src/agento/toolbox && npm test && cd -              # JS (vitest, from repo r
 
 # Project lifecycle
 agento doctor                                          # Check prerequisites
-agento init <project>                                  # Scaffold a new project
+agento install                                         # Interactive project installation wizard
 agento up                                              # Start Docker Compose
 agento down                                            # Stop containers
 agento logs [service]                                  # View container logs

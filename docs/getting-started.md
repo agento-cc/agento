@@ -15,13 +15,9 @@ Run `agento doctor` after installation to verify prerequisites.
 # Install the CLI
 uv tool install agento              # or: pip install agento
 
-# Scaffold a new project
-agento init my-project
-cd my-project
-
-# Start the runtime
-agento up                            # Starts cron + toolbox + MySQL
-agento setup:upgrade                 # Apply migrations, install crontab
+# Create a project directory and install
+mkdir my-project && cd my-project
+agento install                       # Interactive wizard — scaffolds, starts, migrates
 ```
 
 ## Add Your First Module
