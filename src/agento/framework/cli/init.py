@@ -51,12 +51,16 @@ class InitCommand:
         parser.add_argument("--no-example", action="store_true", dest="no_example", help="Skip example module")
 
     def execute(self, args: argparse.Namespace) -> None:
-        project_name = args.project
-        project_dir = Path.cwd() / project_name
+        project_dir = (Path.cwd() / args.project).resolve()
+        project_name = project_dir.name
+        is_current_dir = args.project == "."
 
         if project_dir.exists():
-            log_error(f"Directory already exists: {project_dir}")
-            sys.exit(1)
+            if any(project_dir.iterdir()):
+                log_error(f"Directory is not empty: {project_dir}")
+                sys.exit(1)
+        else:
+            project_dir.mkdir(parents=True)
 
         log_info(f"Initializing agento project: {project_name}")
 
@@ -143,7 +147,8 @@ class InitCommand:
         print()
 
         print(f"{cyan('Next steps:')}")
-        print(f"  cd {project_name}")
+        if not is_current_dir:
+            print(f"  cd {project_name}")
         print("  # Edit docker/.env and secrets.env with your settings")
         print("  agento up                     Start Docker Compose")
         print("  agento setup:upgrade          Apply migrations")

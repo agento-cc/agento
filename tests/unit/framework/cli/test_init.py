@@ -65,10 +65,12 @@ class TestCmdInit:
         meta = json.loads((project_dir / ".agento" / "project.json").read_text())
         assert meta["name"] == "test-proj"
 
-    def test_refuses_existing_directory(self, tmp_path: Path):
+    def test_refuses_non_empty_directory(self, tmp_path: Path):
         import pytest
 
-        (tmp_path / "existing").mkdir()
+        existing = tmp_path / "existing"
+        existing.mkdir()
+        (existing / "some_file.txt").write_text("content")
         args = argparse.Namespace(project="existing", no_example=False)
 
         original_cwd = Path.cwd
@@ -78,3 +80,47 @@ class TestCmdInit:
                 InitCommand().execute(args)
         finally:
             Path.cwd = original_cwd
+
+    def test_init_in_existing_empty_directory(self, tmp_path: Path):
+        existing = tmp_path / "empty-proj"
+        existing.mkdir()
+        args = argparse.Namespace(project="empty-proj", no_example=False)
+
+        original_cwd = Path.cwd
+        try:
+            Path.cwd = staticmethod(lambda: tmp_path)
+            InitCommand().execute(args)
+        finally:
+            Path.cwd = original_cwd
+
+        assert (existing / ".agento" / "project.json").is_file()
+        meta = json.loads((existing / ".agento" / "project.json").read_text())
+        assert meta["name"] == "empty-proj"
+
+    def test_init_dot_uses_current_directory(self, tmp_path: Path):
+        args = argparse.Namespace(project=".", no_example=False)
+
+        original_cwd = Path.cwd
+        try:
+            Path.cwd = staticmethod(lambda: tmp_path)
+            InitCommand().execute(args)
+        finally:
+            Path.cwd = original_cwd
+
+        assert (tmp_path / ".agento" / "project.json").is_file()
+        assert (tmp_path / "app" / "code").is_dir()
+
+    def test_init_dot_derives_name_from_dirname(self, tmp_path: Path):
+        work_dir = tmp_path / "my-cool-project"
+        work_dir.mkdir()
+        args = argparse.Namespace(project=".", no_example=False)
+
+        original_cwd = Path.cwd
+        try:
+            Path.cwd = staticmethod(lambda: work_dir)
+            InitCommand().execute(args)
+        finally:
+            Path.cwd = original_cwd
+
+        meta = json.loads((work_dir / ".agento" / "project.json").read_text())
+        assert meta["name"] == "my-cool-project"
