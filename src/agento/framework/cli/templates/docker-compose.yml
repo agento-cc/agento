@@ -2,10 +2,7 @@ name: agento
 
 services:
   toolbox:
-    build:
-      context: ..
-      dockerfile: docker/toolbox/Dockerfile
-    image: agento-toolbox:latest
+    image: ghcr.io/saipix/agento-toolbox:__AGENTO_VERSION__
     environment:
       - TZ=${TZ:-UTC}
       - CRONDB_HOST=mysql
@@ -17,9 +14,6 @@ services:
       - path: ../secrets.env
         required: false
     volumes:
-      - ../src/agento/toolbox:/app
-      - /app/node_modules
-      - ../src/agento/modules:/app/modules/core:ro
       - ../app/code:/app/modules/user:ro
       - ../logs:/app/logs
       - ../workspace/tmp:/workspace/tmp
@@ -33,10 +27,7 @@ services:
     restart: unless-stopped
 
   cron:
-    build:
-      context: ..
-      dockerfile: docker/cron/Dockerfile
-    image: agento-cron:latest
+    image: ghcr.io/saipix/agento-cron:__AGENTO_VERSION__
     env_file:
       - path: ../secrets.env
         required: false
@@ -52,7 +43,6 @@ services:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
       - ../logs:/app/logs
-      - ../src/agento:/opt/cron-agent/src/agento
       - ../tokens:/etc/tokens
     networks:
       - agento-net
@@ -74,7 +64,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cronagent_pass}
     volumes:
       - ../storage/mysql:/var/lib/mysql
-      - ../src/agento/framework/sql:/docker-entrypoint-initdb.d:ro
+      - ../docker/sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s

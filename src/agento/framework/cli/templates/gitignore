@@ -8,6 +8,7 @@ secrets.env
 docker/.env
 docker/.cron.env
 docker/.toolbox.env
+docker/sql/
 .env
 __pycache__/
 *.pyc

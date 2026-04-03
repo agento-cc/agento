@@ -25,3 +25,22 @@ def get_template(name: str) -> str:
         return template_path.read_text()
 
     raise TemplateNotFoundError(name)
+
+
+def get_package_version() -> str:
+    """Get installed agento-core version. Falls back to 'latest' for dev."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("agento-core")
+    except PackageNotFoundError:
+        return "latest"
+
+
+def extract_sql_files(target_dir: Path) -> None:
+    """Copy SQL migration scripts from installed package to target directory."""
+    sql_pkg = importlib.resources.files("agento.framework.sql")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for resource in sql_pkg.iterdir():
+        if resource.name.endswith(".sql"):
+            (target_dir / resource.name).write_text(resource.read_text())

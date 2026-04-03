@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ._output import cyan, log_error, log_info, log_warn
 from ._project import find_compose_file
-from ._templates import TemplateNotFoundError, get_template
+from ._templates import TemplateNotFoundError, extract_sql_files, get_package_version, get_template
 from .terminal import select
 
 
@@ -73,6 +73,7 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
         "tokens",
         "storage",
         "docker",
+        "docker/sql",
     ]
     for d in dirs:
         (project_dir / d).mkdir(parents=True, exist_ok=True)
@@ -105,12 +106,19 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             "docker/.toolbox.env\n"
         )
 
-    # Docker Compose config
+    # Docker Compose config — replace version placeholder with installed package version
     try:
         compose_content = get_template("docker-compose.yml")
+        compose_content = compose_content.replace("__AGENTO_VERSION__", get_package_version())
         (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
     except TemplateNotFoundError:
         pass
+
+    # Extract SQL migration scripts from installed package
+    try:
+        extract_sql_files(project_dir / "docker" / "sql")
+    except Exception:
+        pass  # SQL package not available (dev mode without __init__.py)
 
     # Render docker/.env from template
     try:

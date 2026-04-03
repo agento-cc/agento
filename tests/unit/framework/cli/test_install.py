@@ -144,7 +144,7 @@ class TestScaffold:
         assert "DISABLE_LLM=0" in env_content
         assert "{" not in env_content
 
-    def test_docker_compose_has_no_container_name(self, tmp_path: Path):
+    def test_docker_compose_uses_ghcr_images(self, tmp_path: Path):
         config = {
             "compose_project_name": "x",
             "mysql_root_password": "x",
@@ -156,6 +156,25 @@ class TestScaffold:
 
         compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
         assert "container_name" not in compose
+        assert "build:" not in compose
+        assert "ghcr.io/saipix/agento-toolbox:" in compose
+        assert "ghcr.io/saipix/agento-cron:" in compose
+        assert "__AGENTO_VERSION__" not in compose
+
+    def test_sql_files_extracted(self, tmp_path: Path):
+        config = {
+            "compose_project_name": "x",
+            "mysql_root_password": "x",
+            "mysql_password": "x",
+            "mysql_port": "3306",
+            "timezone": "UTC",
+        }
+        _scaffold(tmp_path, "x", config)
+
+        sql_dir = tmp_path / "docker" / "sql"
+        assert sql_dir.is_dir()
+        sql_files = list(sql_dir.glob("*.sql"))
+        assert len(sql_files) > 0
 
 
 class TestInstallCommandAlreadyInstalled:

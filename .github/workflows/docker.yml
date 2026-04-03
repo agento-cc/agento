@@ -20,7 +20,7 @@ jobs:
             context: .
           - image: agento-toolbox
             dockerfile: docker/toolbox/Dockerfile
-            context: docker/toolbox
+            context: .
     steps:
       - uses: actions/checkout@v4
 
