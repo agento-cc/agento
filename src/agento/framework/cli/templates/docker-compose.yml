@@ -6,7 +6,6 @@ services:
       context: ..
       dockerfile: docker/toolbox/Dockerfile
     image: agento-toolbox:latest
-    container_name: agento-toolbox
     environment:
       - TZ=${TZ:-UTC}
       - CRONDB_HOST=mysql
@@ -38,7 +37,6 @@ services:
       context: ..
       dockerfile: docker/cron/Dockerfile
     image: agento-cron:latest
-    container_name: agento-cron
     env_file:
       - path: ../secrets.env
         required: false
@@ -67,9 +65,8 @@ services:
 
   mysql:
     image: mysql:8.0
-    container_name: agento-mysql
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-cronagent_root}
       MYSQL_DATABASE: cron_agent
