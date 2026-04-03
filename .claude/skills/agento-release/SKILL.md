@@ -1,5 +1,5 @@
 ---
-name: release
+name: agento-release
 description: Prepare and publish a new release of Agento. Use this skill when the user wants to release, bump version, create a tag, publish to PyPI, or says things like "let's release", "new version", "bump to X.Y.Z", "cut a release". Even if the user just says "release" with no arguments, use this skill.
 ---
 
