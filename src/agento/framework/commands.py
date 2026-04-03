@@ -67,6 +67,11 @@ def get_shortcuts() -> dict[str, str]:
     return dict(_SHORTCUTS)
 
 
+def resolve_shortcut(name: str) -> str:
+    """Translate a shortcut to its full command name, or return input unchanged."""
+    return _SHORTCUTS.get(name, name)
+
+
 def clear() -> None:
     """Reset registry (for testing)."""
     _COMMANDS.clear()

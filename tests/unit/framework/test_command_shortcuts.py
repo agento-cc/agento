@@ -11,6 +11,7 @@ from agento.framework.commands import (
     get_commands,
     get_shortcuts,
     register_command,
+    resolve_shortcut,
 )
 
 
@@ -102,3 +103,21 @@ class TestShortcutRegistration:
 
         assert get_shortcuts() == {"co:se": "config:set", "co:ge": "config:get"}
         assert len(get_commands()) == 3
+
+
+class TestResolveShortcut:
+    def test_resolves_known_shortcut(self):
+        register_command(_StubCommand("config:set", "co:se"))
+
+        assert resolve_shortcut("co:se") == "config:set"
+
+    def test_returns_input_for_unknown_shortcut(self):
+        assert resolve_shortcut("no:such") == "no:such"
+
+    def test_returns_full_command_name_unchanged(self):
+        register_command(_StubCommand("config:set", "co:se"))
+
+        assert resolve_shortcut("config:set") == "config:set"
+
+    def test_returns_empty_string_unchanged(self):
+        assert resolve_shortcut("") == ""

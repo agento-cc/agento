@@ -99,6 +99,69 @@ def _register_framework_commands() -> None:
         register_command(cmd_cls())
 
 
+_GROUP_ORDER = [
+    "project", "setup", "module", "config", "token",
+    "ingress", "job", "jira", "test",
+]
+
+_GROUP_LABELS = {
+    "project": "Project", "setup": "Setup", "module": "Modules",
+    "config": "Configuration", "token": "Tokens", "ingress": "Ingress",
+    "job": "Jobs", "jira": "Jira", "test": "Testing",
+}
+
+_STANDALONE_GROUPS = {
+    "doctor": "project", "init": "project", "up": "project",
+    "down": "project", "logs": "project",
+    "consumer": "job", "publish": "job", "replay": "job", "rotate": "job",
+    "e2e": "test",
+}
+
+_PREFIX_GROUP_OVERRIDES = {
+    "make": "module",
+    "exec": "job",
+}
+
+
+def _command_group(name: str) -> str:
+    """Determine group key for a command name."""
+    if ":" in name:
+        prefix = name.split(":")[0]
+        return _PREFIX_GROUP_OVERRIDES.get(prefix, prefix)
+    return _STANDALONE_GROUPS.get(name, "other")
+
+
+def _format_help(commands: dict) -> str:
+    """Format grouped help output for the CLI."""
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for name, cmd in commands.items():
+        group = _command_group(name)
+        groups.setdefault(group, []).append((name, cmd.help))
+
+    lines = [
+        "Agento -- AI Agent Framework",
+        "",
+        "Usage: agento <command> [options]",
+    ]
+
+    ordered_keys = [k for k in _GROUP_ORDER if k in groups]
+    extra_keys = sorted(k for k in groups if k not in _GROUP_ORDER)
+    for group_key in ordered_keys + extra_keys:
+        label = _GROUP_LABELS.get(group_key, group_key.capitalize())
+        lines.append("")
+        lines.append(f"{label}:")
+        for name, help_text in sorted(groups[group_key]):
+            lines.append(f"  {name:<20s}{help_text}")
+
+    lines.append("")
+    lines.append("Run 'agento <command> --help' for details on a specific command.")
+    lines.append("")
+    lines.append("Tip: Use shortcuts for faster typing (e.g. 'co:se' for 'config:set',")
+    lines.append("'mo:li' for 'module:list'). Pattern: first 2 letters of each segment.")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> None:
     if _should_proxy(sys.argv[1:]):
         _proxy_to_docker(sys.argv[1:])
@@ -117,27 +180,36 @@ def main() -> None:
     # Phase 2: Register framework commands (after bootstrap, which clears registries)
     _register_framework_commands()
 
-    # Phase 3: Build argparse from unified registry
-    from ..commands import get_commands, get_shortcuts
+    # Phase 3: Resolve shortcuts before argparse sees them
+    from ..commands import get_commands, resolve_shortcut
+
+    argv = sys.argv[1:]
+    if argv:
+        first = _get_command(argv)
+        if first:
+            resolved = resolve_shortcut(first)
+            if resolved != first:
+                idx = argv.index(first)
+                argv[idx] = resolved
+
+    # Phase 4: Build argparse from unified registry
+    commands = get_commands()
 
     parser = argparse.ArgumentParser(prog="agento", description="Agento -- AI Agent Framework")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.format_help = lambda: _format_help(commands)
+    sub = parser.add_subparsers(dest="command")
 
-    for name, cmd in get_commands().items():
+    for name, cmd in commands.items():
         cmd_p = sub.add_parser(name, help=cmd.help)
         cmd.configure(cmd_p)
         cmd_p.set_defaults(func=cmd.execute)
 
-    # Register shortcut aliases
-    registered_names = set(get_commands().keys())
-    for sc, cmd_name in get_shortcuts().items():
-        if sc not in registered_names:
-            cmd = get_commands()[cmd_name]
-            alias_p = sub.add_parser(sc, help=f"Shortcut for {cmd_name}")
-            cmd.configure(alias_p)
-            alias_p.set_defaults(func=cmd.execute)
+    args = parser.parse_args(argv)
 
-    args = parser.parse_args()
+    if args.command is None:
+        print(_format_help(commands))
+        sys.exit(0)
+
     args.func(args)
 
 
