@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Commands that always run on the host (no Docker proxy)
 _LOCAL_COMMANDS = frozenset({
-    "doctor", "init", "up", "down", "logs",
+    "doctor", "init", "install", "up", "down", "logs",
     "module:list", "module:enable", "module:disable", "module:validate",
     "make:module",
     # Shortcuts for local commands
@@ -71,6 +71,7 @@ def _register_framework_commands() -> None:
     from .config import ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSetCommand
     from .doctor import DoctorCommand
     from .init import InitCommand
+    from .install import InstallCommand
     from .module import (
         MakeModuleCommand,
         ModuleDisableCommand,
@@ -90,7 +91,7 @@ def _register_framework_commands() -> None:
 
     for cmd_cls in [
         UpCommand, DownCommand, LogsCommand,
-        DoctorCommand, InitCommand,
+        DoctorCommand, InitCommand, InstallCommand,
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
         ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand,
         ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, E2eCommand,
@@ -111,7 +112,7 @@ _GROUP_LABELS = {
 }
 
 _STANDALONE_GROUPS = {
-    "doctor": "project", "init": "project", "up": "project",
+    "doctor": "project", "init": "project", "install": "project", "up": "project",
     "down": "project", "logs": "project",
     "consumer": "job", "publish": "job", "replay": "job", "rotate": "job",
     "e2e": "test",
