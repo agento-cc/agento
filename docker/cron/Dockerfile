@@ -1,4 +1,5 @@
-FROM agento-sandbox:latest
+ARG SANDBOX_IMAGE=agento-sandbox:latest
+FROM ${SANDBOX_IMAGE}
 
 USER root
 
