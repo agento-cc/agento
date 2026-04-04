@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import secrets
@@ -115,10 +116,8 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
         pass
 
     # Extract SQL migration scripts from installed package
-    try:
+    with contextlib.suppress(Exception):
         extract_sql_files(project_dir / "docker" / "sql")
-    except Exception:
-        pass  # SQL package not available (dev mode without __init__.py)
 
     # Render docker/.env from template
     try:

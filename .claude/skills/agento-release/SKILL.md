@@ -48,14 +48,14 @@ uv sync
 
 Verify that `uv.lock` was updated by checking `git diff uv.lock` — the old version string should be replaced with the new one. If uv.lock wasn't updated, warn the user.
 
-## Step 6: HITL checkpoint — approve changes
+## Step 6: HITL checkpoint 1 — approve commit, tag, and push
 
 Show the user the full diff:
 ```bash
 git diff pyproject.toml uv.lock
 ```
 
-Use AskUserQuestion: "Here are the changes for version X.Y.Z. Approve to commit, tag, push, and create a GitHub Release?"
+Use AskUserQuestion: "Here are the changes for version X.Y.Z. Approve to commit, tag, and push?"
 
 Do NOT proceed without explicit approval.
 
@@ -76,7 +76,13 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-## Step 9: Create GitHub Release
+## Step 9: HITL checkpoint 2 — approve GitHub Release creation
+
+Use AskUserQuestion: "v0.X.Y.Z tagged and pushed. Create the GitHub Release now? (This triggers PyPI publish via release.yml workflow)"
+
+Do NOT proceed without explicit approval. The user may want to test locally first.
+
+## Step 10: Create GitHub Release
 
 ```bash
 gh-saipix release create vX.Y.Z --repo agento-cc/agento --generate-notes --title "vX.Y.Z"
