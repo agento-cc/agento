@@ -157,8 +157,8 @@ class TestScaffold:
         compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
         assert "container_name" not in compose
         assert "build:" not in compose
-        assert "ghcr.io/saipix/agento-toolbox:" in compose
-        assert "ghcr.io/saipix/agento-cron:" in compose
+        assert "ghcr.io/agento-cc/agento-toolbox:" in compose
+        assert "ghcr.io/agento-cc/agento-cron:" in compose
         assert "__AGENTO_VERSION__" not in compose
 
     def test_sql_files_extracted(self, tmp_path: Path):

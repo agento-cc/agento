@@ -13,6 +13,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 
 # Install Python project
 COPY pyproject.toml /opt/cron-agent/pyproject.toml
+COPY README.md /opt/cron-agent/README.md
 COPY src/agento/ /opt/cron-agent/src/agento/
 RUN cd /opt/cron-agent && \
     uv venv .venv && \
