@@ -24,7 +24,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/saipix/agento-sandbox
+          images: ghcr.io/agento-cc/agento-sandbox
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -62,7 +62,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/saipix/${{ matrix.image }}
+          images: ghcr.io/agento-cc/${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -76,4 +76,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SANDBOX_IMAGE=ghcr.io/saipix/agento-sandbox:latest
+            SANDBOX_IMAGE=ghcr.io/agento-cc/agento-sandbox:latest
