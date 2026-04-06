@@ -18,6 +18,7 @@ COPY src/agento/ /opt/cron-agent/src/agento/
 RUN cd /opt/cron-agent && \
     uv venv .venv && \
     uv pip install --python .venv/bin/python -e . && \
+    chmod -R a+rX /opt/cron-agent/.venv && \
     chown -R agent /opt/cron-agent
 
 COPY docker/cron/run.sh /opt/cron-agent/run.sh

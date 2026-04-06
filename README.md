@@ -32,10 +32,8 @@ Agento enforces a strict security boundary between the AI sandbox and credential
 
 ```bash
 uv tool install agento-core           # Install the CLI
-agento init my-project                # Scaffold a new project
-cd my-project
-agento up                             # Start Docker Compose
-agento setup:upgrade                  # Apply migrations
+mkdir my-project && cd my-project
+agento install                        # Interactive wizard — scaffolds, starts, migrates
 ```
 
 ## Architecture
@@ -78,11 +76,11 @@ For end users, demos, PoC, and self-hosting:
 
 ```bash
 uv tool install agento-core          # or: pip install agento-core
-agento init my-project                # Scaffold project with Docker Compose
-cd my-project
-agento up                             # Start containers (cron + toolbox + MySQL)
-agento setup:upgrade                  # Apply migrations, install crontab
+mkdir my-project && cd my-project
+agento install                        # Interactive wizard — scaffolds, starts, migrates
 ```
+
+The installer offers **Basic** (recommended) and **Advanced** modes. Basic uses sensible defaults. Advanced lets you configure Docker project name, MySQL port, and timezone for multi-instance setups.
 
 ### System check
 

@@ -38,9 +38,14 @@ def get_package_version() -> str:
 
 
 def extract_sql_files(target_dir: Path) -> None:
-    """Copy SQL migration scripts from installed package to target directory."""
-    sql_pkg = importlib.resources.files("agento.framework.sql")
+    """Copy consolidated init schema for docker-entrypoint-initdb.d.
+
+    Only the single ``000_init.sql`` file is extracted (from the ``init/``
+    sub-package).  Individual migration files stay in the ``sql/`` package
+    for ``setup:upgrade`` to apply incrementally on existing databases.
+    """
+    init_pkg = importlib.resources.files("agento.framework.sql.init")
     target_dir.mkdir(parents=True, exist_ok=True)
-    for resource in sql_pkg.iterdir():
+    for resource in init_pkg.iterdir():
         if resource.name.endswith(".sql"):
             (target_dir / resource.name).write_text(resource.read_text())

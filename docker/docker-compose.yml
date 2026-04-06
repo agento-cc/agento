@@ -110,7 +110,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cronagent_pass}
     volumes:
       - ../storage/mysql:/var/lib/mysql
-      - ../src/agento/framework/sql:/docker-entrypoint-initdb.d:ro
+      - ../src/agento/framework/sql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s

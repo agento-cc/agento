@@ -437,14 +437,14 @@ For open-source: a module author needs to declare "I need these tables" and "I n
 
 The event-observer system exists, but many framework/core extension points still rely on direct calls, implicit behavior, or missing events. For open-source, explicit events are the safest extensibility mechanism: discoverable, grep-friendly, reviewable, and stable across modules.
 
-### Done (partial — config & setup events)
+### Done
 
 1. **Event naming convention established:**
    - Framework events (new): `agento_<area>_<action>` (e.g., `agento_config_saved`)
    - Third-party module events: `<vendor>_<module>_<event>` (e.g., `acme_slack_message_sent`)
    - Existing events keep their names for backward compatibility
 
-2. **6 new events added** (12 → 18 total):
+2. **Config & setup events** (Phase 8 initial):
    - `agento_config_saved` — after CLI `config:set`
    - `agento_setup_before` — before `setup:upgrade` begins
    - `agento_setup_complete` — after `setup:upgrade` finishes
@@ -452,16 +452,27 @@ The event-observer system exists, but many framework/core extension points still
    - `agento_data_patch_applied` — after each data patch
    - `agento_crontab_installed` — after crontab updated
 
-3. **Code review checklist updated** — event naming and extensibility checks in `agento-code-review` skill
+3. **Worker & agent_view lifecycle events** (added in Phase 9.5):
+   - `agento_worker_started` — worker slot begins job execution
+   - `agento_worker_stopped` — worker slot finishes
+   - `agento_agent_view_run_started` — agent_view runtime initialized
+   - `agento_agent_view_run_finished` — agent_view run completed
 
-4. **Documentation refreshed** — naming convention, new events table, "When to Add an Event" guidance in `docs/architecture/events.md`
+4. **Routing events** (added in Phase 10):
+   - `agento_routing_resolved` — successful routing to agent_view
+   - `agento_routing_ambiguous` — multiple routers matched
+   - `agento_routing_failed` — no router matched
 
-### Remaining (incremental, alongside Phases 9–13)
+5. **25 total event classes** covering job lifecycle, consumer lifecycle, worker lifecycle, agent_view runs, module lifecycle, configuration, setup, migrations, and routing.
+
+6. **Code review checklist updated** — event naming and extensibility checks in `agento-code-review` skill
+
+7. **Documentation refreshed** — naming convention, new events table, "When to Add an Event" guidance in `docs/architecture/events.md`
+
+### Remaining (incremental, alongside Phases 11–13)
 
 Events for features that don't exist yet — add when each phase introduces the feature:
 
-- workspace / agent_view lifecycle events (Phase 9.5)
-- routing decisions and ambiguity events (Phase 10)
 - tool binding change events (when dynamic tool binding is added)
 
 ### Acceptance Criteria
@@ -470,8 +481,8 @@ Events for features that don't exist yet — add when each phase introduces the 
 - [x] Event names follow `agento_<area>_<action>` consistently
 - [x] `code-review/skill.md` includes event naming / extensibility checks
 - [x] Documentation explains when to add an event and when not to
-- [ ] Workspace/agent_view lifecycle events (Phase 9.5)
-- [ ] Routing events (Phase 10)
+- [x] Workspace/agent_view lifecycle events (Phase 9.5)
+- [x] Routing events (Phase 10)
 
 ### Key Technical Decisions
 
@@ -570,7 +581,7 @@ Agento is evolving toward a Magento-like, single-organization deployment model w
 
 ---
 
-## Phase 9.5: Concurrent Agent View Execution Pool
+## Phase 9.5: Concurrent Agent View Execution Pool — DONE
 
 ### Business Need
 
@@ -660,7 +671,7 @@ The practical target is simple: one consumer process, configurable worker limit 
 
 ---
 
-## Phase 10: Ingress Identities & Agent Resolution
+## Phase 10: Ingress Identities & Agent Resolution — DONE
 
 ### Business Need
 
@@ -688,6 +699,20 @@ Agento needs a deterministic and extensible way to map incoming Outlook / Teams 
 
 5. **Post-MVP / nice to have:**
    - semantic router based on agent competence/description using LLM
+
+### Done
+
+1. **Ingress identity model** (`ingress_identity.py`) — `IngressIdentity` dataclass with `bind_identity()`, `unbind_identity()`, `get_ingress_identity()`, `list_identities()`. DB schema in `sql/015_ingress_identity.sql`.
+
+2. **Router registry & protocol** (`router_registry.py`, `router.py`) — `Router` protocol with `name` property and `resolve()` method. `RoutingContext` dataclass (channel, workflow_type, identity_type, identity_value, payload). `RoutingDecision` with agent_view resolution, matched_router, and ambiguity detection.
+
+3. **`resolve_agent_view()` function** — runs all registered routers, detects ambiguity, returns `RoutingDecision`. Logs matched router, candidates, chosen agent_view, and reasoning.
+
+4. **CLI commands** — `ingress:bind`, `ingress:list`, `ingress:unbind` contributed by core module via `di.json` commands.
+
+5. **Routing events** — `agento_routing_resolved`, `agento_routing_ambiguous`, `agento_routing_failed` dispatched during resolution.
+
+6. **Jira module integration** — `_resolve_routing()` calls `resolve_agent_view()` during job publishing (cron, todo, followup workflows).
 
 ### Acceptance Criteria
 
@@ -854,6 +879,64 @@ Tokens are currently selected per-provider via `TokenResolver`. For multi-tenant
 
 ---
 
+## Phase 15: Distribution & Installation Model
+
+### Business Need
+
+Agento currently requires contributors to clone the repo and run `docker compose build` locally. The dev-only `docker-compose.yml` bind-mounts host source code into containers, meaning the "built" image is overridden at runtime. The cron image inherits the full sandbox (Claude Code, Codex, Playwright, Chromium, mssql-tools, gosu, poppler-utils) even though cron only needs a Python runtime. Builds are not fully reproducible — `uv.lock` exists but is not copied into Docker builds, toolbox uses `npm install` instead of `npm ci`, and base images use mutable tags.
+
+For adoption: an operator should run `agento install`, answer a few questions, and get a running system from pre-built versioned images — no local builds, no source checkout, no bind-mounts of framework code. The customer template compose (`src/agento/framework/cli/templates/docker-compose.yml`) already uses `image: ghcr.io/agento-cc/agento-*:__AGENTO_VERSION__` with no source bind-mounts — the infrastructure is there, but the build pipeline and image architecture need to catch up.
+
+### Scope
+
+1. **Decouple cron image from sandbox:**
+   - Replace `FROM ${SANDBOX_IMAGE}` in `docker/cron/Dockerfile` with a standalone `FROM python:3.12-slim` (or equivalent minimal base).
+   - Cron needs: Python 3.12, uv, cron daemon, procps, logrotate, curl, openssh-client. It does not need: Node.js, Claude Code, Codex CLI, Playwright, Chromium, mssql-tools, gosu.
+   - Sandbox image continues to carry the full agent runtime (Node.js, Claude Code, Codex, system packages).
+   - Update `docker.yml` CI workflow: remove `needs: build-sandbox` dependency for cron; sandbox and cron can build in parallel.
+   - Update `docker/cron/entrypoint.sh`: remove sandbox-specific assumptions (gosu, agent user setup inherited from sandbox base).
+
+2. **Stabilize Docker builds:**
+   - **Cron Dockerfile:** `COPY uv.lock` alongside `pyproject.toml`, use `uv sync --frozen` instead of `uv pip install -e .` so the lock file is respected.
+   - **Toolbox Dockerfile:** `COPY src/agento/toolbox/package-lock.json` before `npm ci --omit=dev` (replace `npm install`).
+   - **Pin base images:** use digest-pinned base images (e.g., `python:3.12-slim@sha256:...`, `node:22-slim@sha256:...`) in all Dockerfiles. Document the update process.
+   - **CI uses versioned sandbox:** change `docker.yml` build-arg from `SANDBOX_IMAGE=ghcr.io/agento-cc/agento-sandbox:latest` to the release version tag so sandbox tag matches the release being built.
+
+3. **Rename dev compose, keep customer compose as default:**
+   - Rename `docker/docker-compose.yml` → `docker/docker-compose.dev.yml` — retains bind-mounts (`../src/agento:/opt/cron-agent/src/agento`, `../src/agento/toolbox:/app`), local `build:` directives, and `image: agento-*:latest` tags for core development.
+   - The template at `src/agento/framework/cli/templates/docker-compose.yml` (used by `agento install`) is already the customer compose — uses GHCR images, no source bind-mounts. Verify it has no remaining dev artifacts.
+   - `agento up` / `agento down` already resolve the correct compose file via `find_compose_file()`. No CLI changes needed.
+   - Update developer documentation to reference `docker-compose.dev.yml` for framework development.
+
+4. **Version pinning in customer compose:**
+   - `agento install` stamps `__AGENTO_VERSION__` from `get_package_version()`. Verify this resolves to the installed PyPI version (e.g., `0.8.0`), not `0.0.0` or a dev placeholder.
+   - Ensure the `"latest"` fallback in `get_package_version()` is only used in development, not in `uv tool install` scenarios.
+
+5. **Customer compose mounts only data/config/user-modules:**
+   - Verify template compose mounts only: `workspace:/workspace`, `app/code:/app/code:ro` (user modules), `logs:/app/logs`, `tokens:/etc/tokens`, `storage/mysql:/var/lib/mysql`.
+   - No mount of `src/agento/` or `src/agento/toolbox/` in customer path.
+
+### Acceptance Criteria
+
+- [ ] `agento install && agento up` starts a working system from pre-built GHCR images — no `docker compose build` required
+- [ ] Dev workflow uses `docker compose -f docker-compose.dev.yml` with bind-mounts and local builds
+- [ ] Cron image does not inherit sandbox — built from `python:3.12-slim` base, under 500MB uncompressed
+- [ ] Cron Dockerfile uses `uv.lock` (`uv sync --frozen`); toolbox Dockerfile uses `npm ci`
+- [ ] Base images are pinned by digest in all Dockerfiles
+- [ ] CI builds sandbox and cron in parallel (no `needs: build-sandbox` for cron)
+- [ ] CI tags sandbox image with release version, not `:latest`, when building dependent images
+- [ ] Customer compose mounts zero framework source directories
+- [ ] Version stamped in customer compose matches the installed PyPI package version
+
+### Key Technical Decisions
+
+- **Dev compose is opt-in, not default:** contributors working on framework code explicitly use `-f docker-compose.dev.yml`. The unmarked compose file (generated by `agento install`) is the customer path. This prevents the common failure mode of customers accidentally running dev compose.
+- **Cron decoupled from sandbox at the image level:** the two containers have fundamentally different dependency profiles. Cron is a Python service; sandbox is an agent runtime with Node.js, LLM CLIs, and browser automation. Sharing a base image saves build time but wastes ~2GB of runtime footprint and creates a false coupling in the dependency graph.
+- **Lock files are the reproducibility contract:** `uv.lock` and `package-lock.json` already exist in the repo. The only change is ensuring Docker builds actually use them. No new tooling required.
+- **No Helm/K8s in this phase:** the compose-based model serves single-host deployments. Kubernetes manifests are a future phase if demand materializes.
+
+---
+
 ## Phase Dependencies
 
 ```text
@@ -875,11 +958,15 @@ Refactoring (DONE)         System (DONE)
                                │
                                ▼
                        Phase 9: Workspace &
-                       Agent View Hierarchy
+                       Agent View Hierarchy (DONE)
+                               │
+                               ▼
+                       Phase 9.5: Concurrent Agent
+                       View Execution Pool (DONE)
                                │
                                ▼
                        Phase 10: Ingress Identities
-                       & Agent Resolution
+                       & Agent Resolution (DONE)
                                │
                                ▼
                        Phase 11: Admin API &
@@ -896,16 +983,20 @@ Refactoring (DONE)         System (DONE)
                        Phase 14: OAuth Token Pools
 
 Phase 8: Event Coverage & Naming Convention (PARTIAL)
-    └─ config & setup events done; remaining events added incrementally with Phases 9–13
+    └─ 25 events total; remaining events added incrementally with Phases 11–13
 
-Phase 5: DX & Open-Source Polish
-    └─ follows once the next product-facing contracts stabilize
+Phase 5: DX & Open-Source Polish (IN PROGRESS)
+    └─ CLI commands done; docs and architecture tests remain
+
+Phase 15: Distribution & Installation Model
+    └─ independent of Phases 9–14; depends only on existing CI/CD pipeline
+    └─ can execute in parallel with any active phase
 
 Phase 4: Areas / Selective Loading
     └─ parked, not on active roadmap
 ```
 
-Phase 7 is done — module setup infrastructure (`setup:upgrade`, module migrations, data patches, cron declarations) is operational. Phase 8 (partial) added 6 config/setup events and established the `agento_<area>_<action>` naming convention; remaining events will be added incrementally as Phases 9–13 introduce the features they cover. The next product-facing work starts with the configuration hierarchy (`workspace` / `agent_view`), ingress routing, admin/API flows, credential brokering, and response locale policy. Phase 5 follows once those contracts are stable enough to document, validate, and generate confidently. Phase 4 is explicitly parked until it has real business value.
+Phases 0–3, 6–7, 9, 9.5, and 10 are done — the framework has a complete module system, scoped configuration hierarchy (`workspace` / `agent_view`), concurrent execution pool with priority scheduling, and ingress identity routing. Phase 8 established the `agento_<area>_<action>` naming convention with 25 events covering job/consumer/worker/routing lifecycle; remaining events will be added as Phases 11–13 introduce new features. The next product-facing work starts with Phase 11 (Admin API & Agent Studio), followed by credential brokering, response locale policy, and OAuth token pools. Phase 15 (Distribution & Installation Model) is independent and can execute in parallel — its priority item is decoupling the cron image from sandbox and stabilizing builds with lockfiles. Phase 5 follows once those contracts are stable enough to document, validate, and generate confidently. Phase 4 is explicitly parked until it has real business value.
 
 ---
 
