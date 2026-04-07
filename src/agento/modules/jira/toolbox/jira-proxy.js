@@ -1,12 +1,16 @@
 /**
  * Jira API proxy handler — extracted for testability.
  *
- * @param {Object} config - { host, user, token }
+ * @param {Function|Object} configOrResolver - { host, user, token } or async () => { host, user, token }
  * @param {Function} log - logging function
  * @returns {Function} Express route handler for POST /api/jira/request
  */
-export function createJiraProxyHandler(config, log) {
+export function createJiraProxyHandler(configOrResolver, log) {
   return async (req, res) => {
+    const config = typeof configOrResolver === 'function'
+      ? await configOrResolver()
+      : configOrResolver;
+
     const { method, path } = req.body;
     const body = req.body.body || null;
 

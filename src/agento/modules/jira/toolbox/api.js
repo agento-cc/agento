@@ -2,13 +2,25 @@ import express from 'express';
 
 import { createJiraProxyHandler } from './jira-proxy.js';
 
-export function register(server, { app, log, moduleConfigs }) {
-  const cfg = moduleConfigs?.jira || {};
-  const config = {
-    host: cfg.jira_host || null,
-    user: cfg.jira_user || null,
-    token: cfg.jira_token || null,
-  };
+export function register(server, { app, log, moduleConfigs, loadModuleConfigs }) {
+  // Resolve Jira config per-request from DB (credentials may be saved after startup)
+  async function resolveJiraConfig() {
+    if (loadModuleConfigs) {
+      const configs = await loadModuleConfigs();
+      const cfg = configs?.jira || {};
+      return {
+        host: cfg.jira_host || null,
+        user: cfg.jira_user || null,
+        token: cfg.jira_token || null,
+      };
+    }
+    const cfg = moduleConfigs?.jira || {};
+    return {
+      host: cfg.jira_host || null,
+      user: cfg.jira_user || null,
+      token: cfg.jira_token || null,
+    };
+  }
   // REST API for internal services (cron sync)
   app.post('/api/jira/search', express.json(), async (req, res) => {
     const { jql, fields = [], maxResults = 50 } = req.body;
@@ -17,9 +29,8 @@ export function register(server, { app, log, moduleConfigs }) {
       return res.status(400).json({ error: 'jql is required' });
     }
 
-    const user = config.user;
-    const token = config.token;
-    const host = config.host;
+    const config = await resolveJiraConfig();
+    const { user, token, host } = config;
 
     if (!user || !token || !host) {
       return res.status(500).json({ error: 'Jira API not configured (jira_host/jira_user/jira_token)' });
@@ -62,9 +73,8 @@ export function register(server, { app, log, moduleConfigs }) {
       return res.status(400).json({ error: 'issue_key is required' });
     }
 
-    const user = config.user;
-    const token = config.token;
-    const host = config.host;
+    const config = await resolveJiraConfig();
+    const { user, token, host } = config;
 
     if (!user || !token || !host) {
       return res.status(500).json({ error: 'Jira API not configured (jira_host/jira_user/jira_token)' });
@@ -109,5 +119,5 @@ export function register(server, { app, log, moduleConfigs }) {
   });
 
   // Generic Jira API proxy (for onboarding and admin operations)
-  app.post('/api/jira/request', express.json(), createJiraProxyHandler(config, log));
+  app.post('/api/jira/request', express.json(), createJiraProxyHandler(resolveJiraConfig, log));
 }

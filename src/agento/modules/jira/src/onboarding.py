@@ -63,18 +63,9 @@ class JiraOnboarding:
             print("  Error: jira module toolbox_url not configured. Set CONFIG__JIRA__TOOLBOX_URL env var.")
             return
 
-        # 2. Verify toolbox reachable
         toolbox = ToolboxClient(toolbox_url)
-        try:
-            toolbox.jira_request("GET", "/rest/api/3/serverInfo")
-        except ToolboxAPIError as e:
-            print(f"  Error: Jira API error via toolbox: {e}")
-            return
-        except Exception as e:
-            print(f"  Error: Toolbox not reachable at {toolbox_url}: {e}")
-            return
 
-        # 3. Collect Jira URL
+        # 2. Collect Jira URL
         url_input = input("  Jira project or issue URL (e.g. https://myteam.atlassian.net/browse/AI-123): ").strip()
         if not url_input:
             print("  Error: URL is required.")
@@ -82,40 +73,46 @@ class JiraOnboarding:
 
         jira_host, auto_project_key = _parse_jira_url(url_input)
 
+        # 3. Collect email (needed for Jira Basic auth: email:token)
+        jira_user = input("  Jira account email: ").strip()
+        if not jira_user:
+            print("  Error: Email is required.")
+            return
+
         # 4. Collect token
         jira_token = input("  Jira API token: ").strip()
         if not jira_token:
             print("  Error: Jira API token is required.")
             return
 
-        # 5. Save host + token to DB
+        # 5. Save credentials to DB (toolbox reads core_config_data per-request)
         config_set(conn, "jira/jira_host", jira_host)
+        config_set(conn, "jira/jira_user", jira_user)
         config_set_auto_encrypt(conn, "jira/jira_token", jira_token)
+        conn.commit()
 
-        # 6. Verify via /myself — also gets user email and identity
+        # 6. Verify via /myself — also gets display name and account ID
         try:
             myself = toolbox.jira_request("GET", "/rest/api/3/myself")
         except ToolboxAPIError as e:
             print(f"  Error: Jira authentication failed: {e}")
             return
+        except Exception as e:
+            print(f"  Error: Toolbox not reachable at {toolbox_url}: {e}")
+            return
 
         display_name = myself.get("displayName", "")
         account_id = myself.get("accountId", "")
-        email = myself.get("emailAddress", "")
+        email = myself.get("emailAddress", "") or jira_user
 
         if not account_id:
             print("  Error: Could not detect Jira account ID from /myself response.")
             return
 
-        if not email:
-            print("  Error: Could not detect email from /myself response.")
-            return
-
-        # 7. Save identity + user
+        # 7. Save identity (update user with verified email from /myself)
         config_set(conn, "jira/jira_user", email)
         config_set(conn, "jira/jira_assignee", display_name)
         config_set(conn, "jira/jira_assignee_account_id", account_id)
-        config_set(conn, "jira/user", email)
 
         print(f"  Detected identity: {display_name} ({email})")
 

@@ -137,6 +137,7 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",  # URL
+            "agent@example.com",                            # email
             "my-api-token",                                 # token
             "",                                             # additional projects (skip)
             "",                                             # admin token (skip)
@@ -155,10 +156,9 @@ class TestRun:
         assert set_calls["jira/jira_user"] == "agent@example.com"
         assert set_calls["jira/jira_assignee"] == "Agent Bot"
         assert set_calls["jira/jira_assignee_account_id"] == "abc123"
-        assert set_calls["jira/user"] == "agent@example.com"
         assert json.loads(set_calls["jira/jira_projects"]) == ["AI"]
 
-        conn.commit.assert_called_once()
+        assert conn.commit.call_count == 2  # early commit (credentials) + final commit
 
     @patch("agento.modules.jira.src.onboarding.get_module_config")
     def test_aborts_when_toolbox_url_missing(self, mock_get_config, capsys):
@@ -172,11 +172,20 @@ class TestRun:
 
     @patch("agento.modules.jira.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira.src.onboarding.get_module_config")
-    def test_aborts_on_toolbox_unreachable(self, mock_get_config, mock_toolbox_cls, capsys):
+    @patch("agento.modules.jira.src.onboarding.config_set")
+    @patch("agento.modules.jira.src.onboarding.config_set_auto_encrypt")
+    def test_aborts_on_toolbox_unreachable(self, mock_auto_encrypt, mock_config_set, mock_get_config, mock_toolbox_cls, monkeypatch, capsys):
         mock_get_config.return_value = {"toolbox_url": "http://toolbox:3001"}
         toolbox = MagicMock()
         mock_toolbox_cls.return_value = toolbox
         toolbox.jira_request.side_effect = Exception("Connection refused")
+
+        inputs = iter([
+            "https://myteam.atlassian.net/browse/AI-123",
+            "user@example.com",
+            "my-token",
+        ])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         conn = _mock_conn({})
         JiraOnboarding().run(conn, {}, logging.getLogger("test"))
@@ -197,6 +206,7 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
+            "user@example.com",
             "bad-token",
         ])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
@@ -220,6 +230,7 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
+            "user@example.com",
             "my-token",
             "",  # no additional projects
         ])
@@ -231,7 +242,7 @@ class TestRun:
         output = capsys.readouterr().out
         assert "not accessible" in output
         assert "At least one valid project key is required" in output
-        conn.commit.assert_not_called()
+        conn.commit.assert_called_once()  # early commit for credentials only
 
     @patch("agento.modules.jira.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira.src.onboarding.get_module_config")
@@ -248,6 +259,7 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
+            "agent@example.com",
             "my-token",
             " WEB , API ",  # additional with whitespace
             "",             # admin token (skip)
@@ -259,7 +271,7 @@ class TestRun:
 
         set_calls = {c.args[1]: c.args[2] for c in mock_config_set.call_args_list}
         assert json.loads(set_calls["jira/jira_projects"]) == ["AI", "WEB", "API"]
-        conn.commit.assert_called_once()
+        assert conn.commit.call_count == 2
 
     @patch("agento.modules.jira.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira.src.onboarding.get_module_config")
@@ -274,6 +286,7 @@ class TestRun:
 
         inputs = iter([
             "https://myteam.atlassian.net/browse/AI-123",
+            "agent@example.com",
             "my-token",
             "AI",   # duplicate of auto-detected
             "",     # admin token (skip)
