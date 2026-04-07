@@ -13,13 +13,22 @@ from agento.framework.agent_manager.auth import (
 
 
 class ClaudeAuthStrategy:
-    """Run ``claude auth login`` in isolated HOME, extract credentials."""
+    """Run ``claude auth login`` with the user's real HOME.
+
+    Claude CLI's OAuth polling depends on state in ``$HOME/.claude/``.
+    An isolated temp HOME breaks the polling, so we ignore ``tmp_home``
+    and use the real HOME for the CLI process.
+    """
 
     def authenticate(self, tmp_home: str, logger: logging.Logger) -> AuthResult:
         logger.info("Starting Claude OAuth login (follow the URL in your browser)...")
-        _run_cli(["claude", "auth", "login"], tmp_home, "Claude")
+        # Run full `claude` TUI (not `claude auth login`) — only the TUI
+        # has the "Paste code here" prompt needed for headless/Docker auth.
+        # Use real HOME because Claude CLI's OAuth polling needs $HOME/.claude/.
+        real_home = str(Path.home())
+        _run_cli(["claude"], real_home, "Claude")
 
-        creds_path = Path(tmp_home) / ".claude" / ".credentials.json"
+        creds_path = Path(real_home) / ".claude" / ".credentials.json"
         if not creds_path.is_file():
             raise AuthenticationError(
                 "Claude login completed but credentials file not found. "
