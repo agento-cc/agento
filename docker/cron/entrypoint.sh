@@ -55,11 +55,14 @@ CRONTAB
 echo "Cron container started."
 
 # Apply pending migrations and install crontab from module declarations
+SETUP_DONE=/tmp/.setup-done
+rm -f "$SETUP_DONE"
 echo "Running setup:upgrade..."
 su - agent -c "set -a; source $ENV_FILE; set +a; /opt/cron-agent/run.sh setup:upgrade --skip-onboarding" || {
     echo "setup:upgrade failed, exiting."
     exit 1
 }
+touch "$SETUP_DONE"
 
 echo "Crontab after setup:upgrade:"
 crontab -u agent -l

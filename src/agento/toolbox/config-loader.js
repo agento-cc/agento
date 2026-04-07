@@ -325,7 +325,7 @@ export async function registerModuleRestApis(context) {
   const modules = scanModules();
   const dbOverrides = await loadDbOverrides();
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
-  const enrichedContext = { ...context, moduleConfigs };
+  const enrichedContext = { ...context, moduleConfigs, loadModuleConfigs };
 
   const sorted = [...modules].sort((a, b) => (a.order || 100) - (b.order || 100));
 

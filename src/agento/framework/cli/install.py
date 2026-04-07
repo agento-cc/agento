@@ -137,6 +137,14 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
         ]
         (project_dir / "docker" / ".env").write_text("\n".join(lines))
 
+    # Write secrets.env with auto-generated encryption key
+    encryption_key = secrets.token_hex(32)
+    (project_dir / "secrets.env").write_text(
+        "# Agento secrets — DO NOT commit this file\n"
+        "\n"
+        f"AGENTO_ENCRYPTION_KEY={encryption_key}\n"
+    )
+
     # Write secrets.env.example
     try:
         secrets_content = get_template("secrets.env.example")
@@ -171,17 +179,22 @@ def _run_post_install(project_dir: Path) -> None:
         log_error("Failed to start containers. Run 'agento up' manually.")
         return
 
-    log_info("Waiting for MySQL...")
-    for _ in range(30):
+    # The cron entrypoint runs setup:upgrade --skip-onboarding on start and
+    # touches /tmp/.setup-done when finished.  Wait for that before running
+    # the interactive setup:upgrade (which only triggers onboarding — migrations
+    # are already applied).
+    log_info("Waiting for initial setup...")
+    for _ in range(60):
         check = subprocess.run(
-            [*compose_cmd, "exec", "-T", "mysql", "mysqladmin", "ping", "-h", "localhost", "--silent"],
+            [*compose_cmd, "exec", "-T", "cron", "test", "-f", "/tmp/.setup-done"],
             capture_output=True,
         )
         if check.returncode == 0:
             break
         time.sleep(2)
     else:
-        log_warn("MySQL may not be ready yet. Continuing anyway...")
+        log_warn("setup:upgrade timed out. Run 'agento setup:upgrade' manually.")
+        return
 
     log_info("Running setup:upgrade...")
     result = subprocess.run(
