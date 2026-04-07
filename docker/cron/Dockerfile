@@ -12,13 +12,16 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     mv /root/.local/bin/uv /usr/local/bin/uv
 
 # Install Python project
+# UV_PYTHON_INSTALL_DIR: uv downloads a standalone Python and symlinks into
+# .venv/bin/python.  Default location is /root/.local/share/uv/python/ which
+# is inaccessible to the non-root 'agent' user.  Place it under /opt instead.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 COPY pyproject.toml /opt/cron-agent/pyproject.toml
 COPY README.md /opt/cron-agent/README.md
 COPY src/agento/ /opt/cron-agent/src/agento/
 RUN cd /opt/cron-agent && \
     uv venv .venv && \
     uv pip install --python .venv/bin/python -e . && \
-    chmod -R a+rX /opt/cron-agent/.venv && \
     chown -R agent /opt/cron-agent
 
 COPY docker/cron/run.sh /opt/cron-agent/run.sh

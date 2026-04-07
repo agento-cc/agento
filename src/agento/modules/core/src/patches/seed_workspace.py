@@ -7,11 +7,15 @@ class SeedWorkspace:
                 "INSERT IGNORE INTO workspace (code, label) VALUES (%s, %s)",
                 ("default", "Default Workspace"),
             )
+        conn.commit()
+        with conn.cursor() as cur:
             cur.execute("SELECT id FROM workspace WHERE code = 'default'")
-            ws_id = cur.fetchone()["id"]
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("Failed to seed default workspace")
             cur.execute(
                 "INSERT IGNORE INTO agent_view (workspace_id, code, label) VALUES (%s, %s, %s)",
-                (ws_id, "agent01", "Agent 01"),
+                (row["id"], "agent01", "Agent 01"),
             )
         conn.commit()
 

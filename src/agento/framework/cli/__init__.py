@@ -138,8 +138,10 @@ def _format_help(commands: dict) -> str:
         group = _command_group(name)
         groups.setdefault(group, []).append((name, cmd.help))
 
+    from ._templates import get_package_version
+
     lines = [
-        "Agento -- AI Agent Framework",
+        f"Agento v{get_package_version()} -- AI Agent Framework",
         "",
         "Usage: agento <command> [options]",
     ]
@@ -211,8 +213,10 @@ def main() -> None:
         from .terminal import select
 
         if find_project_root() is None:
+            from ._templates import get_package_version
+
             print()
-            print("  Welcome to Agento — AI Agent Framework")
+            print(f"  Welcome to Agento v{get_package_version()} — AI Agent Framework")
             choice = select("Would you like to set up a new project?", [
                 "Yes, set up a new project",
                 "No, show help",
