@@ -64,6 +64,11 @@ def clear_auth_strategies() -> None:
     _STRATEGIES.clear()
 
 
+def get_available_providers() -> list[AgentProvider]:
+    """Return providers that have a registered auth strategy."""
+    return list(_STRATEGIES.keys())
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 """Agent Manager — multi-token orchestration for LLM agent providers."""
 
 from .active import read_credentials, resolve_active_token, update_active_token
-from .auth import AuthenticationError, AuthResult, authenticate_interactive, save_credentials
+from .auth import AuthenticationError, AuthResult, authenticate_interactive, get_available_providers, save_credentials
 from .config import AgentManagerConfig
 from .models import AgentProvider, RotationResult, Token, UsageSummary
 from .rotator import rotate_all, rotate_tokens, select_best_token
@@ -17,6 +17,7 @@ __all__ = [
     "Token",
     "UsageSummary",
     "authenticate_interactive",
+    "get_available_providers",
     "deregister_token",
     "get_token",
     "get_token_by_path",

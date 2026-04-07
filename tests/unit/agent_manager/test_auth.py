@@ -31,9 +31,12 @@ def _register_strategies():
 class TestAuthenticateInteractiveClaude:
     """Tests for authenticate_interactive with AgentProvider.CLAUDE."""
 
+    @patch("agento.modules.claude.src.auth.Path.home")
     @patch("agento.modules.claude.src.auth._run_cli")
-    def test_extracts_credentials_from_claude(self, mock_run_cli, tmp_path):
+    def test_extracts_credentials_from_claude(self, mock_run_cli, mock_home, tmp_path):
         """Successful Claude auth extracts accessToken from .credentials.json."""
+        mock_home.return_value = tmp_path
+
         def setup_credentials(cmd, home, name):
             claude_dir = Path(home) / ".claude"
             claude_dir.mkdir(parents=True)
@@ -57,18 +60,23 @@ class TestAuthenticateInteractiveClaude:
         assert result.expires_at == 1800000000000
         assert result.subscription_type == "team"
 
+    @patch("agento.modules.claude.src.auth.Path.home")
     @patch("agento.modules.claude.src.auth._run_cli")
-    def test_raises_when_credentials_file_missing(self, mock_run_cli, tmp_path):
+    def test_raises_when_credentials_file_missing(self, mock_run_cli, mock_home, tmp_path):
         """Raises AuthenticationError when .credentials.json is not created."""
+        mock_home.return_value = tmp_path
         mock_run_cli.return_value = None  # CLI ran but didn't create file
 
         with patch("agento.framework.agent_manager.auth.tempfile.mkdtemp", return_value=str(tmp_path)), \
              pytest.raises(AuthenticationError, match="credentials file not found"):
             authenticate_interactive(AgentProvider.CLAUDE)
 
+    @patch("agento.modules.claude.src.auth.Path.home")
     @patch("agento.modules.claude.src.auth._run_cli")
-    def test_raises_when_no_access_token(self, mock_run_cli, tmp_path):
+    def test_raises_when_no_access_token(self, mock_run_cli, mock_home, tmp_path):
         """Raises AuthenticationError when accessToken is missing."""
+        mock_home.return_value = tmp_path
+
         def setup_empty_creds(cmd, home, name):
             claude_dir = Path(home) / ".claude"
             claude_dir.mkdir(parents=True)
@@ -80,10 +88,13 @@ class TestAuthenticateInteractiveClaude:
              pytest.raises(AuthenticationError, match="no accessToken"):
             authenticate_interactive(AgentProvider.CLAUDE)
 
+    @patch("agento.modules.claude.src.auth.Path.home")
     @patch("agento.framework.agent_manager.auth.shutil.rmtree")
     @patch("agento.modules.claude.src.auth._run_cli")
-    def test_cleans_up_temp_dir_on_success(self, mock_run_cli, mock_rmtree, tmp_path):
+    def test_cleans_up_temp_dir_on_success(self, mock_run_cli, mock_rmtree, mock_home, tmp_path):
         """Temp directory is cleaned up after successful auth."""
+        mock_home.return_value = tmp_path
+
         def setup_credentials(cmd, home, name):
             claude_dir = Path(home) / ".claude"
             claude_dir.mkdir(parents=True)

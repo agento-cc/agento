@@ -202,6 +202,48 @@ def _run_post_install(project_dir: Path) -> None:
     )
     if result.returncode != 0:
         log_warn("setup:upgrade failed. Run 'agento setup:upgrade' manually.")
+        return
+
+    _setup_agent_provider(compose_cmd)
+
+
+def _setup_agent_provider(compose_cmd: list[str]) -> None:
+    """Ask the user to pick an AI agent provider and register a token."""
+    from ..agent_manager.auth import get_available_providers
+
+    providers = get_available_providers()
+    if not providers:
+        return
+
+    from .terminal import select
+
+    options = [p.value.capitalize() for p in providers] + ["Skip (configure later)"]
+    choice = select("Choose AI agent provider:", options)
+
+    if choice >= len(providers):
+        return  # Skip
+
+    provider = providers[choice]
+    log_info(f"Registering {provider.value} token...")
+
+    result = subprocess.run(
+        [*compose_cmd, "exec", "-it", "cron",
+         "/opt/cron-agent/run.sh", "token:register", provider.value, "default"],
+    )
+    if result.returncode != 0:
+        log_warn("Token registration failed. Run 'agento token:register' manually.")
+        return
+
+    # Set as primary and configure provider
+    subprocess.run(
+        [*compose_cmd, "exec", "-T", "cron",
+         "/opt/cron-agent/run.sh", "token:set", provider.value, "1"],
+    )
+    subprocess.run(
+        [*compose_cmd, "exec", "-T", "cron",
+         "/opt/cron-agent/run.sh", "config:set", "agent/provider", provider.value],
+    )
+    log_info(f"Agent provider set to: {provider.value}")
 
 
 class InstallCommand:
