@@ -95,6 +95,10 @@ Tell the user the release was created and link to the Actions run:
 gh-saipix run list --repo agento-cc/agento --workflow=release.yml --limit 1 --json url
 ```
 
+## Step 11: Upgrade 
+Display info that client can upgrad with command:
+```uv tool install --upgrade agento-core```
+
 ## Error handling
 
 - If the tag already exists, inform the user and ask if they want to pick a different version.
