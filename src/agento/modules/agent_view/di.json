@@ -1,0 +1,7 @@
+{
+  "commands": [
+    {"name": "tool:list", "class": "src.commands.tool_list.ToolListCommand"},
+    {"name": "tool:enable", "class": "src.commands.tool_enable.ToolEnableCommand"},
+    {"name": "tool:disable", "class": "src.commands.tool_disable.ToolDisableCommand"}
+  ]
+}
