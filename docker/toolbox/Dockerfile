@@ -4,8 +4,8 @@ LABEL description="MCP toolbox - secure credential broker for AI sandbox"
 
 WORKDIR /app
 
-COPY src/agento/toolbox/package.json ./
-RUN npm install --omit=dev
+COPY src/agento/toolbox/package.json src/agento/toolbox/package-lock.json ./
+RUN npm ci --omit=dev
 
 # Install Chromium + system dependencies for Playwright MCP browser tools
 # Note: Google Chrome has no official Linux ARM64 build; Chromium supports ARM64
