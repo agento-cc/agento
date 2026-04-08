@@ -730,6 +730,75 @@ Agento needs a deterministic and extensible way to map incoming Outlook / Teams 
 
 ---
 
+## Phase 10.5a: Composable Workspace, Skills & Tools — PLANNED
+
+### Business Need
+
+Consumer currently does too much per job: claim, resolve runtime, generate workspace from scratch (configs + instructions), run agent, finalize. Each run regenerates identical files. Agent_views cannot compose skills or filter tools without manual DB edits. The framework needs composable, pre-built workspaces per agent_view — and CLI-managed skill/tool control.
+
+### Scope
+
+Three independent deliverables (3 PRs, can be developed in parallel):
+
+1. **composable_tools** — CLI commands (`tool:list`, `tool:enable`, `tool:disable`) wrapping the existing `isToolEnabled()` mechanism in toolbox. Uses `core_config_data` with path `tools/{name}/is_enabled` and scoped overrides. Zero new tables.
+
+2. **composable_skills** — New `skill` module. Skills scanned from disk (`app/skills/{name}/SKILL.md`), registry in DB (`skill_registry` table). Enable/disable per agent_view via `core_config_data` with path `skill/{name}/is_enabled`. CLI: `skill:sync`, `skill:list`, `skill:enable`, `skill:disable`.
+
+3. **composable_workspace** — New `workspace_build` module. Materialized build per agent_view at `/workspace/{ws}/{av}/builds/{id}/` containing AGENTS.md, SOUL.md, CLAUDE.md, .claude.json, .mcp.json, .codex/config.toml, and enabled skills. `current` symlink points to active build. Consumer copies from build to run_dir instead of generating from scratch. CLI: `workspace:build`, `workspace:build-status`.
+
+### Module Dependency Design
+
+All three use exclusively framework code — no inter-module imports:
+- `composable_tools`: commands in `agent_view` module (sequence: `["core"]`), uses framework's `scoped_config_set()`, `scan_modules()`
+- `composable_skills`: new module (sequence: `["core"]`), uses framework's `scoped_config_set()`, `build_scoped_overrides()`
+- `composable_workspace`: new module (sequence: `["core"]`), uses framework's `populate_agent_configs()`, `build_scoped_overrides()`. Instruction writing is inline (not imported from `agent_view`). Skill integration via `try/except ImportError` (soft dependency, no `sequence` entry).
+
+Each module can be disabled independently without breaking the system.
+
+### Acceptance Criteria
+
+- [ ] `tool:list --agent-view developer` shows effective enabled/disabled state per tool
+- [ ] `tool:enable`/`tool:disable` set scoped config that toolbox respects on next MCP session
+- [ ] `skill:sync` scans disk and upserts to `skill_registry`
+- [ ] `skill:enable`/`skill:disable` control per-agent_view skill inclusion
+- [ ] `workspace:build --agent-view developer` materializes a complete build directory
+- [ ] Consumer uses pre-built workspace when available, falls back to on-the-fly generation
+- [ ] Disabling any of the 3 modules leaves the system fully operational
+- [ ] All existing tests pass throughout
+
+### Key Technical Decisions
+
+- **Reuse `core_config_data` for enable/disable** — both tools and skills use the same scoped config pattern (`{type}/{name}/is_enabled`). No new assignment tables.
+- **Builds are triggered manually (CLI)** — no auto-rebuild on config change in this phase.
+- **`current` symlink model** — simple, atomic, no registry lookup needed at runtime.
+- **Inline instruction writing in builder** — 15 lines duplicated from `agent_view` module to avoid hard inter-module dependency. Preferable over coupling.
+- **Soft skill dependency** — `try/except ImportError` pattern keeps workspace_build independent of skill module.
+
+---
+
+## Phase 10.5b: Composable Workspace Automation — PLANNED
+
+### Business Need
+
+Phase 10.5a introduces manual `workspace:build` and `skill:sync`. For production use, builds should auto-trigger on config changes, old builds should be cleaned up, and skill sync should run periodically.
+
+### Scope
+
+1. **Observer on `agento_config_saved`** — auto-rebuild affected agent_views when `agent/*`, `skill/*`, or `tools/*` config paths change. Observer registered in `workspace_build/events.json`.
+
+2. **GC of old builds** — keep last N builds per agent_view (configurable via `workspace_build/keep_builds`, default 5). CLI: `workspace:gc [--agent-view <code>] [--dry-run]`. Can also run as observer after successful build.
+
+3. **Cron job: periodic `skill:sync` + rebuild** — declared in `skill/cron.json` and `workspace_build/cron.json`. Runs `skill:sync` periodically, then `workspace:build --all` to pick up any skill content changes.
+
+### Acceptance Criteria
+
+- [ ] Changing a scoped config value via `config:set` triggers automatic rebuild for affected agent_views
+- [ ] Old builds are automatically cleaned up, keeping last N
+- [ ] `skill:sync` and `workspace:build --all` run on a configurable cron schedule
+- [ ] All existing tests pass throughout
+
+---
+
 ## Phase 11: Admin API & Agent Studio (MVP)
 
 ### Business Need
@@ -969,6 +1038,14 @@ Refactoring (DONE)         System (DONE)
                        & Agent Resolution (DONE)
                                │
                                ▼
+                       Phase 10.5a: Composable
+                       Workspace, Skills & Tools
+                               │
+                               ▼
+                       Phase 10.5b: Composable
+                       Workspace Automation
+                               │
+                               ▼
                        Phase 11: Admin API &
                        Agent Studio (MVP)
                                │
@@ -996,7 +1073,7 @@ Phase 4: Areas / Selective Loading
     └─ parked, not on active roadmap
 ```
 
-Phases 0–3, 6–7, 9, 9.5, and 10 are done — the framework has a complete module system, scoped configuration hierarchy (`workspace` / `agent_view`), concurrent execution pool with priority scheduling, and ingress identity routing. Phase 8 established the `agento_<area>_<action>` naming convention with 25 events covering job/consumer/worker/routing lifecycle; remaining events will be added as Phases 11–13 introduce new features. The next product-facing work starts with Phase 11 (Admin API & Agent Studio), followed by credential brokering, response locale policy, and OAuth token pools. Phase 15 (Distribution & Installation Model) is independent and can execute in parallel — its priority item is decoupling the cron image from sandbox and stabilizing builds with lockfiles. Phase 5 follows once those contracts are stable enough to document, validate, and generate confidently. Phase 4 is explicitly parked until it has real business value.
+Phases 0–3, 6–7, 9, 9.5, and 10 are done — the framework has a complete module system, scoped configuration hierarchy (`workspace` / `agent_view`), concurrent execution pool with priority scheduling, and ingress identity routing. Phase 8 established the `agento_<area>_<action>` naming convention with 25 events covering job/consumer/worker/routing lifecycle; remaining events will be added as Phases 11–13 introduce new features. The next work is Phase 10.5a (Composable Workspace, Skills & Tools) — three independent PRs adding CLI-managed tool/skill control and pre-built workspaces per agent_view, followed by Phase 10.5b (automation: auto-rebuild, GC, cron sync). Then Phase 11 (Admin API & Agent Studio), credential brokering, response locale policy, and OAuth token pools. Phase 15 (Distribution & Installation Model) is independent and can execute in parallel. Phase 5 follows once contracts are stable enough to document. Phase 4 is explicitly parked.
 
 ---
 
