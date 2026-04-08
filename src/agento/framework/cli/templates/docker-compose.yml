@@ -2,7 +2,7 @@ name: agento
 
 services:
   toolbox:
-    image: ghcr.io/agento-cc/agento-toolbox:__AGENTO_VERSION__
+    image: ghcr.io/agento-cc/agento-toolbox:${AGENTO_VERSION:-latest}
     environment:
       - TZ=${TZ:-UTC}
       - CRONDB_HOST=mysql
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
 
   cron:
-    image: ghcr.io/agento-cc/agento-cron:__AGENTO_VERSION__
+    image: ghcr.io/agento-cc/agento-cron:${AGENTO_VERSION:-latest}
     env_file:
       - path: ../secrets.env
         required: false

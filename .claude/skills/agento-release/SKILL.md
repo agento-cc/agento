@@ -95,9 +95,20 @@ Tell the user the release was created and link to the Actions run:
 gh-saipix run list --repo agento-cc/agento --workflow=release.yml --limit 1 --json url
 ```
 
-## Step 11: Upgrade 
-Display info that client can upgrad with command:
-```uv tool install --upgrade agento-core```
+## Step 11: Upgrade instructions
+Display upgrade instructions for deployed projects:
+```
+# Upgrade CLI
+uv tool install --upgrade agento-core
+
+# Upgrade to specific version
+uv tool install agento-core==X.Y.Z
+
+# Then in each deployed project — update .env and pull new images:
+# Edit docker/.env → AGENTO_VERSION=X.Y.Z
+# cd docker && docker compose pull && docker compose up -d
+# (setup:upgrade runs automatically in entrypoint)
+```
 
 ## Error handling
 

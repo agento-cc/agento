@@ -107,10 +107,9 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             "docker/.toolbox.env\n"
         )
 
-    # Docker Compose config — replace version placeholder with installed package version
+    # Docker Compose config — version comes from AGENTO_VERSION in .env
     try:
         compose_content = get_template("docker-compose.yml")
-        compose_content = compose_content.replace("__AGENTO_VERSION__", get_package_version())
         (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
     except TemplateNotFoundError:
         pass
@@ -127,6 +126,7 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
     except TemplateNotFoundError:
         lines = [
             f"COMPOSE_PROJECT_NAME={config['compose_project_name']}",
+            f"AGENTO_VERSION={config['agento_version']}",
             f"MYSQL_ROOT_PASSWORD={config['mysql_root_password']}",
             f"MYSQL_PASSWORD={config['mysql_password']}",
             f"MYSQL_PORT={config['mysql_port']}",
@@ -298,6 +298,7 @@ class InstallCommand:
 
         config = {
             "compose_project_name": compose_name,
+            "agento_version": get_package_version(),
             "mysql_root_password": _generate_password(),
             "mysql_password": _generate_password(),
             "mysql_port": mysql_port,
