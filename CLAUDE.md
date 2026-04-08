@@ -20,6 +20,7 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
 - **CLI:** `bin/agento <command>` — Magento-like CLI
 - **Core modules:** `src/agento/modules/<name>/` with `module.json` — ship with framework
 - **User modules:** `app/code/<name>/` with `module.json` + `config.json` — per-deployment, gitignored
+- **Module dependencies (`sequence`):** If a module imports classes/functions from another module, it **must** declare that module in `sequence`. Prefer using framework code (`src/agento/framework/`) + events/observers over inter-module imports — framework code requires no `sequence` entry. If inter-module dependency is unavoidable (e.g., `jira_periodic_tasks` → `jira`), declare it in `sequence`. Every module must be safely disableable: disabling a module (and its dependents down the chain) must leave the system fully operational.
 - **Config:** 3-level fallback: ENV (`CONFIG__MODULE__PATH`) → DB (`core_config_data`) → `config.json`. Per-agent_view scoped config via `scope='agent_view'` in DB.
 - **Concurrent execution:** `CONSUMER_MAX_WORKERS` env var (default 1). Per-run isolation makes it safe to increase.
 - **Routing:** Ingress identities map inbound requests to agent_views. Channels auto-resolve via `resolve_agent_view()` before publishing.
