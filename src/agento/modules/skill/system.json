@@ -1,0 +1,3 @@
+{
+  "skills_dir": {"type": "string", "label": "Directory containing skill definitions"}
+}

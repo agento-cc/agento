@@ -1,0 +1,7 @@
+{
+  "name": "skill",
+  "version": "1.0.0",
+  "description": "Skill registry — scan from disk, enable/disable per agent_view",
+  "sequence": ["core"],
+  "order": 55
+}

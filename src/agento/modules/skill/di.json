@@ -1,0 +1,8 @@
+{
+  "commands": [
+    {"name": "skill:sync", "class": "src.commands.skill_sync.SkillSyncCommand"},
+    {"name": "skill:list", "class": "src.commands.skill_list.SkillListCommand"},
+    {"name": "skill:enable", "class": "src.commands.skill_enable.SkillEnableCommand"},
+    {"name": "skill:disable", "class": "src.commands.skill_disable.SkillDisableCommand"}
+  ]
+}
