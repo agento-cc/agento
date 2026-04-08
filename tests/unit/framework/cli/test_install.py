@@ -92,6 +92,7 @@ class TestScaffold:
     def test_creates_directory_structure(self, tmp_path: Path):
         config = {
             "compose_project_name": "test-proj",
+            "agento_version": "0.2.4",
             "mysql_root_password": "rootpass123",
             "mysql_password": "userpass456",
             "mysql_port": "3307",
@@ -113,6 +114,7 @@ class TestScaffold:
     def test_project_json_contents(self, tmp_path: Path):
         config = {
             "compose_project_name": "my-proj",
+            "agento_version": "0.2.4",
             "mysql_root_password": "rp",
             "mysql_password": "up",
             "mysql_port": "3306",
@@ -128,6 +130,7 @@ class TestScaffold:
     def test_env_file_rendered(self, tmp_path: Path):
         config = {
             "compose_project_name": "myapp",
+            "agento_version": "0.2.4",
             "mysql_root_password": "secret_root",
             "mysql_password": "secret_user",
             "mysql_port": "3307",
@@ -137,6 +140,7 @@ class TestScaffold:
 
         env_content = (tmp_path / "docker" / ".env").read_text()
         assert "COMPOSE_PROJECT_NAME=myapp" in env_content
+        assert "AGENTO_VERSION=0.2.4" in env_content
         assert "MYSQL_ROOT_PASSWORD=secret_root" in env_content
         assert "MYSQL_PASSWORD=secret_user" in env_content
         assert "MYSQL_PORT=3307" in env_content
@@ -147,6 +151,7 @@ class TestScaffold:
     def test_docker_compose_uses_ghcr_images(self, tmp_path: Path):
         config = {
             "compose_project_name": "x",
+            "agento_version": "0.2.4",
             "mysql_root_password": "x",
             "mysql_password": "x",
             "mysql_port": "3306",
@@ -159,11 +164,12 @@ class TestScaffold:
         assert "build:" not in compose
         assert "ghcr.io/agento-cc/agento-toolbox:" in compose
         assert "ghcr.io/agento-cc/agento-cron:" in compose
-        assert "__AGENTO_VERSION__" not in compose
+        assert "${AGENTO_VERSION" in compose
 
     def test_sql_files_extracted(self, tmp_path: Path):
         config = {
             "compose_project_name": "x",
+            "agento_version": "0.2.4",
             "mysql_root_password": "x",
             "mysql_password": "x",
             "mysql_port": "3306",

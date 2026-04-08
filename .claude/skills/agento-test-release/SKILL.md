@@ -41,7 +41,7 @@ Build all 3 images for native architecture (no emulation warnings on ARM Macs).
 # 1. Sandbox (base for cron)
 docker build -t agento-sandbox:dev -f docker/sandbox/Dockerfile docker/sandbox/
 
-# 2. Cron (depends on sandbox) — tag must match version in template docker-compose.yml
+# 2. Cron (depends on sandbox) — tag must match AGENTO_VERSION in .env
 docker build -t ghcr.io/agento-cc/agento-cron:<VERSION> \
   --build-arg SANDBOX_IMAGE=agento-sandbox:dev \
   -f docker/cron/Dockerfile .
@@ -53,9 +53,9 @@ docker build -t ghcr.io/agento-cc/agento-toolbox:<VERSION> \
 
 Replace `<VERSION>` with the version from `pyproject.toml` (e.g., `0.2.5`).
 
-These tagged images will be picked up automatically by `agento install` since the template
-docker-compose.yml references `ghcr.io/agento-cc/agento-cron:<VERSION>` and Docker resolves
-local images before pulling from the registry.
+These tagged images will be picked up automatically by `agento install` since the generated
+`.env` contains `AGENTO_VERSION=<VERSION>` and `docker-compose.yml` references
+`${AGENTO_VERSION}`. Docker resolves local images before pulling from the registry.
 
 ## Step 5: Prepare test directory
 
