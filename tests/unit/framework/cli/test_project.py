@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agento.framework.cli._project import find_compose_file, find_project_root
+from agento.framework.cli._project import find_compose_file, find_project_root, update_dotenv_value
 
 
 class TestFindProjectRoot:
@@ -67,3 +67,37 @@ class TestFindComposeFile:
 
     def test_returns_none_when_missing(self, tmp_path: Path):
         assert find_compose_file(tmp_path) is None
+
+
+class TestUpdateDotenvValue:
+    def test_updates_existing_key(self, tmp_path: Path):
+        env = tmp_path / ".env"
+        env.write_text("FOO=old\nBAR=keep\n")
+        update_dotenv_value(env, "FOO", "new")
+        content = env.read_text()
+        assert "FOO=new\n" in content
+        assert "BAR=keep\n" in content
+
+    def test_appends_missing_key(self, tmp_path: Path):
+        env = tmp_path / ".env"
+        env.write_text("FOO=old\n")
+        update_dotenv_value(env, "BAR", "added")
+        content = env.read_text()
+        assert "FOO=old\n" in content
+        assert "BAR=added\n" in content
+
+    def test_preserves_comments(self, tmp_path: Path):
+        env = tmp_path / ".env"
+        env.write_text("# comment\nVER=1\n")
+        update_dotenv_value(env, "VER", "2")
+        content = env.read_text()
+        assert "# comment\n" in content
+        assert "VER=2\n" in content
+
+    def test_does_not_match_prefix(self, tmp_path: Path):
+        env = tmp_path / ".env"
+        env.write_text("AGENTO_VERSION=1\nAGENTO_VERSION_OLD=keep\n")
+        update_dotenv_value(env, "AGENTO_VERSION", "2")
+        content = env.read_text()
+        assert "AGENTO_VERSION=2\n" in content
+        assert "AGENTO_VERSION_OLD=keep\n" in content

@@ -6,33 +6,43 @@ An agento deployment has two components to upgrade:
 1. **CLI tool** (`agento`) — installed via `uv tool install agento-core`
 2. **Docker images** (cron, toolbox) — version controlled by `AGENTO_VERSION` in `docker/.env`
 
-## Upgrade to latest version
+## Using `agento upgrade`
+
+The `agento upgrade` command updates the Docker image version, pulls new images, and restarts containers:
 
 ```bash
-# 1. Upgrade the CLI
+# Upgrade CLI first
 uv tool install --upgrade agento-core
 
-# 2. Update image version in your project
+# Upgrade Docker images to match CLI version
+agento upgrade
+
+# Or upgrade to a specific version
+agento upgrade --version 0.3.1
+```
+
+This updates `AGENTO_VERSION` in `docker/.env`, runs `docker compose pull`, and restarts containers. The `setup:upgrade` command runs automatically in the cron container entrypoint, applying any pending schema migrations, data patches, and cron job updates.
+
+## Using `agento install` (reinstall)
+
+Running `agento install` on an existing project offers a reinstall option that refreshes framework files while preserving data:
+
+```bash
 cd /path/to/your/project
+agento install
+# Select "Yes" when prompted to reinstall
+```
+
+Preserved: `storage/` (MySQL data), `tokens/`, `secrets.env`, `app/code/` (user modules), `workspace/`.
+Refreshed: `docker-compose.yml`, `docker/sql/`, `AGENTO_VERSION` in `.env`.
+
+## Manual upgrade
+
+```bash
 # Edit docker/.env — change AGENTO_VERSION to the new version
 # Example: AGENTO_VERSION=0.3.0
 
-# 3. Pull new images and restart
-cd docker && docker compose pull && docker compose up -d
-```
-
-The `setup:upgrade` command runs automatically in the cron container entrypoint, applying any pending schema migrations, data patches, and cron job updates.
-
-## Upgrade to a specific version
-
-```bash
-# 1. Install specific CLI version
-uv tool install agento-core==0.2.5
-
-# 2. Set the matching image version in docker/.env
-# AGENTO_VERSION=0.2.5
-
-# 3. Pull and restart
+# Pull new images and restart
 cd docker && docker compose pull && docker compose up -d
 ```
 
