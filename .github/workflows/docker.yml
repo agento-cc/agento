@@ -12,6 +12,8 @@ permissions:
 jobs:
   build-sandbox:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -76,4 +78,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SANDBOX_IMAGE=ghcr.io/agento-cc/agento-sandbox:latest
+            SANDBOX_IMAGE=ghcr.io/agento-cc/agento-sandbox:${{ needs.build-sandbox.outputs.version }}
