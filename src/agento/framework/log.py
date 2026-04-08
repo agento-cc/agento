@@ -17,6 +17,8 @@ class _Formatter(logging.Formatter):
         if extras:
             pairs = " ".join(f"{k}={v}" for k, v in extras.items())
             msg = f"{msg} | {pairs}"
+        if record.exc_info:
+            msg = f"{msg}\n{self.formatException(record.exc_info)}"
         return msg
 
 

@@ -213,7 +213,7 @@ def _sync_field_options(
 ) -> bool:
     """Sync dropdown options. Returns True on success, False on error."""
     # Get frequency_map keys from config defaults
-    frequency_map = config.get("frequency_map", {})
+    frequency_map = config.get("frequency_map", {}) if isinstance(config, dict) else getattr(config, "frequency_map", {})
     if not frequency_map:
         # Fall back to reading from config.json defaults
         from pathlib import Path

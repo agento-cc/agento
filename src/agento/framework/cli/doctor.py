@@ -53,14 +53,18 @@ def _check_mysql_connectivity() -> tuple[bool, str]:
     """Check MySQL connectivity if env vars are present."""
     import os
 
-    host = os.environ.get("CRONDB_HOST") or os.environ.get("CONFIG__DATABASE__MYSQL_HOST")
+    host = (
+        os.environ.get("MYSQL_HOST")
+        or os.environ.get("CRONDB_HOST")
+        or os.environ.get("CONFIG__DATABASE__MYSQL_HOST")
+    )
     if not host:
         return False, "no connection configured"
 
-    port = int(os.environ.get("CRONDB_PORT") or os.environ.get("CONFIG__DATABASE__MYSQL_PORT") or "3306")
-    user = os.environ.get("CRONDB_USER") or os.environ.get("CONFIG__DATABASE__MYSQL_USER") or "root"
-    password = os.environ.get("CRONDB_PASSWORD") or os.environ.get("CONFIG__DATABASE__MYSQL_PASSWORD") or ""
-    database = os.environ.get("CRONDB_DATABASE") or os.environ.get("CONFIG__DATABASE__MYSQL_DATABASE") or ""
+    port = int(os.environ.get("MYSQL_PORT") or os.environ.get("CRONDB_PORT") or os.environ.get("CONFIG__DATABASE__MYSQL_PORT") or "3306")
+    user = os.environ.get("MYSQL_USER") or os.environ.get("CRONDB_USER") or os.environ.get("CONFIG__DATABASE__MYSQL_USER") or "root"
+    password = os.environ.get("MYSQL_PASSWORD") or os.environ.get("CRONDB_PASSWORD") or os.environ.get("CONFIG__DATABASE__MYSQL_PASSWORD") or ""
+    database = os.environ.get("MYSQL_DATABASE") or os.environ.get("CRONDB_DATABASE") or os.environ.get("CONFIG__DATABASE__MYSQL_DATABASE") or ""
 
     try:
         import pymysql
