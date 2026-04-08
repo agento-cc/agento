@@ -1,6 +1,7 @@
-"""Project root detection for agento CLI."""
+"""Project root detection and utilities for agento CLI."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -45,3 +46,22 @@ def find_compose_file(project_root: Path) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def update_dotenv_value(path: Path, key: str, value: str) -> None:
+    """Update a single key in a .env file, preserving all other content.
+
+    If the key exists, its value is replaced. If not, the key=value is appended.
+    Comments and blank lines are preserved.
+    """
+    lines = path.read_text().splitlines(keepends=True)
+    pattern = re.compile(rf"^{re.escape(key)}=")
+    found = False
+    for i, line in enumerate(lines):
+        if pattern.match(line):
+            lines[i] = f"{key}={value}\n"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}\n")
+    path.write_text("".join(lines))

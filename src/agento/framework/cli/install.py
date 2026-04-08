@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ._output import cyan, log_error, log_info, log_warn
-from ._project import find_compose_file
+from ._project import find_compose_file, update_dotenv_value
 from ._templates import TemplateNotFoundError, extract_sql_files, get_package_version, get_template
 from .terminal import select
 
@@ -164,6 +164,42 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
         )
 
 
+def _reinstall(project_dir: Path) -> None:
+    """Reinstall framework files while preserving data.
+
+    Preserves: storage/, tokens/, secrets.env, app/code/, workspace/, docker/.env passwords.
+    Refreshes: docker-compose.yml, docker/sql/, .agento/project.json version, AGENTO_VERSION.
+    """
+    version = get_package_version()
+
+    # Update AGENTO_VERSION in .env (preserve passwords, port, timezone)
+    env_path = project_dir / "docker" / ".env"
+    if env_path.is_file():
+        update_dotenv_value(env_path, "AGENTO_VERSION", version)
+    else:
+        log_warn("docker/.env not found — skipping version update.")
+
+    # Refresh docker-compose.yml from template
+    try:
+        compose_content = get_template("docker-compose.yml")
+        (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
+    except TemplateNotFoundError:
+        pass
+
+    # Refresh SQL migration scripts
+    with contextlib.suppress(Exception):
+        extract_sql_files(project_dir / "docker" / "sql")
+
+    # Update project.json version
+    project_json = project_dir / ".agento" / "project.json"
+    if project_json.is_file():
+        meta = json.loads(project_json.read_text())
+        meta["version"] = version
+        project_json.write_text(json.dumps(meta, indent=2) + "\n")
+
+    log_info(f"Reinstalled framework files (version {version}).")
+
+
 def _run_post_install(project_dir: Path) -> None:
     """Run agento up + setup:upgrade after scaffolding."""
     compose_file = find_compose_file(project_dir)
@@ -267,9 +303,22 @@ class InstallCommand:
         project_dir = self._ask_project_path()
         project_name = project_dir.name
 
-        # Check if already installed
+        # Check if already installed — offer reinstall
         if (project_dir / ".agento" / "project.json").is_file():
-            log_info("Agento is already installed in this directory.")
+            print()
+            print("This project is already installed. Reinstalling will refresh")
+            print("framework files while preserving:")
+            print("  - storage/    (MySQL data)")
+            print("  - tokens/")
+            print("  - secrets.env")
+            print("  - app/code/   (user modules)")
+            print("  - workspace/")
+            print()
+            choice = select("Proceed with reinstall?", ["Yes", "No"])
+            if choice == 1:  # No
+                return
+            _reinstall(project_dir)
+            _run_post_install(project_dir)
             return
 
         # Validate directory

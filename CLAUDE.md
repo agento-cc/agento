@@ -48,7 +48,8 @@ cd src/agento/toolbox && npm test && cd -              # JS (vitest, from repo r
 
 # Project lifecycle
 agento doctor                                          # Check prerequisites
-agento install                                         # Interactive project installation wizard
+agento install                                         # Interactive project installation wizard (reinstalls if already installed)
+agento upgrade [--version X.Y.Z]                       # Upgrade Docker images to new version
 agento up                                              # Start Docker Compose
 agento down                                            # Stop containers
 agento logs [service]                                  # View container logs

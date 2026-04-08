@@ -13,6 +13,7 @@ from agento.framework.cli.install import (
     _detect_timezone,
     _generate_password,
     _is_port_free,
+    _reinstall,
     _sanitize_compose_name,
     _scaffold,
 )
@@ -184,7 +185,8 @@ class TestScaffold:
 
 
 class TestInstallCommandAlreadyInstalled:
-    def test_exits_if_project_json_exists(self, tmp_path: Path, capsys):
+    @patch("agento.framework.cli.install.select", return_value=1)  # "No"
+    def test_reinstall_declined_exits(self, mock_select, tmp_path: Path, capsys):
         (tmp_path / ".agento").mkdir()
         (tmp_path / ".agento" / "project.json").write_text('{"name":"x"}')
 
@@ -242,3 +244,49 @@ class TestInstallCommandAdvanced:
         assert "COMPOSE_PROJECT_NAME=custom-name" in env
         assert "MYSQL_PORT=3307" in env
         assert "TZ=America/Chicago" in env
+
+
+class TestReinstall:
+    def _scaffold_project(self, tmp_path: Path) -> None:
+        """Helper: scaffold a project so _reinstall can operate on it."""
+        config = {
+            "compose_project_name": "myapp",
+            "agento_version": "0.1.0",
+            "mysql_root_password": "secret_root",
+            "mysql_password": "secret_user",
+            "mysql_port": "3307",
+            "timezone": "Europe/Warsaw",
+        }
+        _scaffold(tmp_path, "myapp", config)
+
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_updates_version_in_env(self, mock_ver, tmp_path: Path):
+        self._scaffold_project(tmp_path)
+        _reinstall(tmp_path)
+        env = (tmp_path / "docker" / ".env").read_text()
+        assert "AGENTO_VERSION=0.5.0" in env
+
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_preserves_passwords(self, mock_ver, tmp_path: Path):
+        self._scaffold_project(tmp_path)
+        _reinstall(tmp_path)
+        env = (tmp_path / "docker" / ".env").read_text()
+        assert "MYSQL_ROOT_PASSWORD=secret_root" in env
+        assert "MYSQL_PASSWORD=secret_user" in env
+        assert "MYSQL_PORT=3307" in env
+
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_refreshes_compose(self, mock_ver, tmp_path: Path):
+        self._scaffold_project(tmp_path)
+        # Corrupt compose to verify it gets refreshed
+        (tmp_path / "docker" / "docker-compose.yml").write_text("corrupted")
+        _reinstall(tmp_path)
+        compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
+        assert "ghcr.io/agento-cc/agento-cron" in compose
+
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_updates_project_json_version(self, mock_ver, tmp_path: Path):
+        self._scaffold_project(tmp_path)
+        _reinstall(tmp_path)
+        meta = json.loads((tmp_path / ".agento" / "project.json").read_text())
+        assert meta["version"] == "0.5.0"
