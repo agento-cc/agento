@@ -51,5 +51,19 @@ class TestFindComposeFile:
         result = find_compose_file(tmp_path)
         assert result == tmp_path / "docker" / "docker-compose.yml"
 
+    def test_finds_dev_compose(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        compose = docker_dir / "docker-compose.dev.yml"
+        compose.write_text("services: {}")
+        assert find_compose_file(tmp_path) == compose
+
+    def test_prefers_standard_over_dev(self, tmp_path: Path):
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "docker" / "docker-compose.yml").write_text("standard")
+        (tmp_path / "docker" / "docker-compose.dev.yml").write_text("dev")
+        result = find_compose_file(tmp_path)
+        assert result == tmp_path / "docker" / "docker-compose.yml"
+
     def test_returns_none_when_missing(self, tmp_path: Path):
         assert find_compose_file(tmp_path) is None

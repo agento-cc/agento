@@ -30,14 +30,16 @@ def find_project_root(start: Path | None = None) -> Path | None:
 
 
 def find_compose_file(project_root: Path) -> Path | None:
-    """Find docker-compose.yml relative to project root.
+    """Find docker-compose file relative to project root.
 
-    Checks:
-    1. docker/docker-compose.yml (git clone / dev mode)
-    2. docker-compose.yml (init'd project)
+    Checks (first match wins):
+    1. docker/docker-compose.yml (customer install or legacy dev)
+    2. docker/docker-compose.dev.yml (dev mode)
+    3. docker-compose.yml (init'd project — written by agento install)
     """
     for candidate in [
         project_root / "docker" / "docker-compose.yml",
+        project_root / "docker" / "docker-compose.dev.yml",
         project_root / "docker-compose.yml",
     ]:
         if candidate.is_file():
