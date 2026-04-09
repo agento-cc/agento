@@ -42,10 +42,10 @@ class TestDbFallback:
         cursor.fetchone.return_value = {"value": "av-val", "encrypted": 0}
 
         sc = ScopedConfig(conn, scope="agent_view", scope_id=5)
-        assert sc.get_value("agent/model") == "av-val"
+        assert sc.get_value("agent_view/model") == "av-val"
         # Should query with agent_view scope
         args = cursor.execute.call_args[0]
-        assert args[1] == ("agent_view", 5, "agent/model")
+        assert args[1] == ("agent_view", 5, "agent_view/model")
 
     def test_fallback_agent_view_to_workspace(self):
         """When agent_view has no value, falls back to workspace."""
@@ -71,7 +71,7 @@ class TestDbFallback:
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         sc = ScopedConfig(conn, scope="agent_view", scope_id=5)
-        assert sc.get_value("agent/model") == "ws-val"
+        assert sc.get_value("agent_view/model") == "ws-val"
 
     def test_fallback_workspace_to_default(self):
         """When workspace has no value, falls back to default."""
@@ -94,7 +94,7 @@ class TestDbFallback:
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         sc = ScopedConfig(conn, scope="workspace", scope_id=2)
-        assert sc.get_value("agent/model") == "global-val"
+        assert sc.get_value("agent_view/model") == "global-val"
 
     @patch("agento.framework.config_resolver.read_config_defaults", return_value={"token": "cfg-val"})
     @patch("agento.framework.bootstrap.get_manifests")
@@ -146,9 +146,9 @@ class TestDbFallback:
         cursor.fetchone.return_value = {"value": "default-val", "encrypted": 0}
 
         sc = ScopedConfig(conn, scope="default", scope_id=0)
-        assert sc.get_value("agent/model") == "default-val"
+        assert sc.get_value("agent_view/model") == "default-val"
         args = cursor.execute.call_args[0]
-        assert args[1] == ("default", 0, "agent/model")
+        assert args[1] == ("default", 0, "agent_view/model")
 
 
 class TestWorkspaceIdCaching:
@@ -182,8 +182,8 @@ class TestWorkspaceIdCaching:
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         sc = ScopedConfig(conn, scope="agent_view", scope_id=5)
-        sc.get_value("agent/model")
-        sc.get_value("agent/provider")
+        sc.get_value("agent_view/model")
+        sc.get_value("agent_view/provider")
 
         # 5 cursor calls total (not 6), proving workspace_id was cached
         assert call_count[0] == 5

@@ -83,8 +83,8 @@ class TestBuildScopedOverrides:
 
     def test_workspace_overrides_global(self):
         # Mock: return different data based on scope
-        global_rows = [{"path": "agent/claude/model", "value": "sonnet", "encrypted": 0}]
-        ws_rows = [{"path": "agent/claude/model", "value": "opus", "encrypted": 0}]
+        global_rows = [{"path": "agent_view/claude/model", "value": "sonnet", "encrypted": 0}]
+        ws_rows = [{"path": "agent_view/claude/model", "value": "opus", "encrypted": 0}]
 
         call_count = [0]
 
@@ -103,7 +103,7 @@ class TestBuildScopedOverrides:
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         result = build_scoped_overrides(conn, workspace_id=1)
-        assert result["agent/claude/model"] == ("opus", False)
+        assert result["agent_view/claude/model"] == ("opus", False)
 
     def test_agent_view_overrides_workspace(self):
         call_count = [0]
@@ -115,17 +115,17 @@ class TestBuildScopedOverrides:
             if idx == 0:
                 # global
                 cur.fetchall.return_value = [
-                    {"path": "agent/claude/model", "value": "haiku", "encrypted": 0}
+                    {"path": "agent_view/claude/model", "value": "haiku", "encrypted": 0}
                 ]
             elif idx == 1:
                 # workspace
                 cur.fetchall.return_value = [
-                    {"path": "agent/claude/model", "value": "sonnet", "encrypted": 0}
+                    {"path": "agent_view/claude/model", "value": "sonnet", "encrypted": 0}
                 ]
             else:
                 # agent_view
                 cur.fetchall.return_value = [
-                    {"path": "agent/claude/model", "value": "opus", "encrypted": 0}
+                    {"path": "agent_view/claude/model", "value": "opus", "encrypted": 0}
                 ]
             return cur
 
@@ -134,7 +134,7 @@ class TestBuildScopedOverrides:
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         result = build_scoped_overrides(conn, workspace_id=1, agent_view_id=10)
-        assert result["agent/claude/model"] == ("opus", False)
+        assert result["agent_view/claude/model"] == ("opus", False)
 
     def test_global_inherited_when_no_override(self):
         call_count = [0]
@@ -146,13 +146,13 @@ class TestBuildScopedOverrides:
             if idx == 0:
                 # global has both model and personality
                 cur.fetchall.return_value = [
-                    {"path": "agent/claude/model", "value": "sonnet", "encrypted": 0},
-                    {"path": "agent/claude/personality", "value": "be helpful", "encrypted": 0},
+                    {"path": "agent_view/claude/model", "value": "sonnet", "encrypted": 0},
+                    {"path": "agent_view/claude/personality", "value": "be helpful", "encrypted": 0},
                 ]
             elif idx == 1:
                 # workspace overrides only model
                 cur.fetchall.return_value = [
-                    {"path": "agent/claude/model", "value": "opus", "encrypted": 0},
+                    {"path": "agent_view/claude/model", "value": "opus", "encrypted": 0},
                 ]
             else:
                 # agent_view has nothing
@@ -164,8 +164,8 @@ class TestBuildScopedOverrides:
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         result = build_scoped_overrides(conn, workspace_id=1, agent_view_id=10)
-        assert result["agent/claude/model"] == ("opus", False)
-        assert result["agent/claude/personality"] == ("be helpful", False)
+        assert result["agent_view/claude/model"] == ("opus", False)
+        assert result["agent_view/claude/personality"] == ("be helpful", False)
 
 
 class TestResolveScopedField:

@@ -44,9 +44,9 @@ class TestResolveAgentViewRuntime:
         mock_av.return_value = _make_agent_view()
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
-            "agent/provider": ("claude", False),
-            "agent/claude/model": ("opus-4.6", False),
-            "agent/scheduling/priority": ("80", False),
+            "agent_view/provider": ("claude", False),
+            "agent_view/claude/model": ("opus-4.6", False),
+            "agent_view/scheduling/priority": ("80", False),
         }
 
         runtime = resolve_agent_view_runtime(MagicMock(), 1)
@@ -63,8 +63,8 @@ class TestResolveAgentViewRuntime:
         mock_av.return_value = _make_agent_view()
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
-            "agent/provider": ("codex", False),
-            "agent/codex/model": ("gpt-5.4", False),
+            "agent_view/provider": ("codex", False),
+            "agent_view/codex/model": ("gpt-5.4", False),
         }
 
         runtime = resolve_agent_view_runtime(MagicMock(), 1)
@@ -79,7 +79,7 @@ class TestResolveAgentViewRuntime:
         mock_av.return_value = _make_agent_view()
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
-            "agent/model": ("sonnet-4.6", False),
+            "agent_view/model": ("sonnet-4.6", False),
         }
 
         runtime = resolve_agent_view_runtime(MagicMock(), 1)
@@ -93,7 +93,7 @@ class TestResolveAgentViewRuntime:
         mock_av.return_value = _make_agent_view()
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
-            "agent/scheduling/priority": ("150", False),
+            "agent_view/scheduling/priority": ("150", False),
         }
 
         runtime = resolve_agent_view_runtime(MagicMock(), 1)
@@ -106,7 +106,7 @@ class TestResolveAgentViewRuntime:
         mock_av.return_value = _make_agent_view()
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
-            "agent/scheduling/priority": ("not-a-number", False),
+            "agent_view/scheduling/priority": ("not-a-number", False),
         }
 
         runtime = resolve_agent_view_runtime(MagicMock(), 1)

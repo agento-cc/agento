@@ -7,10 +7,10 @@ Before each worker run, generates native config files that agent CLIs expect:
   - .codex/config.toml (Codex CLI config)
 
 Config field paths follow the convention:
-  agent/claude/model          -> model for Claude CLI
-  agent/claude/personality    -> system prompt / personality
-  agent/mcp/servers           -> MCP server definitions (JSON)
-  agent/codex/model           -> model for Codex CLI
+  agent_view/claude/model          -> model for Claude CLI
+  agent_view/claude/personality    -> system prompt / personality
+  agent_view/mcp/servers           -> MCP server definitions (JSON)
+  agent_view/codex/model           -> model for Codex CLI
 """
 from __future__ import annotations
 
@@ -22,11 +22,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Config path prefix for agent CLI settings
-AGENT_CONFIG_PREFIX = "agent/"
+AGENT_CONFIG_PREFIX = "agent_view/"
 
 
 def _get_agent_config(resolved_config: dict[str, tuple[str, bool]]) -> dict[str, str]:
-    """Extract agent/* paths from resolved DB overrides into a flat dict.
+    """Extract agent_view/* paths from resolved DB overrides into a flat dict.
 
     Returns {relative_path: value}, e.g. {"claude/model": "opus-4"}.
     """
@@ -56,7 +56,7 @@ def generate_claude_config(working_dir: Path, agent_config: dict[str, str]) -> N
         try:
             claude_json["permissions"] = json.loads(permissions)
         except (json.JSONDecodeError, TypeError):
-            logger.warning("Invalid JSON in agent/claude/permissions, skipping")
+            logger.warning("Invalid JSON in agent_view/claude/permissions, skipping")
 
     if claude_json:
         config_path = working_dir / ".claude.json"
@@ -102,7 +102,7 @@ def generate_mcp_config(
     try:
         servers = json.loads(servers_raw)
     except (json.JSONDecodeError, TypeError):
-        logger.warning("Invalid JSON in agent/mcp/servers, skipping .mcp.json generation")
+        logger.warning("Invalid JSON in agent_view/mcp/servers, skipping .mcp.json generation")
         return
 
     if agent_view_id is not None:
@@ -152,7 +152,7 @@ def populate_agent_configs(
     agent_config = _get_agent_config(scoped_overrides)
 
     if not agent_config:
-        logger.debug("No agent/* config paths found, skipping config file generation")
+        logger.debug("No agent_view/* config paths found, skipping config file generation")
         return
 
     generate_claude_config(wd, agent_config)

@@ -1,7 +1,7 @@
 {
-  "agent/provider":            {"type": "string",  "label": "Agent provider (claude, codex)"},
-  "agent/claude/model":        {"type": "string",  "label": "Claude model override"},
-  "agent/codex/model":         {"type": "string",  "label": "Codex model override"},
-  "agent/model":               {"type": "string",  "label": "Generic model fallback"},
-  "agent/scheduling/priority": {"type": "integer", "label": "Job priority (0-100)"}
+  "provider":            {"type": "string",  "label": "Agent provider (claude, codex)"},
+  "claude/model":        {"type": "string",  "label": "Claude model override"},
+  "codex/model":         {"type": "string",  "label": "Codex model override"},
+  "model":               {"type": "string",  "label": "Generic model fallback"},
+  "scheduling/priority": {"type": "integer", "label": "Job priority (0-100)"}
 }

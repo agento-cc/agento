@@ -41,7 +41,7 @@ class TestObserverWritesFiles:
     def test_writes_files_to_run_dir(self, mock_conn, mock_get_av, mock_overrides, mock_write):
         mock_conn.return_value = MagicMock()
         mock_get_av.return_value = _make_agent_view(id=1, workspace_id=10)
-        mock_overrides.return_value = {"agent/instructions/agents_md": ("custom", False)}
+        mock_overrides.return_value = {"agent_view/instructions/agents_md": ("custom", False)}
 
         observer = PopulateInstructionsObserver()
         event = _make_event(run_dir="/tmp/run/42", agent_view_id=1)
@@ -51,7 +51,7 @@ class TestObserverWritesFiles:
             mock_conn.return_value, agent_view_id=1, workspace_id=10,
         )
         mock_write.assert_called_once_with(
-            "/tmp/run/42", {"agent/instructions/agents_md": ("custom", False)},
+            "/tmp/run/42", {"agent_view/instructions/agents_md": ("custom", False)},
         )
 
     @patch("agento.modules.agent_view.src.observers.write_instruction_files")

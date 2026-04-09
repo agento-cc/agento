@@ -1,0 +1,5 @@
+{
+    "patches": [
+        {"name": "RenameAgentConfigPrefix", "class": "src.patches.rename_agent_config_prefix.RenameAgentConfigPrefix"}
+    ]
+}

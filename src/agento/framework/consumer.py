@@ -293,8 +293,8 @@ class Consumer:
                 primary = get_primary_token(conn)
                 if primary is None:
                     raise RuntimeError(
-                        "No agent/provider configured and no primary token set. "
-                        "Run: bin/agento config:set agent/provider claude"
+                        "No agent_view/provider configured and no primary token set. "
+                        "Run: bin/agento config:set agent_view/provider claude"
                     )
                 agent_type = primary.agent_type
                 model_override = self.model_override

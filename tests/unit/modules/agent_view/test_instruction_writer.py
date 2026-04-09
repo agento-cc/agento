@@ -9,7 +9,7 @@ class TestWriteFromConfig:
     def test_writes_agents_md_from_config(self, tmp_path):
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        overrides = {"agent/instructions/agents_md": ("# Custom AGENTS", False)}
+        overrides = {"agent_view/instructions/agents_md": ("# Custom AGENTS", False)}
 
         write_instruction_files(run_dir, overrides)
 
@@ -18,7 +18,7 @@ class TestWriteFromConfig:
     def test_writes_soul_md_from_config(self, tmp_path):
         run_dir = tmp_path / "run"
         run_dir.mkdir()
-        overrides = {"agent/instructions/soul_md": ("# Custom SOUL", False)}
+        overrides = {"agent_view/instructions/soul_md": ("# Custom SOUL", False)}
 
         write_instruction_files(run_dir, overrides)
 
@@ -30,7 +30,7 @@ class TestWriteFromConfig:
         ws_dir = tmp_path / "workspace"
         ws_dir.mkdir()
         (ws_dir / "AGENTS.md").write_text("workspace default")
-        overrides = {"agent/instructions/agents_md": ("db override", False)}
+        overrides = {"agent_view/instructions/agents_md": ("db override", False)}
 
         write_instruction_files(run_dir, overrides, workspace_dir=ws_dir)
 
@@ -91,7 +91,7 @@ class TestEmptyConfigValue:
         ws_dir = tmp_path / "workspace"
         ws_dir.mkdir()
         (ws_dir / "AGENTS.md").write_text("workspace default")
-        overrides = {"agent/instructions/agents_md": ("", False)}
+        overrides = {"agent_view/instructions/agents_md": ("", False)}
 
         write_instruction_files(run_dir, overrides, workspace_dir=ws_dir)
 

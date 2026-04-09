@@ -42,7 +42,7 @@ The two flags are mutually exclusive.
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
 
-Config files are only generated when the corresponding `agent/*` config paths exist in scoped overrides. If no `agent/*` paths are set for an agent_view, those files are skipped.
+Config files are only generated when the corresponding `agent_view/*` config paths exist in scoped overrides. If no `agent_view/*` paths are set for an agent_view, those files are skipped.
 
 ### Build Directory Layout
 
