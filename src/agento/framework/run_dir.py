@@ -33,3 +33,23 @@ def cleanup_run_dir(run_dir: Path) -> None:
             logger.debug("Cleaned up run dir %s", run_dir)
     except Exception:
         logger.warning("Failed to clean up run dir %s", run_dir, exc_info=True)
+
+
+def get_current_build_dir(workspace_code: str, agent_view_code: str) -> Path | None:
+    """Return the current build directory if the symlink exists and target is valid."""
+    current_link = Path(BASE_WORKSPACE_DIR) / workspace_code / agent_view_code / "current"
+    if current_link.is_symlink():
+        target = current_link.resolve()
+        if target.is_dir():
+            return target
+    return None
+
+
+def copy_build_to_run_dir(build_dir: Path, run_dir: Path) -> None:
+    """Copy pre-built workspace contents into the run directory."""
+    for item in build_dir.iterdir():
+        dest = run_dir / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)

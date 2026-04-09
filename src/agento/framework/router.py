@@ -85,7 +85,7 @@ def resolve_agent_view(conn: object, context: RoutingContext) -> RoutingDecision
             "Routing failed: no router matched for %s/%s",
             context.identity_type, context.identity_value,
         )
-        em.dispatch("agento_routing_failed", RoutingFailedEvent(context=context))
+        em.dispatch("routing_fail_after", RoutingFailedEvent(context=context))
         return None
 
     winner = all_results[0]
@@ -109,7 +109,7 @@ def resolve_agent_view(conn: object, context: RoutingContext) -> RoutingDecision
             winner.router_name,
         )
         em.dispatch(
-            "agento_routing_ambiguous",
+            "routing_ambiguous_after",
             RoutingAmbiguousEvent(
                 context=context,
                 agent_view_id=candidate.agent_view_id,
@@ -125,7 +125,7 @@ def resolve_agent_view(conn: object, context: RoutingContext) -> RoutingDecision
             candidate.agent_view_id, winner.router_name,
         )
         em.dispatch(
-            "agento_routing_resolved",
+            "routing_resolve_after",
             RoutingResolvedEvent(
                 context=context,
                 agent_view_id=candidate.agent_view_id,

@@ -81,7 +81,18 @@ def sync_skills(conn, skills_dir: Path) -> SyncResult:
                 else:
                     unchanged += 1
     conn.commit()
-    return SyncResult(new=new, updated=updated, unchanged=unchanged)
+    result = SyncResult(new=new, updated=updated, unchanged=unchanged)
+
+    try:
+        from agento.framework.event_manager import get_event_manager
+        from agento.framework.events import SkillSyncCompletedEvent
+        get_event_manager().dispatch("skill_sync_complete_after", SkillSyncCompletedEvent(
+            skills_dir=str(skills_dir), new=new, updated=updated, unchanged=unchanged,
+        ))
+    except Exception:
+        pass
+
+    return result
 
 
 def get_all_skills(conn) -> list[SkillInfo]:

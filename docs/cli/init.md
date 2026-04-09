@@ -1,5 +1,7 @@
 # agento init
 
+> **Deprecated:** The `init` command has been replaced by [`agento install`](install.md), which provides an interactive wizard with automatic Docker setup, migrations, and agent provider configuration.
+
 Scaffold a new agento project.
 
 ## Usage

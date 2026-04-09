@@ -19,6 +19,7 @@ class SkillEnableCommand:
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("skill_name", help="Skill name")
+        parser.add_argument("--agent-view", dest="agent_view_code", default=None, help="Agent view code (shortcut for --scope agent_view)")
         parser.add_argument("--scope", default="default", choices=["default", "workspace", "agent_view"], help="Config scope")
         parser.add_argument("--scope-id", type=int, default=0, help="Scope ID")
 
@@ -30,9 +31,21 @@ class SkillEnableCommand:
         db_config, _, _ = _load_framework_config()
         conn = get_connection(db_config)
         try:
+            scope, scope_id = _resolve_scope(conn, args)
             path = f"skill/{args.skill_name}/is_enabled"
-            scoped_config_set(conn, path, "1", scope=args.scope, scope_id=args.scope_id)
+            scoped_config_set(conn, path, "1", scope=scope, scope_id=scope_id)
             conn.commit()
-            print(f"Enabled skill '{args.skill_name}' at scope={args.scope}, scope_id={args.scope_id}")
+            print(f"Enabled skill '{args.skill_name}' at scope={scope}, scope_id={scope_id}")
         finally:
             conn.close()
+
+
+def _resolve_scope(conn, args):
+    """Resolve scope from --agent-view shortcut or explicit --scope/--scope-id."""
+    if args.agent_view_code:
+        from agento.framework.workspace import get_agent_view_by_code
+        av = get_agent_view_by_code(conn, args.agent_view_code)
+        if av is None:
+            raise SystemExit(f"Error: agent_view '{args.agent_view_code}' not found")
+        return "agent_view", av.id
+    return args.scope, args.scope_id

@@ -167,7 +167,7 @@ def apply_patch(
     from .events import DataPatchAppliedEvent
 
     get_event_manager().dispatch(
-        "agento_data_patch_applied",
+        "data_patch_apply_after",
         DataPatchAppliedEvent(name=patch_decl["name"], module=manifest.name),
     )
 

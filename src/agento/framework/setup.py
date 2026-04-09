@@ -73,7 +73,7 @@ def setup_upgrade(
     em = get_event_manager()
     result = SetupResult()
 
-    em.dispatch("agento_setup_before", SetupBeforeEvent(dry_run=dry_run))
+    em.dispatch("setup_upgrade_before", SetupBeforeEvent(dry_run=dry_run))
 
     # 1. Framework SQL migrations
     if dry_run:
@@ -122,7 +122,7 @@ def setup_upgrade(
     result.cron_changed = install_crontab(new_crontab, dry_run=dry_run)
     if result.cron_changed and not dry_run:
         em.dispatch(
-            "agento_crontab_installed",
+            "crontab_install_after",
             CrontabInstalledEvent(job_count=len(jobs)),
         )
 
@@ -184,7 +184,7 @@ def setup_upgrade(
                 result.onboardings_run.append(module_name)
 
     em.dispatch(
-        "agento_setup_complete",
+        "setup_upgrade_after",
         SetupCompleteEvent(result=result, dry_run=dry_run),
     )
 

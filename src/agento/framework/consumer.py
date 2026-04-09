@@ -34,7 +34,7 @@ from .events import (
 )
 from .job_models import Job, JobStatus
 from .retry_policy import evaluate as evaluate_retry
-from .run_dir import build_run_dir, cleanup_run_dir, prepare_run_dir
+from .run_dir import build_run_dir, cleanup_run_dir, copy_build_to_run_dir, get_current_build_dir, prepare_run_dir
 from .runner import RunResult
 from .runner_factory import create_runner
 from .workflows import get_workflow_class
@@ -110,7 +110,7 @@ class Consumer:
             f"job_timeout={self._consumer_config.job_timeout_seconds}s"
         )
 
-        get_event_manager().dispatch("consumer_started", ConsumerStartedEvent())
+        get_event_manager().dispatch("consumer_start_after", ConsumerStartedEvent())
 
         self._recover_stale_jobs()
 
@@ -140,7 +140,7 @@ class Consumer:
                     semaphore.release()
                     self._shutdown.wait(timeout=self._consumer_config.poll_interval)
         finally:
-            get_event_manager().dispatch("consumer_stopping", ConsumerStoppingEvent())
+            get_event_manager().dispatch("consumer_stop_before", ConsumerStoppingEvent())
             self.logger.info("Consumer shutting down, waiting for running jobs...")
             executor.shutdown(wait=True, cancel_futures=False)
             dispatch_shutdown()
@@ -219,7 +219,7 @@ class Consumer:
                 job.status = JobStatus.RUNNING
                 job.attempt += 1
 
-                get_event_manager().dispatch("job_claimed", JobClaimedEvent(job=job))
+                get_event_manager().dispatch("job_claim_after", JobClaimedEvent(job=job))
 
                 return job
         except Exception:
@@ -246,7 +246,7 @@ class Consumer:
                 "worker_slot": worker_slot,
             },
         )
-        em.dispatch("agento_worker_started", WorkerStartedEvent(
+        em.dispatch("worker_start_after", WorkerStartedEvent(
             worker_slot=worker_slot, job_id=job.id,
         ))
 
@@ -269,7 +269,7 @@ class Consumer:
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
         self._finalize_job(job, error, job_result, elapsed_ms)
 
-        em.dispatch("agento_worker_stopped", WorkerStoppedEvent(
+        em.dispatch("worker_stop_after", WorkerStoppedEvent(
             worker_slot=worker_slot, job_id=job.id, elapsed_ms=elapsed_ms,
         ))
 
@@ -310,12 +310,19 @@ class Consumer:
                 runtime.workspace.code, runtime.agent_view.code, job.id,
             )
             prepare_run_dir(run_dir)
-            populate_agent_configs(
-                run_dir, runtime.scoped_overrides,
-                agent_view_id=job.agent_view_id,
-            )
 
-        em.dispatch("agento_agent_view_run_started", AgentViewRunStartedEvent(
+            current_build = get_current_build_dir(
+                runtime.workspace.code, runtime.agent_view.code,
+            )
+            if current_build is not None:
+                copy_build_to_run_dir(current_build, run_dir)
+            else:
+                populate_agent_configs(
+                    run_dir, runtime.scoped_overrides,
+                    agent_view_id=job.agent_view_id,
+                )
+
+        em.dispatch("agent_view_run_start_before", AgentViewRunStartedEvent(
             job=job,
             agent_view_id=job.agent_view_id,
             provider=agent_type.value,
@@ -355,7 +362,7 @@ class Consumer:
             success = False
             raise
         finally:
-            em.dispatch("agento_agent_view_run_finished", AgentViewRunFinishedEvent(
+            em.dispatch("agent_view_run_finish_after", AgentViewRunFinishedEvent(
                 job=job,
                 agent_view_id=job.agent_view_id,
                 provider=agent_type.value,
@@ -430,7 +437,7 @@ class Consumer:
                         },
                     )
                     em.dispatch(
-                        "job_succeeded",
+                        "job_succeed_after",
                         JobSucceededEvent(
                             job=job,
                             summary=job_result.summary if job_result else None,
@@ -445,7 +452,7 @@ class Consumer:
                     decision = evaluate_retry(error_class, job.attempt, job.max_attempts)
 
                     em.dispatch(
-                        "job_failed",
+                        "job_fail_after",
                         JobFailedEvent(job=job, error=error, elapsed_ms=elapsed_ms),
                     )
 
@@ -473,7 +480,7 @@ class Consumer:
                             },
                         )
                         em.dispatch(
-                            "job_retrying",
+                            "job_retry_after",
                             JobRetryingEvent(
                                 job=job,
                                 error=error,
@@ -503,7 +510,7 @@ class Consumer:
                             },
                         )
                         em.dispatch(
-                            "job_dead",
+                            "job_dead_after",
                             JobDeadEvent(job=job, error=error, elapsed_ms=elapsed_ms),
                         )
                 return  # DB update succeeded

@@ -49,7 +49,7 @@ def publish(
 
         if inserted:
             get_event_manager().dispatch(
-                "job_published",
+                "job_publish_after",
                 JobPublishedEvent(
                     type=agent_type.value,
                     source=source,

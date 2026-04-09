@@ -1,52 +1,87 @@
-# bin/agento install
+# agento install
 
-Full installation command. Generates config, builds Docker images, starts containers, runs migrations.
+Interactive project installation wizard. Scaffolds a new project, starts Docker containers, runs migrations, and sets up an agent provider.
 
 ## Usage
 
 ```bash
-bin/agento install \
-  --agent-email=agent@mycompany.com \
-  --jira-host=https://mycompany.atlassian.net \
-  --jira-projects=AI,DEV \
-  --agent-role="Senior Developer" \
-  --timezone=Europe/Warsaw
+agento install
 ```
 
-## Parameters
+No command-line flags — everything is collected interactively.
 
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--agent-email` | Yes | — | Agent email (used as MCP tool credential) |
-| `--jira-host` | Yes | — | Jira instance URL |
-| `--jira-projects` | Yes | — | Jira project keys (comma-separated) |
-| `--agent-role` | No | "Senior Developer" | Agent role in SOUL.md |
-| `--jira-assignee` | No | same as agent-email | Jira assignee email |
-| `--jira-assignee-id` | No | — | Jira account ID |
-| `--jira-status` | No | "To Do" | Status name for recurring tasks |
-| `--jira-frequency-field` | No | customfield_10709 | Custom field ID for cron frequency |
-| `--timezone` | No | UTC | Container timezone |
-| `--skip-build` | No | — | Skip Docker image build |
+## Interactive Steps
 
-## What It Does (Step by Step)
+### 1. Project Path
 
-1. Validates prerequisites (docker, docker compose)
-2. Creates directories (workspace/systems/, logs/, tokens/)
-3. Generates `workspace/SOUL.md` from template
-4. Generates `docker/.cron.env` with module config (`CONFIG__JIRA__*` entries)
-5. Generates `AGENTS.md` from template + installed modules
-6. Checks/copies `secrets.env` from template
-7. Generates `AGENTO_ENCRYPTION_KEY` in secrets.env (if missing)
-8. Adds `JIRA_HOST` to secrets.env (if missing)
-9. Builds Docker images
-10. Starts containers (`docker compose up -d cron`)
-11. Waits for MySQL, runs migrations
-12. Runs reindex
+Prompts for the project directory (default: current directory `.`). The directory must be empty or non-existent (created automatically).
+
+### 2. Existing Project Check
+
+If `.agento/project.json` is found, the wizard offers a **reinstall** option. Reinstall refreshes framework files while preserving data:
+
+| Preserved | Refreshed |
+|-----------|-----------|
+| `storage/` (MySQL data) | `docker-compose.yml` |
+| `tokens/` | `docker/sql/` (migrations) |
+| `secrets.env` | `AGENTO_VERSION` in `docker/.env` |
+| `app/code/` (user modules) | `.agento/project.json` version |
+| `workspace/` | |
+
+### 3. Installation Mode
+
+Choose between **Basic (recommended)** and **Advanced**. Basic uses sensible defaults; Advanced lets you customize:
+
+| Setting | Basic Default | Advanced |
+|---------|--------------|----------|
+| Docker project name | Sanitized from directory name | Prompted |
+| MySQL host port | `3306` | Prompted (with port availability check) |
+| Timezone | Auto-detected from `/etc/localtime` | Prompted |
+
+### 4. Scaffolding
+
+Creates the project directory structure:
+
+```
+project/
+├── .agento/project.json
+├── .gitignore
+├── app/code/
+├── docker/
+│   ├── docker-compose.yml
+│   ├── .env
+│   └── sql/
+├── logs/
+├── secrets.env
+├── secrets.env.example
+├── storage/
+├── tokens/
+└── workspace/
+    ├── systems/
+    └── tmp/
+```
+
+Auto-generates:
+- `AGENTO_ENCRYPTION_KEY` (32-byte hex) in `secrets.env`
+- MySQL root and user passwords (random URL-safe tokens)
+
+### 5. Post-Install
+
+1. Starts Docker containers (`docker compose up -d`)
+2. Waits for the cron container's initial `setup:upgrade` (migrations, data patches)
+3. Runs interactive `setup:upgrade` (module onboarding)
+4. Prompts for AI agent provider selection (Claude, Codex) and token registration
 
 ## Generated Files
 
-| File | Template | Description |
-|------|----------|-------------|
-| `workspace/SOUL.md` | `workspace/SOUL.md.template` | Agent identity (email, role) |
-| `docker/.cron.env` | — | Module config env vars (`CONFIG__JIRA__*`) |
-| `workspace/AGENTS.md` | `workspace/AGENTS.md.template` | Agent instructions (tools, KB) |
+| File | Description |
+|------|-------------|
+| `.agento/project.json` | Project metadata (name, version, creation date) |
+| `.gitignore` | Default ignore patterns for agento projects |
+| `docker/docker-compose.yml` | Docker Compose configuration (from package template) |
+| `docker/.env` | Compose env vars (project name, version, MySQL credentials, port, timezone) |
+| `docker/sql/*.sql` | Schema migration scripts (extracted from package) |
+| `secrets.env` | Encryption key (auto-generated, not committed) |
+| `secrets.env.example` | Template showing required secret variables |
+
+Source: `src/agento/framework/cli/install.py`

@@ -794,4 +794,179 @@ describe('registerTools integration', () => {
     expect(calledTools).toHaveLength(1);
     expect(calledTools[0].name).toBe('mysql_a');
   });
+
+  it('same module, two agent_views: one sees all tools, other has tool disabled', async () => {
+    createModule('erp', {
+      name: 'erp',
+      tools: [
+        { type: 'mysql', name: 'erp_read', description: 'ERP Read', fields: { host: { type: 'string' } } },
+        { type: 'mysql', name: 'erp_write', description: 'ERP Write', fields: { host: { type: 'string' } } },
+      ],
+    }, { tools: { erp_read: { host: 'db.internal' }, erp_write: { host: 'db.internal' } } });
+
+    // --- Agent view 10 (developer): all tools enabled (no disable overrides) ---
+    const queryDev = vi.fn()
+      .mockResolvedValueOnce([[]])  // global overrides
+      .mockResolvedValueOnce([[{ id: 10, workspace_id: 1, label: 'Developer' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[]])  // workspace overrides
+      .mockResolvedValueOnce([[]]);  // agent_view overrides: nothing disabled
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryDev }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    let adapterMod = await import('../adapters/index.js');
+    let mod = await import('../config-loader.js');
+    let mockServer = { tool: vi.fn() };
+
+    await mod.registerTools(mockServer, { log: vi.fn(), db: {}, playwright: {} }, 10);
+
+    const devTools = adapterMod.registerAdapterTools.mock.calls[0][1];
+    expect(devTools).toHaveLength(2);
+    expect(devTools.map(t => t.name).sort()).toEqual(['erp_read', 'erp_write']);
+
+    // --- Agent view 20 (qa-tester): erp_write disabled ---
+    const queryQa = vi.fn()
+      .mockResolvedValueOnce([[]])  // global overrides
+      .mockResolvedValueOnce([[{ id: 20, workspace_id: 1, label: 'QA Tester' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[]])  // workspace overrides
+      .mockResolvedValueOnce([[  // agent_view overrides: disable erp_write
+        { path: 'tools/erp_write/is_enabled', value: '0', encrypted: 0 },
+      ]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryQa }),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    adapterMod = await import('../adapters/index.js');
+    mod = await import('../config-loader.js');
+    mockServer = { tool: vi.fn() };
+
+    await mod.registerTools(mockServer, { log: vi.fn(), db: {}, playwright: {} }, 20);
+
+    const qaTools = adapterMod.registerAdapterTools.mock.calls[0][1];
+    expect(qaTools).toHaveLength(1);
+    expect(qaTools[0].name).toBe('erp_read');
+  });
+
+  it('workspace-level disable inherited by agent_view, agent_view re-enable overrides', async () => {
+    createModule('crm', {
+      name: 'crm',
+      tools: [
+        { type: 'mysql', name: 'crm_search', description: 'CRM Search', fields: { host: { type: 'string' } } },
+      ],
+    }, { tools: { crm_search: { host: 'crm.internal' } } });
+
+    // Agent view 30: workspace disables crm_search, agent_view does NOT re-enable
+    const queryInherited = vi.fn()
+      .mockResolvedValueOnce([[]])  // global
+      .mockResolvedValueOnce([[{ id: 30, workspace_id: 5, label: 'Restricted' }]])
+      .mockResolvedValueOnce([[  // workspace: disable
+        { path: 'tools/crm_search/is_enabled', value: '0', encrypted: 0 },
+      ]])
+      .mockResolvedValueOnce([[]]);  // agent_view: empty (inherits workspace disable)
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryInherited }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    let adapterMod = await import('../adapters/index.js');
+    let mod = await import('../config-loader.js');
+
+    await mod.registerTools({ tool: vi.fn() }, { log: vi.fn(), db: {}, playwright: {} }, 30);
+
+    let tools = adapterMod.registerAdapterTools.mock.calls[0][1];
+    expect(tools).toHaveLength(0);  // workspace disable inherited
+
+    // Agent view 31: same workspace disables crm_search, but agent_view RE-ENABLES
+    const queryOverride = vi.fn()
+      .mockResolvedValueOnce([[]])  // global
+      .mockResolvedValueOnce([[{ id: 31, workspace_id: 5, label: 'Privileged' }]])
+      .mockResolvedValueOnce([[  // workspace: disable
+        { path: 'tools/crm_search/is_enabled', value: '0', encrypted: 0 },
+      ]])
+      .mockResolvedValueOnce([[  // agent_view: re-enable
+        { path: 'tools/crm_search/is_enabled', value: '1', encrypted: 0 },
+      ]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryOverride }),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    adapterMod = await import('../adapters/index.js');
+    mod = await import('../config-loader.js');
+
+    await mod.registerTools({ tool: vi.fn() }, { log: vi.fn(), db: {}, playwright: {} }, 31);
+
+    tools = adapterMod.registerAdapterTools.mock.calls[0][1];
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe('crm_search');
+  });
+
+  it('JS module tools also filtered by scoped is_enabled per agent_view', async () => {
+    const modDir = path.join(tmpDir, 'notifier');
+    fs.mkdirSync(path.join(modDir, 'toolbox'), { recursive: true });
+    fs.writeFileSync(path.join(modDir, 'module.json'), JSON.stringify({ name: 'notifier' }));
+    const capturePath = path.join(tmpDir, '_js_tool_capture.json');
+    fs.writeFileSync(path.join(modDir, 'toolbox', 'slack.js'),
+      `import fs from 'fs';
+       export function register(server, ctx) {
+         const enabled = ctx.isToolEnabled('slack_notify');
+         fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ enabled }));
+         if (enabled) server.tool('slack_notify', 'Send Slack', {}, () => {});
+       }`
+    );
+
+    // Agent view 40: disable slack_notify
+    const queryMock = vi.fn()
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ id: 40, workspace_id: 1, label: 'NoSlack' }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[
+        { path: 'tools/slack_notify/is_enabled', value: '0', encrypted: 0 },
+      ]]);
+
+    vi.doMock('../db.js', () => ({
+      getCronPool: () => ({ query: queryMock }),
+    }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn(() => ({ names: [], healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    const mod = await import('../config-loader.js');
+    const toolNames = [];
+    const mockServer = { tool: (...args) => { toolNames.push(args[0]); } };
+
+    await mod.registerTools(mockServer, { log: vi.fn(), db: {}, playwright: {} }, 40);
+
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+    expect(captured.enabled).toBe(false);
+    expect(toolNames).not.toContain('slack_notify');
+  });
 });

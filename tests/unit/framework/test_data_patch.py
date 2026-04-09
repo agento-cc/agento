@@ -228,7 +228,7 @@ class TestApplyPatch:
         Collector.events = []
 
         em = get_event_manager()
-        em.register("agento_data_patch_applied", ObserverEntry(name="dp", observer_class=Collector))
+        em.register("data_patch_apply_after", ObserverEntry(name="dp", observer_class=Collector))
 
         m = _make_manifest(tmp_path, "jira", [
             {"name": "PopulateDefaults", "class": "src.patches.populate.PopulateDefaults"},

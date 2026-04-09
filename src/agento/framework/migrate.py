@@ -132,7 +132,7 @@ def apply_migration(
     from .events import MigrationAppliedEvent
 
     get_event_manager().dispatch(
-        "agento_migration_applied",
+        "migration_apply_after",
         MigrationAppliedEvent(version=version, module=module, path=path),
     )
 

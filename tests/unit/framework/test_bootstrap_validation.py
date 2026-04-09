@@ -121,11 +121,11 @@ class TestBootstrapValidation:
             "    pass  # Missing execute method\n"
         )
         (mod_dir / "events.json").write_text(json.dumps({
-            "job_failed": [{"name": "bad", "class": "src.obs.BadObserver"}],
+            "job_fail_after": [{"name": "bad", "class": "src.obs.BadObserver"}],
         }))
 
         bootstrap(str(tmp_path))
-        assert get_event_manager().observer_count("job_failed") == 0
+        assert get_event_manager().observer_count("job_fail_after") == 0
 
     def test_bad_workflow_not_subclass_skipped(self, tmp_path: Path):
         """Workflow that does not extend Workflow base class is skipped."""

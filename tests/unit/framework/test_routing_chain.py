@@ -69,7 +69,7 @@ class TestResolveAgentView:
         assert decision.matched_router == "identity"
         assert decision.ambiguous is False
         em.dispatch.assert_called_once()
-        assert em.dispatch.call_args[0][0] == "agento_routing_resolved"
+        assert em.dispatch.call_args[0][0] == "routing_resolve_after"
 
     @patch("agento.framework.router.get_event_manager")
     def test_no_match_fires_failed_event(self, mock_em):
@@ -81,7 +81,7 @@ class TestResolveAgentView:
         decision = resolve_agent_view(MagicMock(), _ctx())
         assert decision is None
         em.dispatch.assert_called_once()
-        assert em.dispatch.call_args[0][0] == "agento_routing_failed"
+        assert em.dispatch.call_args[0][0] == "routing_fail_after"
 
     @patch("agento.framework.router.get_agent_view")
     @patch("agento.framework.router.get_event_manager")
@@ -107,7 +107,7 @@ class TestResolveAgentView:
         assert decision.ambiguous is True
         assert len(decision.all_results) == 2
         em.dispatch.assert_called_once()
-        assert em.dispatch.call_args[0][0] == "agento_routing_ambiguous"
+        assert em.dispatch.call_args[0][0] == "routing_ambiguous_after"
 
     @patch("agento.framework.router.get_event_manager")
     def test_router_exception_swallowed(self, mock_em):
@@ -119,7 +119,7 @@ class TestResolveAgentView:
         decision = resolve_agent_view(MagicMock(), _ctx())
         assert decision is None
         em.dispatch.assert_called_once()
-        assert em.dispatch.call_args[0][0] == "agento_routing_failed"
+        assert em.dispatch.call_args[0][0] == "routing_fail_after"
 
     @patch("agento.framework.router.get_agent_view")
     @patch("agento.framework.router.get_event_manager")
@@ -179,4 +179,4 @@ class TestResolveAgentView:
         decision = resolve_agent_view(MagicMock(), _ctx())
         assert decision is None
         em.dispatch.assert_called_once()
-        assert em.dispatch.call_args[0][0] == "agento_routing_failed"
+        assert em.dispatch.call_args[0][0] == "routing_fail_after"

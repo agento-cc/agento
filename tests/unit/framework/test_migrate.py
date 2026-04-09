@@ -208,7 +208,7 @@ class TestMigrationEvents:
         conn, _ = _mock_conn()
 
         em = get_event_manager()
-        em.register("agento_migration_applied", ObserverEntry(name="m", observer_class=_EventCollector))
+        em.register("migration_apply_after", ObserverEntry(name="m", observer_class=_EventCollector))
 
         apply_migration(conn, "001_test", sql_file)
 
@@ -225,7 +225,7 @@ class TestMigrationEvents:
         conn, _ = _mock_conn()
 
         em = get_event_manager()
-        em.register("agento_migration_applied", ObserverEntry(name="m", observer_class=_EventCollector))
+        em.register("migration_apply_after", ObserverEntry(name="m", observer_class=_EventCollector))
 
         apply_migration(conn, "001_init", sql_file, module="jira")
 
