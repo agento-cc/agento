@@ -221,7 +221,7 @@ class ConfigSetCommand:
             )
             conn.commit()
             get_event_manager().dispatch(
-                "agento_config_saved",
+                "config_save_after",
                 ConfigSavedEvent(path=args.path, encrypted=encrypted),
             )
             label = " (encrypted)" if encrypted else ""

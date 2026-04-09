@@ -149,6 +149,30 @@ class TestToolEnableCommand:
         assert cmd.name == "tool:enable"
         assert cmd.shortcut == "to:en"
 
+    def test_rejects_name_with_spaces(self):
+        import pytest
+        args = argparse.Namespace(tool_name="jira search", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolEnableCommand().execute(args)
+
+    def test_rejects_name_with_special_chars(self):
+        import pytest
+        args = argparse.Namespace(tool_name="jira@search!", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolEnableCommand().execute(args)
+
+    def test_rejects_name_with_uppercase(self):
+        import pytest
+        args = argparse.Namespace(tool_name="JiraSearch", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolEnableCommand().execute(args)
+
+    def test_rejects_empty_name(self):
+        import pytest
+        args = argparse.Namespace(tool_name="", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolEnableCommand().execute(args)
+
     @patch("agento.framework.scoped_config.scoped_config_set")
     @patch("agento.framework.db.get_connection")
     @patch("agento.framework.cli.runtime._load_framework_config")
@@ -157,7 +181,7 @@ class TestToolEnableCommand:
         conn, _ = _mock_conn()
         mock_conn_fn.return_value = conn
 
-        args = argparse.Namespace(tool_name="jira_search", scope="default", scope_id=0)
+        args = argparse.Namespace(tool_name="jira_search", scope="default", scope_id=0, agent_view_code=None)
         ToolEnableCommand().execute(args)
 
         mock_set.assert_called_once_with(
@@ -180,7 +204,7 @@ class TestToolEnableCommand:
         conn, _ = _mock_conn()
         mock_conn_fn.return_value = conn
 
-        args = argparse.Namespace(tool_name="slack_post", scope="agent_view", scope_id=5)
+        args = argparse.Namespace(tool_name="slack_post", scope="agent_view", scope_id=5, agent_view_code=None)
         ToolEnableCommand().execute(args)
 
         mock_set.assert_called_once_with(
@@ -198,6 +222,30 @@ class TestToolDisableCommand:
         assert cmd.name == "tool:disable"
         assert cmd.shortcut == "to:di"
 
+    def test_rejects_name_with_spaces(self):
+        import pytest
+        args = argparse.Namespace(tool_name="jira search", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolDisableCommand().execute(args)
+
+    def test_rejects_name_with_special_chars(self):
+        import pytest
+        args = argparse.Namespace(tool_name="jira@search!", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolDisableCommand().execute(args)
+
+    def test_rejects_name_with_uppercase(self):
+        import pytest
+        args = argparse.Namespace(tool_name="JiraSearch", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolDisableCommand().execute(args)
+
+    def test_rejects_empty_name(self):
+        import pytest
+        args = argparse.Namespace(tool_name="", scope="default", scope_id=0, agent_view_code=None)
+        with pytest.raises(SystemExit, match="Invalid tool name"):
+            ToolDisableCommand().execute(args)
+
     @patch("agento.framework.scoped_config.scoped_config_set")
     @patch("agento.framework.db.get_connection")
     @patch("agento.framework.cli.runtime._load_framework_config")
@@ -206,7 +254,7 @@ class TestToolDisableCommand:
         conn, _ = _mock_conn()
         mock_conn_fn.return_value = conn
 
-        args = argparse.Namespace(tool_name="jira_search", scope="default", scope_id=0)
+        args = argparse.Namespace(tool_name="jira_search", scope="default", scope_id=0, agent_view_code=None)
         ToolDisableCommand().execute(args)
 
         mock_set.assert_called_once_with(
@@ -229,7 +277,7 @@ class TestToolDisableCommand:
         conn, _ = _mock_conn()
         mock_conn_fn.return_value = conn
 
-        args = argparse.Namespace(tool_name="browser", scope="workspace", scope_id=3)
+        args = argparse.Namespace(tool_name="browser", scope="workspace", scope_id=3, agent_view_code=None)
         ToolDisableCommand().execute(args)
 
         mock_set.assert_called_once_with(

@@ -142,21 +142,21 @@ class TestBootstrapObservers:
             "    def execute(self, event): pass\n"
         )
         (mod_dir / "events.json").write_text(json.dumps({
-            "job_failed": [{"name": "obs_mod_failed", "class": "src.obs.MyObserver"}],
+            "job_fail_after": [{"name": "obs_mod_failed", "class": "src.obs.MyObserver"}],
         }))
 
         bootstrap(str(tmp_path))
-        assert get_event_manager().observer_count("job_failed") == 1
+        assert get_event_manager().observer_count("job_fail_after") == 1
 
     def test_bad_observer_does_not_crash(self, tmp_path: Path):
         mod_dir = _write_module(tmp_path, "bad-obs", {"name": "bad-obs"})
         (mod_dir / "events.json").write_text(json.dumps({
-            "job_failed": [{"name": "bad", "class": "src.nope.Missing"}],
+            "job_fail_after": [{"name": "bad", "class": "src.nope.Missing"}],
         }))
 
         result = bootstrap(str(tmp_path))
         assert len(result) == 1
-        assert get_event_manager().observer_count("job_failed") == 0
+        assert get_event_manager().observer_count("job_fail_after") == 0
 
     def test_lifecycle_events_dispatched(self, tmp_path: Path):
         """module_register and module_ready events are dispatched during bootstrap."""
@@ -185,8 +185,8 @@ class TestBootstrapObservers:
             "        tb._lifecycle_calls.append(f'ready:{event.name}')\n"
         )
         (mod_dir / "events.json").write_text(json.dumps({
-            "module_register": [{"name": "lc_register", "class": "src.obs.RegisterObs"}],
-            "module_ready": [{"name": "lc_ready", "class": "src.obs.ReadyObs"}],
+            "module_register_before": [{"name": "lc_register", "class": "src.obs.RegisterObs"}],
+            "module_ready_after": [{"name": "lc_ready", "class": "src.obs.ReadyObs"}],
         }))
 
         import tests.unit.framework.test_bootstrap as tb

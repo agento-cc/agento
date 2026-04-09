@@ -24,6 +24,11 @@ class PopulateInstructionsObserver:
         if not event.run_dir or event.agent_view_id is None:
             return
 
+        # Skip if pre-built workspace already has instruction files
+        from pathlib import Path
+        if Path(event.run_dir, "AGENTS.md").exists():
+            return
+
         try:
             conn = get_connection(DatabaseConfig.from_env())
             try:

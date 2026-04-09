@@ -16,11 +16,13 @@ class TestSkillSyncCommand:
         assert cmd.shortcut == "sk:sy"
         assert cmd.help
 
+    @patch("agento.framework.bootstrap.get_module_config")
     @patch("agento.modules.skill.src.registry.sync_skills")
     @patch("agento.framework.db.get_connection")
     @patch("agento.framework.cli.runtime._load_framework_config")
-    def test_execute(self, mock_config, mock_conn, mock_sync, capsys):
+    def test_execute(self, mock_config, mock_conn, mock_sync, mock_mod_config, capsys):
         mock_config.return_value = ({}, None, None)
+        mock_mod_config.return_value = {"skills_dir": "workspace/.claude/skills"}
         conn = MagicMock()
         mock_conn.return_value = conn
         mock_sync.return_value = MagicMock(new=2, updated=1, unchanged=3)
@@ -98,7 +100,7 @@ class TestSkillEnableCommand:
         mock_conn.return_value = conn
 
         cmd = SkillEnableCommand()
-        cmd.execute(Namespace(skill_name="my_skill", scope="default", scope_id=0))
+        cmd.execute(Namespace(skill_name="my_skill", scope="default", scope_id=0, agent_view_code=None))
 
         mock_set.assert_called_once_with(conn, "skill/my_skill/is_enabled", "1", scope="default", scope_id=0)
         conn.commit.assert_called_once()
@@ -123,7 +125,7 @@ class TestSkillDisableCommand:
         mock_conn.return_value = conn
 
         cmd = SkillDisableCommand()
-        cmd.execute(Namespace(skill_name="my_skill", scope="agent_view", scope_id=5))
+        cmd.execute(Namespace(skill_name="my_skill", scope="agent_view", scope_id=5, agent_view_code=None))
 
         mock_set.assert_called_once_with(conn, "skill/my_skill/is_enabled", "0", scope="agent_view", scope_id=5)
         conn.commit.assert_called_once()

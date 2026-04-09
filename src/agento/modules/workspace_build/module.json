@@ -1,0 +1,7 @@
+{
+  "name": "workspace_build",
+  "version": "1.0.0",
+  "description": "Composable workspace builds — materialized config per agent_view",
+  "sequence": ["core"],
+  "order": 60
+}

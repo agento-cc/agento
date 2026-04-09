@@ -98,7 +98,10 @@ app.all('/mcp', async (req, res) => {
   });
   const { server } = await createServer(agentViewId);
 
+  let closing = false;
   transport.onclose = () => {
+    if (closing) return;
+    closing = true;
     if (transport.sessionId) {
       mcpSessions.delete(transport.sessionId);
     }

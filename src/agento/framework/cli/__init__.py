@@ -71,7 +71,6 @@ def _register_framework_commands() -> None:
     from .config import ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSetCommand
     from .doctor import DoctorCommand
     from .install import InstallCommand
-    from .upgrade import UpgradeCommand
     from .module import (
         MakeModuleCommand,
         ModuleDisableCommand,
@@ -88,6 +87,7 @@ def _register_framework_commands() -> None:
         TokenSetCommand,
         TokenUsageCommand,
     )
+    from .upgrade import UpgradeCommand
 
     for cmd_cls in [
         UpCommand, DownCommand, LogsCommand,

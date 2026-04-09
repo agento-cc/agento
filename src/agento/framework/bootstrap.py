@@ -65,7 +65,7 @@ def dispatch_shutdown() -> None:
     """Dispatch module_shutdown events in reverse dependency order."""
     em = get_event_manager()
     for m in reversed(_MANIFESTS):
-        em.dispatch("module_shutdown", ModuleShutdownEvent(name=m.name, path=m.path))
+        em.dispatch("module_shutdown_before", ModuleShutdownEvent(name=m.name, path=m.path))
 
 
 def bootstrap(
@@ -127,7 +127,7 @@ def bootstrap(
 
         # Dispatch module_register (module just loaded, before capabilities)
         em.dispatch(
-            "module_register",
+            "module_register_before",
             ModuleRegisterEvent(
                 name=m.name, path=m.path, config=_MODULE_CONFIGS.get(m.name, {})
             ),
@@ -143,7 +143,7 @@ def bootstrap(
         _load_routers(m)
 
         # Dispatch module_loaded (capabilities registered)
-        em.dispatch("module_loaded", ModuleLoadedEvent(name=m.name, path=m.path))
+        em.dispatch("module_load_after", ModuleLoadedEvent(name=m.name, path=m.path))
 
     # BlankWorkflow is always available (core, not tied to any integration)
     register_workflow(AgentType.BLANK, BlankWorkflow)
@@ -153,7 +153,7 @@ def bootstrap(
 
     # Dispatch module_ready (all modules loaded, safe to query registries)
     for m in manifests:
-        em.dispatch("module_ready", ModuleReadyEvent(name=m.name, path=m.path))
+        em.dispatch("module_ready_after", ModuleReadyEvent(name=m.name, path=m.path))
 
     logger.info(
         "Bootstrap: loaded %d module(s): %s",

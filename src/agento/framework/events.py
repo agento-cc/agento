@@ -242,3 +242,47 @@ class RoutingFailedEvent:
     """Dispatched when no router matches the inbound identity."""
 
     context: Any  # RoutingContext
+
+
+# --- Workspace build events ---
+
+
+@dataclass
+class WorkspaceBuildStartedEvent:
+    """Dispatched when a workspace build begins (status → building)."""
+
+    agent_view_id: int
+    build_id: int
+
+
+@dataclass
+class WorkspaceBuildCompletedEvent:
+    """Dispatched after a workspace build completes successfully (status → ready)."""
+
+    agent_view_id: int
+    build_id: int
+    build_dir: str
+    checksum: str
+    skipped: bool = False
+
+
+@dataclass
+class WorkspaceBuildFailedEvent:
+    """Dispatched when a workspace build fails (status → failed)."""
+
+    agent_view_id: int
+    build_id: int
+    error: str = ""
+
+
+# --- Skill events ---
+
+
+@dataclass
+class SkillSyncCompletedEvent:
+    """Dispatched after skill:sync finishes scanning disk and updating DB."""
+
+    skills_dir: str
+    new: int = 0
+    updated: int = 0
+    unchanged: int = 0

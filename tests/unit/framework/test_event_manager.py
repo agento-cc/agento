@@ -41,12 +41,12 @@ def _reset_recorder():
 class TestEventManager:
     def test_dispatch_no_observers(self):
         em = EventManager()
-        em.dispatch("job_failed", {"some": "data"})  # no error
+        em.dispatch("job_fail_after", {"some": "data"})  # no error
 
     def test_register_and_dispatch(self):
         em = EventManager()
-        em.register("job_failed", ObserverEntry(name="rec", observer_class=_Recorder))
-        em.dispatch("job_failed", "payload")
+        em.register("job_fail_after", ObserverEntry(name="rec", observer_class=_Recorder))
+        em.dispatch("job_fail_after", "payload")
         assert _Recorder.calls == ["payload"]
 
     def test_deterministic_order_by_order_field(self):

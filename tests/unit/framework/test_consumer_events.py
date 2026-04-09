@@ -71,7 +71,7 @@ class TestFinalizeJobEvents:
     def test_success_dispatches_job_succeeded(self, mock_conn):
         mock_conn.return_value = MagicMock()
         em = get_event_manager()
-        em.register("job_succeeded", ObserverEntry(name="col", observer_class=_EventCollector))
+        em.register("job_succeed_after", ObserverEntry(name="col", observer_class=_EventCollector))
 
         consumer = self._make_consumer()
         job = _make_job()
@@ -90,8 +90,8 @@ class TestFinalizeJobEvents:
     def test_retryable_failure_dispatches_failed_and_retrying(self, mock_conn):
         mock_conn.return_value = MagicMock()
         em = get_event_manager()
-        em.register("job_failed", ObserverEntry(name="f", observer_class=_EventCollector))
-        em.register("job_retrying", ObserverEntry(name="r", observer_class=_EventCollector))
+        em.register("job_fail_after", ObserverEntry(name="f", observer_class=_EventCollector))
+        em.register("job_retry_after", ObserverEntry(name="r", observer_class=_EventCollector))
 
         consumer = self._make_consumer()
         job = _make_job(attempt=1, max_attempts=3)
@@ -107,8 +107,8 @@ class TestFinalizeJobEvents:
     def test_non_retryable_failure_dispatches_failed_and_dead(self, mock_conn):
         mock_conn.return_value = MagicMock()
         em = get_event_manager()
-        em.register("job_failed", ObserverEntry(name="f", observer_class=_EventCollector))
-        em.register("job_dead", ObserverEntry(name="d", observer_class=_EventCollector))
+        em.register("job_fail_after", ObserverEntry(name="f", observer_class=_EventCollector))
+        em.register("job_dead_after", ObserverEntry(name="d", observer_class=_EventCollector))
 
         consumer = self._make_consumer()
         # ValueError is non-retryable per retry_policy
@@ -128,7 +128,7 @@ class TestDequeueEvents:
         from datetime import datetime
 
         em = get_event_manager()
-        em.register("job_claimed", ObserverEntry(name="c", observer_class=_EventCollector))
+        em.register("job_claim_after", ObserverEntry(name="c", observer_class=_EventCollector))
 
         now = datetime.now(UTC)
         row = {

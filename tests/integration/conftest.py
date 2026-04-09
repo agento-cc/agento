@@ -71,10 +71,23 @@ def _create_test_db():
     finally:
         conn.close()
 
-    # Apply all migrations using the migrate module
+    # Apply framework migrations
     conn = _test_connection(autocommit=False)
     try:
         migrate(conn)
+    finally:
+        conn.close()
+
+    # Apply module SQL migrations (same as setup:upgrade does)
+    from agento.framework.bootstrap import CORE_MODULES_DIR
+    from agento.framework.module_loader import scan_modules
+    all_modules = scan_modules(CORE_MODULES_DIR)
+    conn = _test_connection(autocommit=False)
+    try:
+        for m in all_modules:
+            sql_dir = m.path / "sql"
+            if sql_dir.is_dir():
+                migrate(conn, module=m.name, sql_dir=sql_dir)
     finally:
         conn.close()
 
@@ -178,6 +191,8 @@ def _truncate_tables():
             cur.execute("TRUNCATE TABLE schedule")
             cur.execute("TRUNCATE TABLE usage_log")
             cur.execute("TRUNCATE TABLE oauth_token")
+            cur.execute("TRUNCATE TABLE skill_registry")
+            cur.execute("TRUNCATE TABLE workspace_build")
             cur.execute("SET FOREIGN_KEY_CHECKS = 1")
     finally:
         conn.close()

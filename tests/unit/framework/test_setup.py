@@ -157,8 +157,8 @@ class TestSetupEvents:
     @patch("agento.framework.setup.migrate", return_value=[])
     def test_dispatches_setup_before_and_complete(self, mock_migrate, mock_crontab, mock_install, tmp_path):
         em = get_event_manager()
-        em.register("agento_setup_before", ObserverEntry(name="b", observer_class=_EventCollector))
-        em.register("agento_setup_complete", ObserverEntry(name="c", observer_class=_EventCollector))
+        em.register("setup_upgrade_before", ObserverEntry(name="b", observer_class=_EventCollector))
+        em.register("setup_upgrade_after", ObserverEntry(name="c", observer_class=_EventCollector))
 
         conn, _ = _mock_conn()
         core_dir, user_dir = _setup_modules(tmp_path)
@@ -175,7 +175,7 @@ class TestSetupEvents:
     @patch("agento.framework.setup.migrate", return_value=[])
     def test_setup_before_carries_dry_run(self, mock_migrate, mock_crontab, mock_install, tmp_path):
         em = get_event_manager()
-        em.register("agento_setup_before", ObserverEntry(name="b", observer_class=_EventCollector))
+        em.register("setup_upgrade_before", ObserverEntry(name="b", observer_class=_EventCollector))
 
         conn, _ = _mock_conn()
         core_dir, user_dir = _setup_modules(tmp_path)
@@ -191,7 +191,7 @@ class TestSetupEvents:
     @patch("agento.framework.setup.migrate", return_value=[])
     def test_dispatches_crontab_installed_on_change(self, mock_migrate, mock_crontab, mock_install, tmp_path):
         em = get_event_manager()
-        em.register("agento_crontab_installed", ObserverEntry(name="ci", observer_class=_EventCollector))
+        em.register("crontab_install_after", ObserverEntry(name="ci", observer_class=_EventCollector))
 
         core_dir, user_dir = _setup_modules(tmp_path)
         conn, _ = _mock_conn()
@@ -205,7 +205,7 @@ class TestSetupEvents:
     @patch("agento.framework.setup.migrate", return_value=[])
     def test_no_crontab_event_when_unchanged(self, mock_migrate, mock_crontab, mock_install, tmp_path):
         em = get_event_manager()
-        em.register("agento_crontab_installed", ObserverEntry(name="ci", observer_class=_EventCollector))
+        em.register("crontab_install_after", ObserverEntry(name="ci", observer_class=_EventCollector))
 
         core_dir, user_dir = _setup_modules(tmp_path)
         conn, _ = _mock_conn()
