@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,10 +17,9 @@ from agento.framework.events import (
     WorkspaceBuildFailedEvent,
     WorkspaceBuildStartedEvent,
 )
+from agento.framework.workspace_paths import BUILD_DIR, THEME_DIR
 
 logger = logging.getLogger(__name__)
-
-BASE_WORKSPACE_DIR = os.environ.get("AGENTO_WORKSPACE_DIR", "/workspace")
 
 
 def _dispatch(event_name: str, event: object) -> None:
@@ -65,10 +63,10 @@ def compute_build_checksum(
 def _write_instruction_files(
     build_dir: Path,
     scoped_overrides: dict,
-    workspace_dir: str = "/workspace",
+    workspace_dir: str | None = None,
 ) -> None:
     """Write AGENTS.md, SOUL.md, CLAUDE.md into build directory (inline, no module import)."""
-    wd = Path(workspace_dir)
+    wd = Path(workspace_dir) if workspace_dir else Path(THEME_DIR)
     for config_path, filename in _INSTRUCTION_FILES.items():
         entry = scoped_overrides.get(config_path)
         if entry is not None:
@@ -103,6 +101,35 @@ def _get_enabled_skills(conn, agent_view_id, workspace_id):
         return [], None
     skills = registry.get_enabled_skills(conn, agent_view_id=agent_view_id, workspace_id=workspace_id)
     return skills, registry
+
+
+def _copy_theme(build_dir: Path) -> None:
+    """Copy theme directory as base layer of the build."""
+    theme = Path(THEME_DIR)
+    if not theme.is_dir():
+        return
+    for item in theme.iterdir():
+        if item.name.startswith("."):
+            continue
+        dest = build_dir / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, dest)
+
+
+def _copy_module_workspaces(build_dir: Path) -> None:
+    """Copy workspace/ directories from enabled modules into build (namespaced)."""
+    try:
+        from agento.framework.bootstrap import get_manifests
+        manifests = get_manifests()
+    except Exception:
+        return
+    for manifest in manifests:
+        mod_workspace = Path(manifest.path) / "workspace"
+        if mod_workspace.is_dir():
+            dest = build_dir / "modules" / manifest.name
+            shutil.copytree(mod_workspace, dest, dirs_exist_ok=True)
 
 
 def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) -> None:
@@ -172,7 +199,7 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
         return result
 
     # Insert new build record
-    base = Path(BASE_WORKSPACE_DIR) / workspace_code / agent_view.code / "builds"
+    base = Path(BUILD_DIR) / workspace_code / agent_view.code / "builds"
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO workspace_build (agent_view_id, build_dir, checksum, status) "
@@ -198,13 +225,20 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
     try:
         build_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Agent CLI configs (.claude.json, .mcp.json, .codex/config.toml)
+        # 1. Theme as base layer (scaffolding, KnowledgeBase, etc.)
+        _copy_theme(build_dir)
+
+        # 2. Agent CLI configs (.claude.json, .mcp.json, .codex/config.toml)
+        #    Overwrites theme defaults with DB-resolved scoped config.
         populate_agent_configs(build_dir, overrides, agent_view_id=agent_view_id)
 
-        # 2. Instruction files (AGENTS.md, SOUL.md, CLAUDE.md)
+        # 3. Instruction files (AGENTS.md, SOUL.md, CLAUDE.md)
         _write_instruction_files(build_dir, overrides)
 
-        # 3. Skills (soft dependency)
+        # 4. Module workspace assets (namespaced under modules/{name}/)
+        _copy_module_workspaces(build_dir)
+
+        # 5. Skills (soft dependency)
         skills_dir = _resolve_skills_dir()
         _write_skills_to_build(build_dir, enabled_skills, skill_registry, skills_dir)
 

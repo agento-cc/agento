@@ -53,9 +53,41 @@ def scan_skills(skills_dir: Path) -> list[SkillInfo]:
     return skills
 
 
+def scan_skills_multi(skills_dirs: list[Path]) -> list[SkillInfo]:
+    """Scan multiple directories for skills. First occurrence wins on name collision."""
+    seen: set[str] = set()
+    result: list[SkillInfo] = []
+    for sdir in skills_dirs:
+        for skill in scan_skills(sdir):
+            if skill.name in seen:
+                logger.warning(
+                    "Skill name collision: '%s' from %s (skipping, already registered from earlier source)",
+                    skill.name, sdir,
+                )
+                continue
+            seen.add(skill.name)
+            result.append(skill)
+    return result
+
+
+def sync_skills_multi(conn, skills_dirs: list[Path]) -> SyncResult:
+    """Sync skills from multiple source directories. First occurrence wins."""
+    scanned = scan_skills_multi(skills_dirs)
+    result = _upsert_skills(conn, scanned)
+    _dispatch_sync_event(str(skills_dirs), result)
+    return result
+
+
 def sync_skills(conn, skills_dir: Path) -> SyncResult:
     """Upsert scanned skills into skill_registry."""
     scanned = scan_skills(skills_dir)
+    result = _upsert_skills(conn, scanned)
+    _dispatch_sync_event(str(skills_dir), result)
+    return result
+
+
+def _upsert_skills(conn, scanned: list[SkillInfo]) -> SyncResult:
+    """Upsert scanned skills into skill_registry (no event dispatch)."""
     new = updated = unchanged = 0
 
     with conn.cursor() as cur:
@@ -81,18 +113,18 @@ def sync_skills(conn, skills_dir: Path) -> SyncResult:
                 else:
                     unchanged += 1
     conn.commit()
-    result = SyncResult(new=new, updated=updated, unchanged=unchanged)
+    return SyncResult(new=new, updated=updated, unchanged=unchanged)
 
+
+def _dispatch_sync_event(skills_dir_str: str, result: SyncResult) -> None:
     try:
         from agento.framework.event_manager import get_event_manager
         from agento.framework.events import SkillSyncCompletedEvent
         get_event_manager().dispatch("skill_sync_complete_after", SkillSyncCompletedEvent(
-            skills_dir=str(skills_dir), new=new, updated=updated, unchanged=unchanged,
+            skills_dir=skills_dir_str, new=result.new, updated=result.updated, unchanged=result.unchanged,
         ))
     except Exception:
         pass
-
-    return result
 
 
 def get_all_skills(conn) -> list[SkillInfo]:

@@ -103,7 +103,7 @@ const BROWSER_TOOLS = {
     description: [
       'Take a screenshot of the current page.',
       'Returns a PNG image. Navigate to a page first.',
-      'The screenshot is also saved to /workspace/tmp/screenshots/{job_id}-{reference_id}/{filename}.',
+      'The screenshot is also saved to the runtime directory under screenshots/{job_id}-{reference_id}/{filename}.',
       'Pass job_id and reference_id from your execution context (SOUL.md) to organise the file correctly.',
     ].join('\n'),
     schema: {
@@ -159,7 +159,7 @@ export function getRegisteredBrowserToolNames() {
 
 let _toolWhitelist = [];
 
-export function register(server, { log, playwright, moduleConfigs, isToolEnabled }) {
+export function register(server, { log, playwright, moduleConfigs, isToolEnabled, runtimeDir }) {
   if (isToolEnabled && !isToolEnabled('browser')) return;
   const cfg = moduleConfigs?.core || {};
   const toolWhitelist = [...new Set(parseList(cfg.playwright_tool_whitelist))];
@@ -287,8 +287,8 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
             if (imageItem) {
               const fname = filename || `${Date.now()}.png`;
               const folder = (job_id && reference_id)
-                ? `/workspace/tmp/screenshots/${job_id}-${reference_id}`
-                : `/workspace/tmp/screenshots`;
+                ? `${runtimeDir}/screenshots/${job_id}-${reference_id}`
+                : `${runtimeDir}/screenshots`;
               const filePath = `${folder}/${fname}`;
               try {
                 await mkdir(folder, { recursive: true });

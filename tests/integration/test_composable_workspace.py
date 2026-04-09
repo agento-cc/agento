@@ -136,7 +136,7 @@ class TestWorkspaceBuildIntegration:
 
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 result = execute_build(conn, av_id)
         finally:
             conn.close()
@@ -167,7 +167,7 @@ class TestWorkspaceBuildIntegration:
 
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 result = execute_build(conn, av_id)
         finally:
             conn.close()
@@ -187,7 +187,7 @@ class TestWorkspaceBuildIntegration:
 
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 result1 = execute_build(conn, av_id)
                 result2 = execute_build(conn, av_id)
         finally:
@@ -209,7 +209,7 @@ class TestWorkspaceBuildIntegration:
 
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 result1 = execute_build(conn, av_id)
         finally:
             conn.close()
@@ -218,7 +218,7 @@ class TestWorkspaceBuildIntegration:
 
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 result2 = execute_build(conn, av_id)
         finally:
             conn.close()
@@ -260,7 +260,7 @@ class TestWorkspaceBuildIntegration:
         ws_base = tmp_path / "workspace"
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(ws_base)), \
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(ws_base)), \
                  patch("agento.modules.skill.src.registry.get_skill_content", _get_skill_content):
                 result = execute_build(conn, av_id)
         finally:
@@ -304,7 +304,7 @@ class TestConsumerUsesPreBuiltWorkspace:
         # Step 1: Build workspace
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 build_result = execute_build(conn, av_id)
         finally:
             conn.close()
@@ -328,7 +328,8 @@ class TestConsumerUsesPreBuiltWorkspace:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.BASE_WORKSPACE_DIR", str(tmp_path)):
+             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
+             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()
@@ -366,7 +367,8 @@ class TestConsumerUsesPreBuiltWorkspace:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.BASE_WORKSPACE_DIR", str(tmp_path)), \
+             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
+             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)), \
              patch("agento.modules.agent_view.src.observers.DatabaseConfig.from_env", return_value=int_db_config):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
@@ -394,7 +396,7 @@ class TestConsumerUsesPreBuiltWorkspace:
         # Build workspace
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BASE_WORKSPACE_DIR", str(tmp_path)):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
                 execute_build(conn, av_id)
         finally:
             conn.close()
@@ -428,7 +430,8 @@ class TestConsumerUsesPreBuiltWorkspace:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.BASE_WORKSPACE_DIR", str(tmp_path)):
+             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
+             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()

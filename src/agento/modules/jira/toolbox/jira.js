@@ -29,7 +29,7 @@ export async function healthcheck({ moduleConfigs }) {
   }
 }
 
-export function register(server, { log, moduleConfigs, isToolEnabled }) {
+export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir }) {
   if (isToolEnabled && !isToolEnabled('jira')) return;
   const cfg = moduleConfigs?.jira || {};
   const config = {
@@ -94,7 +94,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
     'jira_get_issue',
     [
       'Get full details of a Jira issue by key. Returns summary, status, assignee (with accountId), reporter (with accountId), priority, dates, description, comments, and attachments.',
-      'Image attachments are automatically downloaded to workspace/tmp/jira/{ISSUE_KEY}/ and referenced in description/comments as [Obrazek: filename](local_path).',
+      'Image attachments are automatically downloaded to the runtime directory and referenced in description/comments as [Obrazek: filename](local_path).',
       'To view an image, use the Read tool on the local path.',
       'Comments include author accountId — use it with jira_add_comment reply_to_comment_id to reply.',
       'AssigneeAccountId and ReporterAccountId can be used with jira_assign_issue.',
@@ -131,7 +131,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
 
         const imageMap = new Map();
         if (imageAttachments.length > 0) {
-          const dir = `/workspace/tmp/jira/${data.key}`;
+          const dir = `${runtimeDir}/jira/${data.key}`;
           await mkdir(dir, { recursive: true });
 
           await Promise.all(imageAttachments.map(async (att) => {
@@ -438,7 +438,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
       'Use after browser_take_screenshot to attach the saved screenshot.',
       'file_path must be inside /workspace/ (security restriction).',
       'Examples:',
-      '  issue_key: "AI-1", file_path: "/workspace/tmp/screenshots/123-AI-1/1740000000000.png"',
+      '  issue_key: "AI-1", file_path: "/workspace/runtime/{ws}/{av}/{job_id}/screenshots/123-AI-1/1740000000000.png"',
     ].join('\n'),
     {
       user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),

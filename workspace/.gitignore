@@ -40,3 +40,7 @@ secrets.env
 .bootstrap_completed
 
 LESSONS.md
+
+# Composable workspace: build output and runtime artifacts
+build/
+runtime/

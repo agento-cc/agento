@@ -10,6 +10,7 @@ from agento.framework.run_dir import get_current_build_dir
 from agento.framework.workspace import AgentView
 from agento.modules.workspace_build.src.builder import (
     BuildResult,
+    _copy_theme,
     _write_instruction_files,
     compute_build_checksum,
     execute_build,
@@ -100,11 +101,53 @@ class TestWriteInstructionFiles:
         assert (build_dir / "AGENTS.md").read_text() == "# From DB"
 
 
+class TestCopyTheme:
+    def test_copies_files_from_theme(self, tmp_path):
+        theme = tmp_path / "theme"
+        theme.mkdir()
+        (theme / "SOUL.md").write_text("# Theme soul")
+        (theme / "KnowledgeBase").mkdir()
+        (theme / "KnowledgeBase" / "info.md").write_text("# Info")
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build_dir)
+
+        assert (build_dir / "SOUL.md").read_text() == "# Theme soul"
+        assert (build_dir / "KnowledgeBase" / "info.md").read_text() == "# Info"
+
+    def test_skips_dotfiles(self, tmp_path):
+        theme = tmp_path / "theme"
+        theme.mkdir()
+        (theme / ".gitignore").write_text("*.log")
+        (theme / "README.md").write_text("# Readme")
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build_dir)
+
+        assert not (build_dir / ".gitignore").exists()
+        assert (build_dir / "README.md").exists()
+
+    def test_noop_when_theme_missing(self, tmp_path):
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+
+        with patch(f"{_BUILDER}.THEME_DIR", str(tmp_path / "nonexistent")):
+            _copy_theme(build_dir)
+
+        assert list(build_dir.iterdir()) == []
+
+
 class TestGetCurrentBuildDir:
     _RUN_DIR = "agento.framework.run_dir"
 
     def test_returns_none_when_no_symlink(self, tmp_path):
-        with patch(f"{self._RUN_DIR}.BASE_WORKSPACE_DIR", str(tmp_path)):
+        with patch(f"{self._RUN_DIR}.BUILD_DIR", str(tmp_path)):
             assert get_current_build_dir("ws", "av") is None
 
     def test_returns_path_when_symlink_exists(self, tmp_path):
@@ -112,7 +155,7 @@ class TestGetCurrentBuildDir:
         build_dir.mkdir(parents=True)
         (tmp_path / "ws" / "av" / "current").symlink_to(build_dir)
 
-        with patch(f"{self._RUN_DIR}.BASE_WORKSPACE_DIR", str(tmp_path)):
+        with patch(f"{self._RUN_DIR}.BUILD_DIR", str(tmp_path)):
             result = get_current_build_dir("ws", "av")
             assert result is not None
             assert result.is_dir()
@@ -122,7 +165,7 @@ class TestGetCurrentBuildDir:
         link_parent.mkdir(parents=True)
         (link_parent / "current").symlink_to(link_parent / "builds" / "999")
 
-        with patch(f"{self._RUN_DIR}.BASE_WORKSPACE_DIR", str(tmp_path)):
+        with patch(f"{self._RUN_DIR}.BUILD_DIR", str(tmp_path)):
             assert get_current_build_dir("ws", "av") is None
 
 
@@ -156,7 +199,7 @@ class TestExecuteBuild:
         mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
         conn, _ = self._mock_conn()
 
-        with patch(f"{_BUILDER}.BASE_WORKSPACE_DIR", str(tmp_path)):
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
             result = execute_build(conn, 1)
 
         assert isinstance(result, BuildResult)

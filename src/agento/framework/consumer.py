@@ -34,7 +34,7 @@ from .events import (
 )
 from .job_models import Job, JobStatus
 from .retry_policy import evaluate as evaluate_retry
-from .run_dir import build_run_dir, cleanup_run_dir, copy_build_to_run_dir, get_current_build_dir, prepare_run_dir
+from .run_dir import build_run_dir, copy_build_to_run_dir, get_current_build_dir, prepare_run_dir
 from .runner import RunResult
 from .runner_factory import create_runner
 from .workflows import get_workflow_class
@@ -315,7 +315,12 @@ class Consumer:
                 runtime.workspace.code, runtime.agent_view.code,
             )
             if current_build is not None:
-                copy_build_to_run_dir(current_build, run_dir)
+                copy_build_to_run_dir(
+                    current_build, run_dir,
+                    job_id=job.id,
+                    workspace_code=runtime.workspace.code,
+                    agent_view_code=runtime.agent_view.code,
+                )
             else:
                 populate_agent_configs(
                     run_dir, runtime.scoped_overrides,
@@ -369,8 +374,6 @@ class Consumer:
                 model=model_override,
                 success=success,
             ))
-            if run_dir is not None:
-                cleanup_run_dir(run_dir)
 
     def _update_job_reference_id(self, job_id: int, reference_id: str) -> None:
         conn = get_connection(self._db_config)

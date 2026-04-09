@@ -16,11 +16,12 @@ class TestSkillSyncCommand:
         assert cmd.shortcut == "sk:sy"
         assert cmd.help
 
+    @patch("agento.framework.bootstrap.get_manifests", return_value=[])
     @patch("agento.framework.bootstrap.get_module_config")
-    @patch("agento.modules.skill.src.registry.sync_skills")
+    @patch("agento.modules.skill.src.registry.sync_skills_multi")
     @patch("agento.framework.db.get_connection")
     @patch("agento.framework.cli.runtime._load_framework_config")
-    def test_execute(self, mock_config, mock_conn, mock_sync, mock_mod_config, capsys):
+    def test_execute(self, mock_config, mock_conn, mock_sync, mock_mod_config, _mock_manifests, capsys):
         mock_config.return_value = ({}, None, None)
         mock_mod_config.return_value = {"skills_dir": "workspace/.claude/skills"}
         conn = MagicMock()

@@ -26,7 +26,9 @@ my-project/
     .agento/project.json
     app/code/
     workspace/systems/
-    workspace/tmp/
+    workspace/runtime/
+    workspace/build/
+    workspace/theme/
     logs/
     tokens/
     storage/

@@ -8,6 +8,7 @@ from agento.modules.skill.src.registry import (
     get_enabled_skills,
     get_skill_content,
     scan_skills,
+    scan_skills_multi,
     sync_skills,
 )
 
@@ -194,6 +195,55 @@ class TestGetEnabledSkills:
 
         result = get_enabled_skills(conn)
         assert len(result) == 1
+
+
+class TestScanSkillsMulti:
+    def test_merges_multiple_dirs(self, tmp_path):
+        user_dir = tmp_path / "user_skills"
+        (user_dir / "alpha").mkdir(parents=True)
+        (user_dir / "alpha" / "SKILL.md").write_text("# Alpha\nUser alpha.")
+
+        mod_dir = tmp_path / "mod_skills"
+        (mod_dir / "beta").mkdir(parents=True)
+        (mod_dir / "beta" / "SKILL.md").write_text("# Beta\nModule beta.")
+
+        result = scan_skills_multi([user_dir, mod_dir])
+        assert len(result) == 2
+        names = [s.name for s in result]
+        assert "alpha" in names
+        assert "beta" in names
+
+    def test_first_wins_on_collision(self, tmp_path):
+        user_dir = tmp_path / "user"
+        (user_dir / "conflict").mkdir(parents=True)
+        (user_dir / "conflict" / "SKILL.md").write_text("# Conflict\nUser version.")
+
+        mod_dir = tmp_path / "mod"
+        (mod_dir / "conflict").mkdir(parents=True)
+        (mod_dir / "conflict" / "SKILL.md").write_text("# Conflict\nModule version.")
+
+        result = scan_skills_multi([user_dir, mod_dir])
+        assert len(result) == 1
+        assert result[0].description == "User version."
+
+    def test_logs_collision_warning(self, tmp_path, caplog):
+        user_dir = tmp_path / "user"
+        (user_dir / "dup").mkdir(parents=True)
+        (user_dir / "dup" / "SKILL.md").write_text("# Dup\nFirst.")
+
+        mod_dir = tmp_path / "mod"
+        (mod_dir / "dup").mkdir(parents=True)
+        (mod_dir / "dup" / "SKILL.md").write_text("# Dup\nSecond.")
+
+        scan_skills_multi([user_dir, mod_dir])
+        assert "collision" in caplog.text.lower()
+
+    def test_empty_dirs_list(self):
+        assert scan_skills_multi([]) == []
+
+    def test_nonexistent_dirs(self, tmp_path):
+        result = scan_skills_multi([tmp_path / "nope1", tmp_path / "nope2"])
+        assert result == []
 
 
 class TestGetSkillContent:
