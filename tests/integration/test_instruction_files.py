@@ -77,7 +77,7 @@ def _cleanup_test_data():
     try:
         with conn.cursor() as cur:
             cur.execute("SET FOREIGN_KEY_CHECKS = 0")
-            cur.execute("DELETE FROM core_config_data WHERE path LIKE 'agent/instructions/%'")
+            cur.execute("DELETE FROM core_config_data WHERE path LIKE 'agent_view/instructions/%'")
             cur.execute("DELETE FROM job")
             cur.execute("DELETE FROM agent_view")
             cur.execute("DELETE FROM workspace")
@@ -109,8 +109,8 @@ class TestInstructionFilesFromScopedConfig:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _insert_scoped_config("agent_view", av_id, "agent/instructions/agents_md", "# Custom AGENTS for developer")
-        _insert_scoped_config("agent_view", av_id, "agent/instructions/soul_md", "# Custom SOUL for developer")
+        _insert_scoped_config("agent_view", av_id, "agent_view/instructions/agents_md", "# Custom AGENTS for developer")
+        _insert_scoped_config("agent_view", av_id, "agent_view/instructions/soul_md", "# Custom SOUL for developer")
 
         job_id = _insert_job_with_agent_view(av_id)
 
@@ -194,7 +194,7 @@ class TestInstructionFilesFromScopedConfig:
         av_id = _insert_agent_view(ws_id, "team-lead")
 
         # Set config at WORKSPACE scope (not agent_view)
-        _insert_scoped_config("workspace", ws_id, "agent/instructions/agents_md", "# Workspace-level AGENTS")
+        _insert_scoped_config("workspace", ws_id, "agent_view/instructions/agents_md", "# Workspace-level AGENTS")
 
         job_id = _insert_job_with_agent_view(av_id, reference_id="AI-3")
 

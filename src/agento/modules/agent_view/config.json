@@ -1,4 +1,4 @@
 {
-  "agent/provider": "claude",
-  "agent/scheduling/priority": 50
+  "provider": "claude",
+  "scheduling/priority": 50
 }

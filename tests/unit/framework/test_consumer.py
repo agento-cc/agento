@@ -444,14 +444,14 @@ class TestRunJob:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     def test_run_job_no_provider_no_primary_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
-        """When no agent/provider in config and no primary token, consumer raises."""
+        """When no agent_view/provider in config and no primary token, consumer raises."""
         mock_conn.return_value = MagicMock()
 
         with patch("agento.framework.consumer.get_primary_token", return_value=None):
             consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
             job = _make_job(type=AgentType.CRON, reference_id="AI-1")
 
-            with pytest.raises(RuntimeError, match="No agent/provider configured"):
+            with pytest.raises(RuntimeError, match="No agent_view/provider configured"):
                 consumer._run_job(job)
 
         # TokenResolver.resolve should never be reached — error raised before token selection

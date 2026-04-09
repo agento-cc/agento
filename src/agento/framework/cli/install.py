@@ -277,7 +277,7 @@ def _setup_agent_provider(compose_cmd: list[str]) -> None:
     )
     subprocess.run(
         [*compose_cmd, "exec", "-T", "cron",
-         "/opt/cron-agent/run.sh", "config:set", "agent/provider", provider.value],
+         "/opt/cron-agent/run.sh", "config:set", "agent_view/provider", provider.value],
     )
     log_info(f"Agent provider set to: {provider.value}")
 

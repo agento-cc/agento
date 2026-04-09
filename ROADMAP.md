@@ -617,7 +617,7 @@ The practical target is simple: one consumer process, configurable worker limit 
    - Priority range is `0-100`, where higher means earlier execution.
 
 5. **Priority is configured per `agent_view`**
-   - Introduce scoped config path `agent/scheduling/priority`.
+   - Introduce scoped config path `agent_view/scheduling/priority`.
    - Resolve it with existing fallback: `agent_view` → `workspace` → `global`.
    - When a job is published, copy the resolved value into `job.priority`.
    - Changing priority affects newly published jobs; existing queued jobs keep their stamped priority.

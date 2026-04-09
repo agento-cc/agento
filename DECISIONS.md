@@ -39,7 +39,7 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 - **ThreadPoolExecutor, not subprocess pool.** Threads are lightweight coordinators; the actual work runs in CLI subprocesses (Claude Code / Codex). Isolation comes from per-run directories, not process-level separation. Simpler shutdown semantics than subprocess supervision.
 - **Per-run directory** `{AGENTO_WORKSPACE_DIR}/{workspace}/{agent_view}/runs/{job_id}/`: each job gets freshly generated `.claude.json`, `.mcp.json`, `.codex/config.toml`, `AGENTS.md`, `SOUL.md`. Eliminates the shared `.claude.json` corruption that forced `concurrency=1`. Directory is cleaned up after job completion.
-- **`job.priority`** 0-100 (default 50), stamped at publish time from scoped config path `agent/scheduling/priority`. Dequeue uses `ORDER BY priority DESC, created_at ASC`. Changing config does not retroactively affect queued jobs — consistent with Jira's approach to sprint priorities.
+- **`job.priority`** 0-100 (default 50), stamped at publish time from scoped config path `agent_view/scheduling/priority`. Dequeue uses `ORDER BY priority DESC, created_at ASC`. Changing config does not retroactively affect queued jobs — consistent with Jira's approach to sprint priorities.
 - **`CONSUMER_MAX_WORKERS`** env var (default 1, safe to increase now). `CONSUMER_CONCURRENCY` kept as backward-compat alias.
 - **`agent_view_worker.py` deprecated** — the subprocess-per-agent_view model from Phase 9 is replaced by generic worker slots in the consumer's thread pool.
 
@@ -57,7 +57,7 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 ## 2026-03-24 — Per-agent_view instruction files via observer (agent_view module)
 
 - **Observer on `agento_agent_view_run_started`** writes `AGENTS.md`, `SOUL.md`, and `CLAUDE.md` into the run directory. Why observer, not inline in consumer: Magento spirit — modules extend framework behavior via events. Keeps the consumer lean.
-- **Content from `core_config_data`** with scoped fallback: `agent/instructions/agents_md` and `agent/instructions/soul_md`. Follows the same `agent/*` config path convention as `agent/claude/model`, `agent/mcp/servers`, etc.
+- **Content from `core_config_data`** with scoped fallback: `agent_view/instructions/agents_md` and `agent_view/instructions/soul_md`. Follows the same `agent_view/*` config path convention as `agent_view/claude/model`, `agent_view/mcp/servers`, etc.
 - **Fallback to workspace file on disk** if no DB value exists. This preserves backward compatibility — existing deployments with `workspace/AGENTS.md` keep working without DB config.
 
 ---

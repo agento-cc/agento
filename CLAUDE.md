@@ -24,7 +24,7 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
 - **Config:** 3-level fallback: ENV (`CONFIG__MODULE__PATH`) → DB (`core_config_data`) → `config.json`. Per-agent_view scoped config via `scope='agent_view'` in DB.
 - **Concurrent execution:** `CONSUMER_MAX_WORKERS` env var (default 1). Per-run isolation makes it safe to increase.
 - **Routing:** Ingress identities map inbound requests to agent_views. Channels auto-resolve via `resolve_agent_view()` before publishing.
-- **Agent view config:** Scoped DB paths `agent/provider`, `agent/claude/model`, `agent/scheduling/priority`, `agent/instructions/agents_md`, `agent/instructions/soul_md` — resolved with agent_view → workspace → global fallback.
+- **Agent view config:** Scoped DB paths `agent_view/provider`, `agent_view/claude/model`, `agent_view/scheduling/priority`, `agent_view/instructions/agents_md`, `agent_view/instructions/soul_md` — resolved with agent_view → workspace → global fallback.
 - **Security:** Toolbox = only container with secrets. Agent has NO credentials.
 - **DB tables:** singular names (e.g., `job`, `schedule`, `oauth_token`). Exception: `core_config_data` (Magento convention).
 - **Setup:** `setup:upgrade` on deploy — applies schema migrations, data patches, installs crontab, runs module onboarding (strict: complete, disable+dependents, or quit). Use `--skip-onboarding` for CI/CD. Manual alternative: pre-set config values via `config:set`. See [docs/cli/onboarding.md](docs/cli/onboarding.md).

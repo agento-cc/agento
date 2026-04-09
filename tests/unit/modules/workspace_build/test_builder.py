@@ -61,8 +61,8 @@ class TestComputeBuildChecksum:
 class TestWriteInstructionFiles:
     def test_writes_from_overrides(self, tmp_path):
         overrides = {
-            "agent/instructions/agents_md": ("# My agents instructions", False),
-            "agent/instructions/soul_md": ("# Soul content", False),
+            "agent_view/instructions/agents_md": ("# My agents instructions", False),
+            "agent_view/instructions/soul_md": ("# Soul content", False),
         }
         _write_instruction_files(tmp_path, overrides)
         assert (tmp_path / "AGENTS.md").read_text() == "# My agents instructions"
@@ -86,7 +86,7 @@ class TestWriteInstructionFiles:
         assert "AGENTS.md" in (tmp_path / "CLAUDE.md").read_text()
 
     def test_skips_empty_override_value(self, tmp_path):
-        _write_instruction_files(tmp_path, {"agent/instructions/agents_md": ("", False)})
+        _write_instruction_files(tmp_path, {"agent_view/instructions/agents_md": ("", False)})
         assert not (tmp_path / "AGENTS.md").exists()
 
     def test_override_takes_precedence_over_workspace(self, tmp_path):
@@ -96,7 +96,7 @@ class TestWriteInstructionFiles:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _write_instruction_files(build_dir, {"agent/instructions/agents_md": ("# From DB", False)}, workspace_dir=str(ws_dir))
+        _write_instruction_files(build_dir, {"agent_view/instructions/agents_md": ("# From DB", False)}, workspace_dir=str(ws_dir))
         assert (build_dir / "AGENTS.md").read_text() == "# From DB"
 
 
@@ -153,7 +153,7 @@ class TestExecuteBuild:
     @patch("agento.framework.workspace.get_agent_view")
     def test_full_build_flow(self, mock_get_av, mock_overrides, mock_populate, tmp_path):
         mock_get_av.return_value = _make_agent_view()
-        mock_overrides.return_value = {"agent/provider": ("claude", False)}
+        mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
         conn, _ = self._mock_conn()
 
         with patch(f"{_BUILDER}.BASE_WORKSPACE_DIR", str(tmp_path)):
@@ -170,7 +170,7 @@ class TestExecuteBuild:
     @patch("agento.framework.workspace.get_agent_view")
     def test_skips_existing_build(self, mock_get_av, mock_overrides):
         mock_get_av.return_value = _make_agent_view()
-        mock_overrides.return_value = {"agent/provider": ("claude", False)}
+        mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
         existing = {"id": 99, "build_dir": "/workspace/ws/dev/builds/99"}
         conn, _ = self._mock_conn(existing_build=existing)
 

@@ -35,8 +35,8 @@ def _dispatch(event_name: str, event: object) -> None:
 CLAUDE_MD_CONTENT = "# Instructions\n\nPlease read and follow [AGENTS.md](AGENTS.md).\n"
 
 _INSTRUCTION_FILES = {
-    "agent/instructions/agents_md": "AGENTS.md",
-    "agent/instructions/soul_md": "SOUL.md",
+    "agent_view/instructions/agents_md": "AGENTS.md",
+    "agent_view/instructions/soul_md": "SOUL.md",
 }
 
 

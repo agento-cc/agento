@@ -99,7 +99,7 @@ def _cleanup():
             cur.execute("SET FOREIGN_KEY_CHECKS = 0")
             cur.execute("TRUNCATE TABLE workspace_build")
             cur.execute("TRUNCATE TABLE skill_registry")
-            cur.execute("DELETE FROM core_config_data WHERE path LIKE 'agent/%' OR path LIKE 'skill/%'")
+            cur.execute("DELETE FROM core_config_data WHERE path LIKE 'agent_view/%' OR path LIKE 'skill/%'")
             cur.execute("DELETE FROM job")
             cur.execute("DELETE FROM agent_view")
             cur.execute("DELETE FROM workspace")
@@ -131,8 +131,8 @@ class TestWorkspaceBuildIntegration:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# Custom AGENTS")
-        _set_config("agent_view", av_id, "agent/instructions/soul_md", "# Custom SOUL")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# Custom AGENTS")
+        _set_config("agent_view", av_id, "agent_view/instructions/soul_md", "# Custom SOUL")
 
         conn = _test_connection(autocommit=False)
         try:
@@ -183,7 +183,7 @@ class TestWorkspaceBuildIntegration:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# Stable content")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# Stable content")
 
         conn = _test_connection(autocommit=False)
         try:
@@ -205,7 +205,7 @@ class TestWorkspaceBuildIntegration:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# V1")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# V1")
 
         conn = _test_connection(autocommit=False)
         try:
@@ -214,7 +214,7 @@ class TestWorkspaceBuildIntegration:
         finally:
             conn.close()
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# V2")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# V2")
 
         conn = _test_connection(autocommit=False)
         try:
@@ -298,8 +298,8 @@ class TestConsumerUsesPreBuiltWorkspace:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# Pre-built AGENTS")
-        _set_config("agent_view", av_id, "agent/instructions/soul_md", "# Pre-built SOUL")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# Pre-built AGENTS")
+        _set_config("agent_view", av_id, "agent_view/instructions/soul_md", "# Pre-built SOUL")
 
         # Step 1: Build workspace
         conn = _test_connection(autocommit=False)
@@ -348,7 +348,7 @@ class TestConsumerUsesPreBuiltWorkspace:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# On-the-fly AGENTS")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# On-the-fly AGENTS")
 
         job_id = _insert_job(av_id)
 
@@ -389,7 +389,7 @@ class TestConsumerUsesPreBuiltWorkspace:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        _set_config("agent_view", av_id, "agent/instructions/agents_md", "# From Build")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# From Build")
 
         # Build workspace
         conn = _test_connection(autocommit=False)

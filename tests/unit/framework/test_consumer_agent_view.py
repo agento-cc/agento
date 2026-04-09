@@ -72,11 +72,11 @@ def _make_runtime_with_agent_view(
         model=model,
         priority=50,
         scoped_overrides=scoped_overrides or {
-            "agent/mcp/servers": (
+            "agent_view/mcp/servers": (
                 '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}',
                 False,
             ),
-            "agent/claude/model": ("opus-4", False),
+            "agent_view/claude/model": ("opus-4", False),
         },
     )
 
@@ -326,5 +326,5 @@ class TestRunJobProviderFallback:
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
 
-        with pytest.raises(RuntimeError, match="No agent/provider configured"):
+        with pytest.raises(RuntimeError, match="No agent_view/provider configured"):
             consumer._run_job(_make_job())
