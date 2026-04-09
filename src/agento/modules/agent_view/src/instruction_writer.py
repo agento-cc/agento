@@ -8,6 +8,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from agento.framework.workspace_paths import THEME_DIR
+
 logger = logging.getLogger(__name__)
 
 CLAUDE_MD_CONTENT = "# Instructions\n\nPlease read and follow [AGENTS.md](AGENTS.md).\n"
@@ -21,7 +23,7 @@ _FILES = {
 def write_instruction_files(
     run_dir: str | Path,
     scoped_overrides: dict[str, tuple[str, bool]],
-    workspace_dir: str | Path = "/workspace",
+    workspace_dir: str | Path | None = None,
 ) -> None:
     """Write AGENTS.md, SOUL.md, and CLAUDE.md into a run directory.
 
@@ -29,7 +31,7 @@ def write_instruction_files(
     CLAUDE.md is always written (points Claude Code to AGENTS.md).
     """
     rd = Path(run_dir)
-    wd = Path(workspace_dir)
+    wd = Path(workspace_dir) if workspace_dir else Path(THEME_DIR)
 
     for config_path, filename in _FILES.items():
         entry = scoped_overrides.get(config_path)

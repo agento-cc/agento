@@ -30,7 +30,21 @@ const context = {
 let registeredToolNames = [];
 let registeredHealthchecks = [];
 
-async function createServer(agentViewId = null) {
+function buildRuntimeDir({ jobId, ws, av } = {}) {
+  if (jobId && ws && av) {
+    // Sanitize to prevent path traversal (params come from .mcp.json URL query)
+    const safeWs = String(ws).replace(/[^a-zA-Z0-9_-]/g, '');
+    const safeAv = String(av).replace(/[^a-zA-Z0-9_-]/g, '');
+    const safeJobId = String(jobId).replace(/[^0-9]/g, '');
+    if (safeWs && safeAv && safeJobId) {
+      return `/workspace/runtime/${safeWs}/${safeAv}/${safeJobId}`;
+    }
+  }
+  // Fallback for old builds without runtime params
+  return '/workspace/tmp';
+}
+
+async function createServer(agentViewId = null, runtimeDir = null) {
   const server = new McpServer({
     name: 'toolbox',
     version: '1.0.0',
@@ -38,14 +52,14 @@ async function createServer(agentViewId = null) {
 
   // Build scoped context with agent_view-aware logger before registering tools,
   // so adapters use the scoped log from the start.
-  let sessionContext = context;
+  let sessionContext = { ...context, runtimeDir: runtimeDir || '/workspace/tmp' };
   let preloadedOverrides = null;
   if (agentViewId) {
     const { overrides, agentViewMeta } = await loadScopedDbOverrides(agentViewId);
     preloadedOverrides = overrides;
     if (agentViewMeta) {
       const scopedLog = createScopedLogger(agentViewMeta);
-      sessionContext = { ...context, log: scopedLog };
+      sessionContext = { ...sessionContext, log: scopedLog };
     }
   }
 
@@ -57,10 +71,11 @@ async function createServer(agentViewId = null) {
 
 app.get('/sse', async (req, res) => {
   const agentViewId = req.query.agent_view_id ? parseInt(req.query.agent_view_id, 10) : null;
+  const runtimeDir = buildRuntimeDir(req.query);
   const transport = new SSEServerTransport('/messages', res);
   sessions.set(transport.sessionId, transport);
 
-  const { server } = await createServer(agentViewId);
+  const { server } = await createServer(agentViewId, runtimeDir);
 
   res.on('close', () => {
     sessions.delete(transport.sessionId);
@@ -93,10 +108,11 @@ app.all('/mcp', async (req, res) => {
   }
 
   const agentViewId = req.query.agent_view_id ? parseInt(req.query.agent_view_id, 10) : null;
+  const runtimeDir = buildRuntimeDir(req.query);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
   });
-  const { server } = await createServer(agentViewId);
+  const { server } = await createServer(agentViewId, runtimeDir);
 
   let closing = false;
   transport.onclose = () => {

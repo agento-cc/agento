@@ -27,10 +27,7 @@ def _fetch_latest_pypi_version() -> str | None:
 
 def _upgrade_cli(version: str | None) -> str | None:
     """Upgrade the agento-core CLI package. Returns installed version or None on failure."""
-    if version:
-        spec = f"agento-core=={version}"
-    else:
-        spec = "agento-core"
+    spec = f"agento-core=={version}" if version else "agento-core"
 
     log_info(f"Upgrading CLI ({spec})...")
     result = subprocess.run(

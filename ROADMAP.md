@@ -784,16 +784,36 @@ Phase 10.5a introduces manual `workspace:build` and `skill:sync`. For production
 
 ### Scope
 
-1. **Observer on `agento_config_saved`** — auto-rebuild affected agent_views when `agent/*`, `skill/*`, or `tools/*` config paths change. Observer registered in `workspace_build/events.json`.
+1. **Dirty flag on workspace_build** — when something changes that affects a built workspace, mark the build as dirty (DB column `is_dirty` on `workspace_build` or a separate `workspace_build_status` per agent_view). Consumer checks dirty flag before job start and triggers rebuild if needed.
 
-2. **GC of old builds** — keep last N builds per agent_view (configurable via `workspace_build/keep_builds`, default 5). CLI: `workspace:gc [--agent-view <code>] [--dry-run]`. Can also run as observer after successful build.
+   **Triggers that mark workspace as dirty:**
+   - `config:set` on paths that affect workspace: `agent/*`, `agent_view/*`, `skill/*`, `tools/*` (observer on `agento_config_saved`)
+   - `module:enable` / `module:disable` (observer on `module_status_changed`)
+   - `skill:enable` / `skill:disable` (observer on `agento_config_saved` with `skill/` prefix)
+   - `skill:sync` when new/updated skills detected (observer on `skill_sync_complete_after`)
+   - agent_view created / deleted / reassigned to different workspace
+   - Theme files changed on disk (detected by cron job, stat-based)
 
-3. **Cron job: periodic `skill:sync` + rebuild** — declared in `skill/cron.json` and `workspace_build/cron.json`. Runs `skill:sync` periodically, then `workspace:build --all` to pick up any skill content changes.
+   **Open question:** Mark all agent_views dirty, or only affected ones? For scoped config changes the scope tells us which agent_view(s) are affected. For module enable/disable and theme changes — all agent_views are dirty.
+
+2. **Observer on `agento_config_saved`** — auto-rebuild affected agent_views when workspace-impacting config paths change. Observer registered in `workspace_build/events.json`. Sets dirty flag rather than rebuilding synchronously (rebuild can be slow, should not block config:set).
+
+3. **Consumer pre-flight rebuild** — before creating runtime dir, consumer checks if current build is dirty. If yes, triggers `execute_build()` inline. This ensures agents always run on fresh config without requiring external cron.
+
+4. **GC of old builds** — keep last N builds per agent_view (configurable via `workspace_build/keep_builds`, default 5). CLI: `workspace:gc [--agent-view <code>] [--dry-run]`. Can also run as observer after successful build.
+
+5. **GC of old runtime dirs** — runtime dirs are no longer cleaned up after job completion (they hold agent artifacts for review). Periodic cleanup of runtime dirs older than N days (configurable). CLI: `workspace:gc-runtime [--days 7] [--dry-run]`.
+
+6. **Cron job: periodic `skill:sync` + rebuild** — declared in `skill/cron.json` and `workspace_build/cron.json`. Runs `skill:sync` periodically, then `workspace:build --all` to pick up any skill content changes.
 
 ### Acceptance Criteria
 
-- [ ] Changing a scoped config value via `config:set` triggers automatic rebuild for affected agent_views
+- [ ] Changing a scoped config value via `config:set` marks affected agent_view builds as dirty
+- [ ] `module:enable`/`module:disable` marks all builds as dirty
+- [ ] `skill:enable`/`skill:disable` marks affected agent_view builds as dirty
+- [ ] Consumer auto-rebuilds dirty workspaces before job execution
 - [ ] Old builds are automatically cleaned up, keeping last N
+- [ ] Old runtime dirs are cleaned up after configurable retention period
 - [ ] `skill:sync` and `workspace:build --all` run on a configurable cron schedule
 - [ ] All existing tests pass throughout
 
@@ -964,6 +984,7 @@ For adoption: an operator should run `agento install`, answer a few questions, a
    - Sandbox image continues to carry the full agent runtime (Node.js, Claude Code, Codex, system packages).
    - Update `docker.yml` CI workflow: remove `needs: build-sandbox` dependency for cron; sandbox and cron can build in parallel.
    - Update `docker/cron/entrypoint.sh`: remove sandbox-specific assumptions (gosu, agent user setup inherited from sandbox base).
+   - **Migrate agent credential directories** (`workspace/.claude/`, `workspace/.codex/`, `workspace/.claude.json`) out of the workspace volume into a dedicated named volume (e.g., `agent-home:/home/agent`). These are persistent agent state (credentials, history, cache) — they don't belong in the composable workspace tree (theme/build/runtime). Update sandbox entrypoint to stop symlinking from `/workspace/.claude` and instead mount directly to `~/.claude`.
 
 2. **Stabilize Docker builds:**
    - **Cron Dockerfile:** `COPY uv.lock` alongside `pyproject.toml`, use `uv sync --frozen` instead of `uv pip install -e .` so the lock file is respected.

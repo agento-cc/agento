@@ -16,7 +16,7 @@ services:
     volumes:
       - ../app/code:/app/modules/user:ro
       - ../logs:/app/logs
-      - ../workspace/tmp:/workspace/tmp
+      - ../workspace/runtime:/workspace/runtime
     security_opt:
       - no-new-privileges:true
     networks:

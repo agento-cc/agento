@@ -139,7 +139,9 @@ HELPEOF
   # Step 1: Create directories
   log_info "Creating directories..."
   mkdir -p "$PROJECT_DIR/workspace/systems"
-  mkdir -p "$PROJECT_DIR/workspace/tmp"
+  mkdir -p "$PROJECT_DIR/workspace/runtime"
+  mkdir -p "$PROJECT_DIR/workspace/build"
+  mkdir -p "$PROJECT_DIR/workspace/theme"
   mkdir -p "$PROJECT_DIR/workspace/app"
   mkdir -p "$PROJECT_DIR/logs"
   mkdir -p "$PROJECT_DIR/tokens"

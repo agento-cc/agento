@@ -20,10 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .workspace import AgentView, Workspace
+from .workspace_paths import BASE_WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
-
-BASE_WORKSPACE_DIR = os.environ.get("AGENTO_WORKSPACE_DIR", "/workspace")
 
 
 @dataclass

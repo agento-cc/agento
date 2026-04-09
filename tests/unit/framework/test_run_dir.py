@@ -8,12 +8,12 @@ from agento.framework.run_dir import build_run_dir, cleanup_run_dir, prepare_run
 class TestBuildRunDir:
     def test_builds_expected_path(self):
         result = build_run_dir("acme", "developer", 42)
-        assert result == Path("/workspace/acme/developer/runs/42")
+        assert result == Path("/workspace/runtime/acme/developer/42")
 
-    def test_custom_base_dir(self):
-        with patch("agento.framework.run_dir.BASE_WORKSPACE_DIR", "/tmp/ws"):
+    def test_custom_runtime_dir(self):
+        with patch("agento.framework.run_dir.RUNTIME_DIR", "/tmp/rt"):
             result = build_run_dir("acme", "qa", 99)
-        assert result == Path("/tmp/ws/acme/qa/runs/99")
+        assert result == Path("/tmp/rt/acme/qa/99")
 
 
 class TestPrepareRunDir:
