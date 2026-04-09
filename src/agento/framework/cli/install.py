@@ -68,6 +68,7 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
     dirs = [
         ".agento",
         "app/code",
+        "app/etc",
         "workspace/systems",
         "workspace/tmp",
         "logs",
