@@ -45,7 +45,7 @@ services:
     volumes:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
-      - ../app/etc:/app/etc:ro
+      - ../app/etc:/app/etc
       - ../logs:/app/logs
       - ../tokens:/etc/tokens
     networks:
