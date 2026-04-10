@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 
 class ConfirmScreen(ModalScreen[bool]):
+
+    BINDINGS = [  # noqa: RUF012
+        Binding("escape", "cancel", "Esc Cancel", show=True),
+    ]
 
     DEFAULT_CSS = """
     ConfirmScreen {
@@ -31,8 +36,9 @@ class ConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, default_no: bool = False) -> None:
         self.message = message
+        self._default_no = default_no
         super().__init__()
 
     def compose(self) -> ComposeResult:
@@ -42,5 +48,12 @@ class ConfirmScreen(ModalScreen[bool]):
                 yield Button("Confirm", variant="primary", id="confirm")
                 yield Button("Cancel", id="cancel")
 
+    def on_mount(self) -> None:
+        if self._default_no:
+            self.query_one("#cancel", Button).focus()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "confirm")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)

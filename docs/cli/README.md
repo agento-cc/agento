@@ -52,6 +52,10 @@
 | **Workspace** | |
 | `workspace:build --agent-view <code> \| --all` | Build materialized workspace ([details](workspace-build.md)) |
 | `workspace:build-status [--agent-view <code>]` | Show workspace build history ([details](workspace-build.md)) |
+| **Admin** | |
+| `admin` | Launch interactive TUI dashboard ([details](admin.md)) |
+| `config:schema [module] [--json]` | Show config field definitions from system.json |
+| `config:resolve <module> [--scope=S] [--scope-id=N] [--json]` | Resolve effective config values with source info |
 | **Operations** | |
 | `consumer` | Start job consumer loop |
 | `jira:periodic:sync` | Sync Jira recurring tasks to crontab |

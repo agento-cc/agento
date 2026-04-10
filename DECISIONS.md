@@ -57,7 +57,7 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 ## 2026-03-24 — Per-agent_view instruction files via observer (agent_view module)
 
 - **Observer on `agento_agent_view_run_started`** writes `AGENTS.md`, `SOUL.md`, and `CLAUDE.md` into the run directory. Why observer, not inline in consumer: Magento spirit — modules extend framework behavior via events. Keeps the consumer lean.
-- **Content from `core_config_data`** with scoped fallback: `agent_view/instructions/agents_md` and `agent_view/instructions/soul_md`. Follows the same `agent_view/*` config path convention as `agent_view/claude/model`, `agent_view/mcp/servers`, etc.
+- **Content from `core_config_data`** with scoped fallback: `agent_view/instructions/agents_md` and `agent_view/instructions/soul_md`. Follows the same `agent_view/*` config path convention as `agent_view/model`, `agent_view/mcp/servers`, etc.
 - **Fallback to workspace file on disk** if no DB value exists. This preserves backward compatibility — existing deployments with `workspace/AGENTS.md` keep working without DB config.
 
 ---

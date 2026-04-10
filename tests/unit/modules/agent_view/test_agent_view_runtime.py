@@ -45,7 +45,7 @@ class TestResolveAgentViewRuntime:
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
             "agent_view/provider": ("claude", False),
-            "agent_view/claude/model": ("opus-4.6", False),
+            "agent_view/model": ("opus-4.6", False),
             "agent_view/scheduling/priority": ("80", False),
         }
 
@@ -64,7 +64,7 @@ class TestResolveAgentViewRuntime:
         mock_ws.return_value = _make_workspace()
         mock_overrides.return_value = {
             "agent_view/provider": ("codex", False),
-            "agent_view/codex/model": ("gpt-5.4", False),
+            "agent_view/model": ("gpt-5.4", False),
         }
 
         runtime = resolve_agent_view_runtime(MagicMock(), 1)

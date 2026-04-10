@@ -53,6 +53,11 @@ def _count_modules() -> int:
     return count
 
 
+def _ensure_conn(conn) -> None:
+    """Reconnect if the DB connection has gone stale."""
+    conn.ping(reconnect=True)
+
+
 def get_dashboard_data(conn) -> DashboardData:
     from ..cli._templates import get_package_version
 
@@ -122,10 +127,11 @@ def get_dashboard_data(conn) -> DashboardData:
     return data
 
 
-def get_jobs(conn, *, limit: int = 50, offset: int = 0, status: str | None = None, search: str | None = None) -> list[dict]:
+def get_jobs(conn, *, limit: int = 50, offset: int = 0, status: str | None = None) -> list[dict]:
     if conn is None:
         return []
     try:
+        _ensure_conn(conn)
         sql = (
             "SELECT j.id, j.type, j.status, j.reference_id, j.agent_type, "
             "j.created_at, j.started_at, j.finished_at, j.input_tokens, j.output_tokens, "
@@ -133,15 +139,9 @@ def get_jobs(conn, *, limit: int = 50, offset: int = 0, status: str | None = Non
             "FROM job j LEFT JOIN agent_view av ON j.agent_view_id = av.id"
         )
         params: list = []
-        conditions = []
         if status:
-            conditions.append("j.status = %s")
+            sql += " WHERE j.status = %s"
             params.append(status)
-        if search:
-            conditions.append("j.reference_id LIKE %s")
-            params.append(f"%{search}%")
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY j.id DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
         with conn.cursor() as cur:
@@ -155,6 +155,7 @@ def get_job_detail(conn, job_id: int) -> dict | None:
     if conn is None:
         return None
     try:
+        _ensure_conn(conn)
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT j.*, av.code AS agent_view_code "
@@ -171,6 +172,7 @@ def get_tokens_with_usage(conn, *, window_hours: int = 24) -> list[dict]:
     if conn is None:
         return []
     try:
+        _ensure_conn(conn)
         from ..agent_manager.token_store import list_tokens
         from ..agent_manager.usage_store import get_usage_summary
 
@@ -202,6 +204,7 @@ def get_agents_summary(conn) -> list[dict]:
     if conn is None:
         return []
     try:
+        _ensure_conn(conn)
         from ..workspace import get_active_agent_views
 
         views = get_active_agent_views(conn)
@@ -270,13 +273,14 @@ def get_module_schemas() -> list[ModuleSchema]:
 
     from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
     from ..module_loader import scan_modules
+    from ..module_status import filter_enabled
 
     schemas: list[ModuleSchema] = []
     for modules_dir in (CORE_MODULES_DIR, USER_MODULES_DIR):
         if not Path(modules_dir).is_dir():
             continue
         try:
-            manifests = scan_modules(modules_dir)
+            manifests = filter_enabled(scan_modules(modules_dir))
         except Exception:
             continue
         for m in manifests:
@@ -316,6 +320,9 @@ def get_resolved_fields(conn, module: str, scope: str = "default", scope_id: int
 
     from ..config_resolver import _db_path, _env_key, read_config_defaults
     from ..scoped_config import build_scoped_overrides, load_scoped_db_overrides
+
+    if conn is not None:
+        _ensure_conn(conn)
 
     config_defaults = read_config_defaults(target.module_path) if target.module_path else {}
 
@@ -387,6 +394,7 @@ def get_workspaces(conn) -> list[dict]:
     if conn is None:
         return []
     try:
+        _ensure_conn(conn)
         with conn.cursor() as cur:
             cur.execute("SELECT id, code, label, is_active FROM workspace ORDER BY id")
             return cur.fetchall()
@@ -398,6 +406,7 @@ def get_agent_views(conn, workspace_id: int | None = None) -> list[dict]:
     if conn is None:
         return []
     try:
+        _ensure_conn(conn)
         sql = "SELECT id, code, label, workspace_id, is_active FROM agent_view"
         params: list = []
         if workspace_id is not None:
@@ -409,11 +418,6 @@ def get_agent_views(conn, workspace_id: int | None = None) -> list[dict]:
             return cur.fetchall()
     except Exception:
         return []
-
-
-def _ensure_conn(conn) -> None:
-    """Reconnect if the DB connection has gone stale."""
-    conn.ping(reconnect=True)
 
 
 def set_config_value(conn, path: str, value: str, scope: str = "default", scope_id: int = 0) -> None:

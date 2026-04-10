@@ -43,13 +43,15 @@ class JobsScreen(Screen):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._status_index = 0
-        self._search_value: str | None = None
+        self._search_text: str = ""
+        self._jobs: list[dict] = []
+        self._just_highlighted = False
 
     def compose(self) -> ComposeResult:
         yield Sidebar(active="jobs")
         with Vertical(classes="screen-content"):
             with Horizontal(id="jobs-filter-bar"):
-                yield Input(placeholder="Search by reference ID...", id="jobs-search")
+                yield Input(placeholder="Search...", id="jobs-search")
                 yield Static("Filter: All", id="jobs-status-label")
             with Vertical(id="jobs-table-panel", classes="panel"):
                 yield Static("Jobs", classes="panel-title")
@@ -62,11 +64,10 @@ class JobsScreen(Screen):
         table.add_columns("ID", "Type", "Status", "Agent View", "Reference", "Created", "Duration")
         self._load_data()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "jobs-search":
-            value = event.value.strip()
-            self._search_value = value if value else None
-            self._load_data()
+            self._search_text = event.value.strip().lower()
+            self._refresh_table()
 
     def action_refresh(self) -> None:
         self._load_data()
@@ -82,7 +83,13 @@ class JobsScreen(Screen):
         self._load_data()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if self._just_highlighted:
+            self._just_highlighted = False
+            return
         self.action_view_detail()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._just_highlighted = True
 
     def action_view_detail(self) -> None:
         table = self.query_one("#jobs-table", DataTable)
@@ -116,14 +123,26 @@ class JobsScreen(Screen):
         from ..data import get_jobs
 
         status = _STATUS_CYCLE[self._status_index]
-        jobs = get_jobs(self.app.conn, status=status, search=self._search_value)
-        self.app.call_from_thread(self._update_table, jobs)
+        jobs = get_jobs(self.app.conn, status=status)
+        self.app.call_from_thread(self._update_jobs, jobs)
 
-    def _update_table(self, jobs: list[dict]) -> None:
+    def _update_jobs(self, jobs: list[dict]) -> None:
+        self._jobs = jobs
+        self._refresh_table()
+
+    def _refresh_table(self) -> None:
         table = self.query_one("#jobs-table", DataTable)
         table.clear()
-        if jobs:
-            for job in jobs:
+        filtered = self._jobs
+        if self._search_text:
+            filtered = [
+                j for j in filtered
+                if self._search_text in " ".join(
+                    str(j.get(k, "") or "") for k in ("id", "type", "status", "agent_view_code", "reference_id")
+                ).lower()
+            ]
+        if filtered:
+            for job in filtered:
                 duration = _format_duration(job.get("started_at"), job.get("finished_at"))
                 table.add_row(
                     str(job.get("id", "")),

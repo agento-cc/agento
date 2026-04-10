@@ -3,18 +3,20 @@ from __future__ import annotations
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Input, Static
 
 from ..widgets.confirm import ConfirmScreen
 from ..widgets.sidebar import Sidebar
+
+_TOKEN_SEARCH_KEYS = ("id", "agent_type", "label", "model")
 
 
 class TokenUsageScreen(ModalScreen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape", "pop_screen", "Esc Close", show=True),
+        Binding("escape", "dismiss", "Esc Close", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -61,25 +63,25 @@ class TokenUsageScreen(ModalScreen):
                 f"Free:        {pct}"
             )
 
-    def action_pop_screen(self) -> None:
-        self.app.pop_screen()
-
-
 class TokensScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
         Binding("enter", "view_token", "Enter Detail", show=True),
         Binding("s", "set_primary", "s Set Primary", show=True),
         Binding("x", "deregister", "x Deregister", show=True),
+        Binding("slash", "focus_search", "/ Search", show=True),
     ]
 
     def __init__(self) -> None:
         super().__init__()
         self._tokens: list[dict] = []
+        self._search_text: str = ""
+        self._just_highlighted = False
 
     def compose(self) -> ComposeResult:
         yield Sidebar(active="tokens")
-        with VerticalScroll(classes="screen-content"):
+        with Vertical(classes="screen-content"):
+            yield Input(placeholder="Search...", id="tokens-search")
             with Container(id="tokens-list-panel", classes="panel"):
                 yield Static("Tokens", classes="panel-title")
                 yield DataTable(id="tokens-table")
@@ -107,12 +109,29 @@ class TokensScreen(Screen):
         tokens = get_tokens_with_usage(self.app.conn)
         self.app.call_from_thread(self._update_ui, tokens)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "tokens-search":
+            self._search_text = event.value.strip().lower()
+            self._refresh_table()
+
+    def action_focus_search(self) -> None:
+        self.query_one("#tokens-search", Input).focus()
+
     def _update_ui(self, tokens: list[dict]) -> None:
         self._tokens = tokens
+        self._refresh_table()
+
+    def _refresh_table(self) -> None:
         table = self.query_one("#tokens-table", DataTable)
         table.clear()
-        if tokens:
-            for t in tokens:
+        filtered = self._tokens
+        if self._search_text:
+            filtered = [
+                t for t in filtered
+                if self._search_text in " ".join(str(t.get(k, "") or "") for k in _TOKEN_SEARCH_KEYS).lower()
+            ]
+        if filtered:
+            for t in filtered:
                 primary = "*" if t["is_primary"] else ""
                 limit = str(t["token_limit"]) if t["token_limit"] > 0 else "unlimited"
                 pct = f"{t['pct_free']:.1f}" if t["token_limit"] > 0 else "-"
@@ -134,9 +153,13 @@ class TokensScreen(Screen):
         self._update_detail_panel()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if self._just_highlighted:
+            self._just_highlighted = False
+            return
         self.action_view_token()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._just_highlighted = True
         self._update_detail_panel()
 
     def _update_detail_panel(self) -> None:
@@ -166,10 +189,10 @@ class TokensScreen(Screen):
         if not self._tokens:
             return None
         table = self.query_one("#tokens-table", DataTable)
-        if table.cursor_row is None or table.cursor_row >= len(self._tokens):
+        if table.cursor_row is None or table.row_count == 0:
             return None
-        row_key = table.get_row_at(table.cursor_row)
-        token_id = row_key[0]
+        row_data = table.get_row_at(table.cursor_row)
+        token_id = row_data[0]
         for t in self._tokens:
             if str(t["id"]) == token_id:
                 return t

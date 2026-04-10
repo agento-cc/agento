@@ -7,10 +7,9 @@ Before each worker run, generates native config files that agent CLIs expect:
   - .codex/config.toml (Codex CLI config)
 
 Config field paths follow the convention:
-  agent_view/claude/model          -> model for Claude CLI
+  agent_view/model                 -> model for all agent CLIs
   agent_view/claude/personality    -> system prompt / personality
   agent_view/mcp/servers           -> MCP server definitions (JSON)
-  agent_view/codex/model           -> model for Codex CLI
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ AGENT_CONFIG_PREFIX = "agent_view/"
 def _get_agent_config(resolved_config: dict[str, tuple[str, bool]]) -> dict[str, str]:
     """Extract agent_view/* paths from resolved DB overrides into a flat dict.
 
-    Returns {relative_path: value}, e.g. {"claude/model": "opus-4"}.
+    Returns {relative_path: value}, e.g. {"model": "opus-4"}.
     """
     result = {}
     for path, (value, _encrypted) in resolved_config.items():
@@ -43,7 +42,7 @@ def generate_claude_config(working_dir: Path, agent_config: dict[str, str]) -> N
     # .claude.json — project-level config
     claude_json: dict[str, Any] = {}
 
-    model = agent_config.get("claude/model")
+    model = agent_config.get("model")
     if model:
         claude_json["model"] = model
 
@@ -118,7 +117,7 @@ def generate_codex_config(working_dir: Path, agent_config: dict[str, str]) -> No
     """Generate .codex/config.toml in the working directory."""
     lines: list[str] = []
 
-    model = agent_config.get("codex/model")
+    model = agent_config.get("model")
     if model:
         lines.append(f'model = "{model}"')
 
