@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Input, Static
-from textual.worker import work
+from textual import work
 
 _STATUS_CYCLE = [None, "TODO", "RUNNING", "SUCCESS", "FAILED", "DEAD"]
 
@@ -31,10 +31,10 @@ def _format_duration(started_at, finished_at) -> str:
 class JobsScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("enter", "view_detail", "View Detail", show=False),
-        Binding("p", "replay_job", "Replay", show=True),
-        Binding("slash", "focus_search", "Search", show=True),
-        Binding("s", "cycle_status", "Status Filter", show=True),
+        Binding("enter", "view_detail", "Enter Detail", show=True),
+        Binding("p", "replay_job", "p Replay", show=True),
+        Binding("slash", "focus_search", "/ Search", show=True),
+        Binding("s", "cycle_status", "s Filter Status", show=True),
     ]
 
     def __init__(self, *args, **kwargs):
@@ -128,7 +128,7 @@ class JobsScreen(Screen):
 class JobDetailScreen(ModalScreen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape", "dismiss", "Close", show=True),
+        Binding("escape", "dismiss", "Esc Close", show=True),
     ]
 
     def __init__(self, job_id: int, *args, **kwargs):
@@ -197,8 +197,8 @@ class JobDetailScreen(ModalScreen):
 class ReplayConfirmScreen(ModalScreen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("y", "confirm", "Yes", show=True),
-        Binding("escape", "dismiss", "Cancel", show=True),
+        Binding("y", "confirm", "y Confirm", show=True),
+        Binding("escape", "dismiss", "Esc Cancel", show=True),
     ]
 
     def __init__(self, job_id: int, *args, **kwargs):

@@ -12,7 +12,7 @@ class ToolDisableCommand:
 
     @property
     def shortcut(self) -> str:
-        return "to:di"
+        return "tl:di"
 
     @property
     def help(self) -> str:

@@ -96,7 +96,7 @@ DataTable {
 #replay-confirm {
     width: 50;
     height: auto;
-    margin: 4 auto;
+    margin: 4 10;
 }
 
 /* Config screen layout */

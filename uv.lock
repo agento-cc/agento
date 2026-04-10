@@ -10,12 +10,10 @@ dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pymysql" },
+    { name = "textual" },
 ]
 
 [package.optional-dependencies]
-admin = [
-    { name = "textual" },
-]
 dev = [
     { name = "basedpyright" },
     { name = "pytest" },
@@ -51,9 +49,9 @@ requires-dist = [
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "respx", marker = "extra == 'test'", specifier = ">=0.22" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11" },
-    { name = "textual", marker = "extra == 'admin'", specifier = ">=1.0,<2.0" },
+    { name = "textual", specifier = ">=1.0,<2.0" },
 ]
-provides-extras = ["dev", "test", "admin"]
+provides-extras = ["dev", "test"]
 
 [package.metadata.requires-dev]
 dev = [

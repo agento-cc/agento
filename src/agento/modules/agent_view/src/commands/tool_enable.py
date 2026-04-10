@@ -12,7 +12,7 @@ class ToolEnableCommand:
 
     @property
     def shortcut(self) -> str:
-        return "to:en"
+        return "tl:en"
 
     @property
     def help(self) -> str:

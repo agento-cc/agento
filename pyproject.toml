@@ -29,6 +29,7 @@ dependencies = [
     "httpx>=0.27",
     "PyMySQL>=1.1",
     "cryptography>=43.0",
+    "textual>=1.0,<2.0",
 ]
 authors = [{name = "Marcin Klauza"}]
 license = {text = "MIT"}
@@ -74,7 +75,6 @@ known-first-party = ["agento"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-mock>=3.14", "respx>=0.22", "ruff>=0.11", "basedpyright>=1.29"]
 test = ["pytest>=8.0", "pytest-mock>=3.14", "respx>=0.22"]
-admin = ["textual>=1.0,<2.0"]
 
 [dependency-groups]
 dev = [
