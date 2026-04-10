@@ -110,10 +110,15 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             "docker/.toolbox.env\n"
         )
 
-    # Docker Compose config — version comes from AGENTO_VERSION in .env
+    # Docker Compose — managed base + user-owned override
     try:
-        compose_content = get_template("docker-compose.yml")
-        (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
+        compose = get_template("docker-compose.yml")
+        (project_dir / "docker" / "docker-compose.yml").write_text(compose)
+    except TemplateNotFoundError:
+        pass
+    try:
+        override = get_template("docker-compose.override.yml")
+        (project_dir / "docker" / "docker-compose.override.yml").write_text(override)
     except TemplateNotFoundError:
         pass
 
@@ -182,10 +187,10 @@ def _reinstall(project_dir: Path) -> None:
     else:
         log_warn("docker/.env not found — skipping version update.")
 
-    # Refresh docker-compose.yml from template
+    # Refresh managed docker-compose.yml (user's override file is untouched)
     try:
-        compose_content = get_template("docker-compose.yml")
-        (project_dir / "docker" / "docker-compose.yml").write_text(compose_content)
+        compose = get_template("docker-compose.yml")
+        (project_dir / "docker" / "docker-compose.yml").write_text(compose)
     except TemplateNotFoundError:
         pass
 

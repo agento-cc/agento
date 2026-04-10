@@ -7,7 +7,7 @@ import sys
 
 from ._output import log_error, log_info, log_warn
 from ._project import find_compose_file, find_project_root, update_dotenv_value
-from ._templates import get_package_version
+from ._templates import TemplateNotFoundError, get_package_version, get_template
 
 
 def _fetch_latest_pypi_version() -> str | None:
@@ -111,6 +111,14 @@ class UpgradeCommand:
 
         update_dotenv_value(env_path, "AGENTO_VERSION", version)
         log_info(f"AGENTO_VERSION set to {version}")
+
+        # Refresh managed docker-compose.yml from template
+        try:
+            compose_content = get_template("docker-compose.yml")
+            (project_root / "docker" / "docker-compose.yml").write_text(compose_content)
+            log_info("Refreshed docker-compose.yml")
+        except TemplateNotFoundError:
+            pass
 
         compose = ["docker", "compose", "-f", str(compose_file)]
 

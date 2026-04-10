@@ -162,12 +162,18 @@ class TestScaffold:
         }
         _scaffold(tmp_path, "x", config)
 
+        # Managed base file has GHCR images and DO NOT EDIT header
         compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
         assert "container_name" not in compose
         assert "build:" not in compose
         assert "ghcr.io/agento-cc/agento-toolbox:" in compose
         assert "ghcr.io/agento-cc/agento-cron:" in compose
         assert "${AGENTO_VERSION" in compose
+        assert "DO NOT EDIT" in compose
+
+        # User-owned override file is scaffolded
+        override = (tmp_path / "docker" / "docker-compose.override.yml").read_text()
+        assert "safe to edit" in override
 
     def test_sql_files_extracted(self, tmp_path: Path):
         config = {
@@ -278,13 +284,19 @@ class TestReinstall:
         assert "MYSQL_PORT=3307" in env
 
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
-    def test_reinstall_refreshes_compose(self, mock_ver, tmp_path: Path):
+    def test_reinstall_refreshes_compose_but_not_override(self, mock_ver, tmp_path: Path):
         self._scaffold_project(tmp_path)
-        # Corrupt compose to verify it gets refreshed
+        # Corrupt managed file to verify it gets refreshed
         (tmp_path / "docker" / "docker-compose.yml").write_text("corrupted")
+        # Add custom content to override
+        (tmp_path / "docker" / "docker-compose.override.yml").write_text("services:\n  redis:\n    image: redis:7\n")
         _reinstall(tmp_path)
+        # Managed file refreshed
         compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
         assert "ghcr.io/agento-cc/agento-cron" in compose
+        # Override untouched
+        override = (tmp_path / "docker" / "docker-compose.override.yml").read_text()
+        assert "redis:7" in override
 
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
     def test_reinstall_updates_project_json_version(self, mock_ver, tmp_path: Path):
