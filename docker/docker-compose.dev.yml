@@ -13,7 +13,7 @@ services:
     volumes:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
-      - ../app/etc:/app/etc:ro
+      - ../app/etc:/app/etc
       - ../../id_rsa:/run/secrets/id_rsa:ro
       - ../logs:/app/logs
       - ../tokens:/etc/tokens
@@ -86,7 +86,7 @@ services:
     volumes:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
-      - ../app/etc:/app/etc:ro
+      - ../app/etc:/app/etc
       - ../../id_rsa:/run/secrets/id_rsa:ro
       - ../logs:/app/logs
       - ../src/agento:/opt/cron-agent/src/agento

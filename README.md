@@ -11,7 +11,7 @@ Agento is an open-source, self-hosted platform for building modular agentic soft
 
 Modern agent stacks are powerful, but in practice they are often glued together from prompts, scripts, MCP servers, and broad permissions. The result is fragile and risky: duplicated files, unclear tool access policies, missing human approval steps, over-permissioned agents, and no clean way to route the right task to the right agent and model.
 
-Agento is extendible by design. It means it's super easy to create and share custom module. Let's say you want to distribute your QA agent as a template. Just pack it inside a self-containing module and send to your friend.
+Agento is extensible by design. Creating and sharing custom modules is simple. Want to distribute your QA agent as a reusable template? Package it as a self-contained module and share it with your team, your clients, or the community.
 
 ## Why Agento?
 
