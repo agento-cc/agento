@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
-from textual.widgets import Footer, Header
 
 from .screens.agents import AgentsScreen
 from .screens.config import ConfigScreen
 from .screens.dashboard import DashboardScreen
 from .screens.jobs import JobsScreen
 from .screens.tokens import TokensScreen
+from .widgets.sidebar import Sidebar
 
 CSS_PATH = Path(__file__).parent / "styles" / "admin.tcss"
 
@@ -20,11 +20,6 @@ class AdminApp(App):
     CSS_PATH = CSS_PATH
 
     BINDINGS = [  # noqa: RUF012
-        Binding("f1", "switch_screen('dashboard')", "F1 Dashboard", show=True),
-        Binding("f2", "switch_screen('jobs')", "F2 Jobs", show=True),
-        Binding("f3", "switch_screen('tokens')", "F3 Tokens", show=True),
-        Binding("f4", "switch_screen('agents')", "F4 Agents", show=True),
-        Binding("f5", "switch_screen('config')", "F5 Config", show=True),
         Binding("r", "refresh", "r Refresh", show=True),
         Binding("q", "quit", "q Quit", show=True),
         Binding("ctrl+x", "quit", "^X Quit", show=True, priority=True),
@@ -39,10 +34,6 @@ class AdminApp(App):
     }
 
     conn = None
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Footer()
 
     def on_mount(self) -> None:
         self._connect_db()
@@ -63,5 +54,10 @@ class AdminApp(App):
         if hasattr(screen, "action_refresh"):
             screen.action_refresh()
 
-    async def action_switch_screen(self, screen: str) -> None:
+    def on_sidebar_navigate(self, message: Sidebar.Navigate) -> None:
+        self._navigate(message.screen)
+
+    def _navigate(self, screen: str) -> None:
         self.switch_screen(screen)
+        for sidebar in self.screen.query(Sidebar):
+            sidebar.set_active(screen)

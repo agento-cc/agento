@@ -24,6 +24,7 @@ class ModuleSchema:
     name: str
     fields: dict  # field_name -> {type, label, ...}
     tools: dict  # tool_name -> {field_name -> {type, label}}
+    module_path: Path | None = None
 
 
 @dataclass
@@ -76,29 +77,23 @@ def get_dashboard_data(conn) -> DashboardData:
         return data
 
     # Running jobs
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS cnt FROM job WHERE status='RUNNING'")
-            row = cur.fetchone()
-            data.running_jobs = row["cnt"]
-    except Exception:
-        pass
+    with contextlib.suppress(Exception), conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS cnt FROM job WHERE status='RUNNING'")
+        row = cur.fetchone()
+        data.running_jobs = row["cnt"]
 
     # Recent jobs
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT j.id, j.type, j.status, j.reference_id, j.created_at, j.finished_at, "
-                "av.code AS agent_view_code "
-                "FROM job j LEFT JOIN agent_view av ON j.agent_view_id = av.id "
-                "ORDER BY j.id DESC LIMIT 3"
-            )
-            data.recent_jobs = cur.fetchall()
-    except Exception:
-        pass
+    with contextlib.suppress(Exception), conn.cursor() as cur:
+        cur.execute(
+            "SELECT j.id, j.type, j.status, j.reference_id, j.created_at, j.finished_at, "
+            "av.code AS agent_view_code "
+            "FROM job j LEFT JOIN agent_view av ON j.agent_view_id = av.id "
+            "ORDER BY j.id DESC LIMIT 3"
+        )
+        data.recent_jobs = cur.fetchall()
 
     # Tokens
-    try:
+    with contextlib.suppress(Exception):
         from ..agent_manager.token_store import list_tokens
 
         tokens = list_tokens(conn, enabled_only=False)
@@ -113,11 +108,9 @@ def get_dashboard_data(conn) -> DashboardData:
             }
             for t in tokens
         ]
-    except Exception:
-        pass
 
     # Agent views
-    try:
+    with contextlib.suppress(Exception):
         from ..workspace import get_active_agent_views
 
         views = get_active_agent_views(conn)
@@ -125,8 +118,6 @@ def get_dashboard_data(conn) -> DashboardData:
             {"id": av.id, "code": av.code, "label": av.label, "workspace_id": av.workspace_id}
             for av in views
         ]
-    except Exception:
-        pass
 
     return data
 
@@ -217,51 +208,42 @@ def get_agents_summary(conn) -> list[dict]:
 
         # Ingress counts
         ingress_counts: dict[int, int] = {}
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT agent_view_id, COUNT(*) AS cnt "
-                    "FROM ingress_identity WHERE is_active = 1 "
-                    "GROUP BY agent_view_id"
-                )
-                for row in cur.fetchall():
-                    ingress_counts[row["agent_view_id"]] = row["cnt"]
-        except Exception:
-            pass
+        with contextlib.suppress(Exception), conn.cursor() as cur:
+            cur.execute(
+                "SELECT agent_view_id, COUNT(*) AS cnt "
+                "FROM ingress_identity WHERE is_active = 1 "
+                "GROUP BY agent_view_id"
+            )
+            for row in cur.fetchall():
+                ingress_counts[row["agent_view_id"]] = row["cnt"]
 
         # Build status
         build_status: dict[int, str] = {}
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT wb.agent_view_id, wb.status "
-                    "FROM workspace_build wb "
-                    "INNER JOIN ("
-                    "  SELECT agent_view_id, MAX(created_at) AS max_created "
-                    "  FROM workspace_build GROUP BY agent_view_id"
-                    ") latest ON wb.agent_view_id = latest.agent_view_id "
-                    "AND wb.created_at = latest.max_created"
-                )
-                for row in cur.fetchall():
-                    build_status[row["agent_view_id"]] = row["status"]
-        except Exception:
-            pass
+        with contextlib.suppress(Exception), conn.cursor() as cur:
+            cur.execute(
+                "SELECT wb.agent_view_id, wb.status "
+                "FROM workspace_build wb "
+                "INNER JOIN ("
+                "  SELECT agent_view_id, MAX(created_at) AS max_created "
+                "  FROM workspace_build GROUP BY agent_view_id"
+                ") latest ON wb.agent_view_id = latest.agent_view_id "
+                "AND wb.created_at = latest.max_created"
+            )
+            for row in cur.fetchall():
+                build_status[row["agent_view_id"]] = row["status"]
 
         # Workspace labels
         ws_labels: dict[int, str] = {}
         ws_ids = {av.workspace_id for av in views}
         if ws_ids:
-            try:
-                with conn.cursor() as cur:
-                    placeholders = ",".join(["%s"] * len(ws_ids))
-                    cur.execute(
-                        f"SELECT id, code FROM workspace WHERE id IN ({placeholders})",
-                        tuple(ws_ids),
-                    )
-                    for row in cur.fetchall():
-                        ws_labels[row["id"]] = row["code"]
-            except Exception:
-                pass
+            with contextlib.suppress(Exception), conn.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(ws_ids))
+                cur.execute(
+                    f"SELECT id, code FROM workspace WHERE id IN ({placeholders})",
+                    tuple(ws_ids),
+                )
+                for row in cur.fetchall():
+                    ws_labels[row["id"]] = row["code"]
 
         results = []
         for av in views:
@@ -310,10 +292,16 @@ def get_module_schemas() -> list[ModuleSchema]:
                 name=m.name,
                 fields=dict(m.config),
                 tools=tool_fields,
+                module_path=m.path,
             ))
 
     _module_schema_cache = schemas
     return schemas
+
+
+def clear_module_schema_cache() -> None:
+    global _module_schema_cache
+    _module_schema_cache = None
 
 
 def get_resolved_fields(conn, module: str, scope: str = "default", scope_id: int = 0) -> list[ResolvedField]:
@@ -326,26 +314,10 @@ def get_resolved_fields(conn, module: str, scope: str = "default", scope_id: int
     if target is None:
         return []
 
-    from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
     from ..config_resolver import _db_path, _env_key, read_config_defaults
-    from ..module_loader import scan_modules
     from ..scoped_config import build_scoped_overrides, load_scoped_db_overrides
 
-    module_path = None
-    for modules_dir in (CORE_MODULES_DIR, USER_MODULES_DIR):
-        if not Path(modules_dir).is_dir():
-            continue
-        try:
-            for m in scan_modules(modules_dir):
-                if m.name == module:
-                    module_path = m.path
-                    break
-        except Exception:
-            continue
-        if module_path:
-            break
-
-    config_defaults = read_config_defaults(module_path) if module_path else {}
+    config_defaults = read_config_defaults(target.module_path) if target.module_path else {}
 
     # Load scoped overrides and per-scope overrides for source detection
     if scope == "agent_view":
@@ -439,9 +411,15 @@ def get_agent_views(conn, workspace_id: int | None = None) -> list[dict]:
         return []
 
 
+def _ensure_conn(conn) -> None:
+    """Reconnect if the DB connection has gone stale."""
+    conn.ping(reconnect=True)
+
+
 def set_config_value(conn, path: str, value: str, scope: str = "default", scope_id: int = 0) -> None:
     from ..core_config import config_set_auto_encrypt
 
+    _ensure_conn(conn)
     config_set_auto_encrypt(conn, path, value, scope=scope, scope_id=scope_id)
     conn.commit()
 
@@ -449,6 +427,7 @@ def set_config_value(conn, path: str, value: str, scope: str = "default", scope_
 def delete_config_override(conn, path: str, scope: str = "default", scope_id: int = 0) -> bool:
     from ..core_config import config_delete
 
+    _ensure_conn(conn)
     result = config_delete(conn, path, scope=scope, scope_id=scope_id)
     conn.commit()
     return result
@@ -458,6 +437,7 @@ def do_set_primary_token(conn, agent_type: str, token_id: int) -> bool:
     from ..agent_manager.models import AgentProvider
     from ..agent_manager.token_store import set_primary_token
 
+    _ensure_conn(conn)
     provider = AgentProvider(agent_type)
     result = set_primary_token(conn, provider, token_id)
     conn.commit()
@@ -467,6 +447,7 @@ def do_set_primary_token(conn, agent_type: str, token_id: int) -> bool:
 def do_deregister_token(conn, token_id: int) -> bool:
     from ..agent_manager.token_store import deregister_token
 
+    _ensure_conn(conn)
     result = deregister_token(conn, token_id)
     conn.commit()
     return result

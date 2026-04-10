@@ -1,51 +1,14 @@
 from __future__ import annotations
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Static
-from textual import work
+from textual.widgets import DataTable, Footer, Static
 
-
-class ConfirmScreen(ModalScreen[bool]):
-
-    DEFAULT_CSS = """
-    ConfirmScreen {
-        align: center middle;
-    }
-    #confirm-dialog {
-        width: 60;
-        height: auto;
-        border: thick $primary;
-        background: $surface;
-        padding: 1 2;
-    }
-    #confirm-dialog Static {
-        margin-bottom: 1;
-    }
-    #confirm-dialog Horizontal {
-        height: auto;
-        align: center middle;
-    }
-    #confirm-dialog Button {
-        margin: 0 1;
-    }
-    """
-
-    def __init__(self, message: str) -> None:
-        self.message = message
-        super().__init__()
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-dialog"):
-            yield Static(self.message)
-            with Horizontal():
-                yield Button("Confirm", variant="primary", id="confirm")
-                yield Button("Cancel", id="cancel")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id == "confirm")
+from ..widgets.confirm import ConfirmScreen
+from ..widgets.sidebar import Sidebar
 
 
 class TokenUsageScreen(ModalScreen):
@@ -115,12 +78,15 @@ class TokensScreen(Screen):
         self._tokens: list[dict] = []
 
     def compose(self) -> ComposeResult:
-        with Container(id="tokens-list-panel", classes="panel"):
-            yield Static("Tokens", classes="panel-title")
-            yield DataTable(id="tokens-table")
-        with Container(id="token-detail-panel", classes="panel"):
-            yield Static("Token Detail", classes="panel-title")
-            yield Static("Select a token to view details", id="token-detail-content")
+        yield Sidebar(active="tokens")
+        with VerticalScroll(classes="screen-content"):
+            with Container(id="tokens-list-panel", classes="panel"):
+                yield Static("Tokens", classes="panel-title")
+                yield DataTable(id="tokens-table")
+            with Container(id="token-detail-panel", classes="panel"):
+                yield Static("Token Detail", classes="panel-title")
+                yield Static("Select a token to view details", id="token-detail-content")
+        yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#tokens-table", DataTable)
@@ -166,6 +132,9 @@ class TokensScreen(Screen):
         else:
             table.add_row("--", "--", "No tokens registered", "--", "--", "--", "--", "--", "--")
         self._update_detail_panel()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self.action_view_token()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         self._update_detail_panel()

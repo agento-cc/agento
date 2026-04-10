@@ -1,5 +1,24 @@
 Screen {
+    layout: horizontal;
+}
+
+.screen-content {
+    width: 1fr;
     padding: 1;
+}
+
+Footer {
+    dock: bottom;
+    background: $surface;
+}
+
+Footer > .footer--key {
+    background: #3b6ea5;
+    color: #e8e8e8;
+}
+
+Footer > .footer--description {
+    color: #b0b0b0;
 }
 
 .panel {
@@ -51,13 +70,6 @@ Screen {
     max-height: 8;
 }
 
-#placeholder {
-    padding: 2 4;
-    text-align: center;
-    text-style: italic;
-    color: $text-muted;
-}
-
 DataTable {
     height: auto;
 }
@@ -91,12 +103,6 @@ DataTable {
     width: 80%;
     height: 80%;
     margin: 2 4;
-}
-
-#replay-confirm {
-    width: 50;
-    height: auto;
-    margin: 4 10;
 }
 
 /* Config screen layout */
