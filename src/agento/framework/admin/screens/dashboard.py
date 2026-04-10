@@ -1,32 +1,37 @@
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.screen import Screen
-from textual.widgets import DataTable, Static
 from textual import work
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import Screen
+from textual.widgets import DataTable, Footer, Static
+
+from ..widgets.sidebar import Sidebar
 
 
 class DashboardScreen(Screen):
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="dashboard-top"):
-            with Vertical(id="health-panel", classes="panel"):
-                yield Static("System Health", classes="panel-title")
-                yield Static("Loading...", id="health-content")
-            with Vertical(id="system-panel", classes="panel"):
-                yield Static("System Info", classes="panel-title")
-                yield Static("Loading...", id="system-content")
-        with Container(id="jobs-panel", classes="panel"):
-            yield Static("Recent Jobs", classes="panel-title")
-            yield DataTable(id="recent-jobs-table")
-        with Horizontal(id="dashboard-bottom"):
-            with Vertical(id="tokens-panel", classes="panel"):
-                yield Static("Tokens", classes="panel-title")
-                yield Static("Loading...", id="tokens-content")
-            with Vertical(id="agents-panel", classes="panel"):
-                yield Static("Agent Views", classes="panel-title")
-                yield Static("Loading...", id="agents-content")
+        yield Sidebar(active="dashboard")
+        with VerticalScroll(classes="screen-content"):
+            with Horizontal(id="dashboard-top"):
+                with Vertical(id="health-panel", classes="panel"):
+                    yield Static("System Health", classes="panel-title")
+                    yield Static("Loading...", id="health-content")
+                with Vertical(id="system-panel", classes="panel"):
+                    yield Static("System Info", classes="panel-title")
+                    yield Static("Loading...", id="system-content")
+            with Container(id="jobs-panel", classes="panel"):
+                yield Static("Recent Jobs", classes="panel-title")
+                yield DataTable(id="recent-jobs-table")
+            with Horizontal(id="dashboard-bottom"):
+                with Vertical(id="tokens-panel", classes="panel"):
+                    yield Static("Tokens", classes="panel-title")
+                    yield Static("Loading...", id="tokens-content")
+                with Vertical(id="agents-panel", classes="panel"):
+                    yield Static("Agent Views", classes="panel-title")
+                    yield Static("Loading...", id="agents-content")
+        yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#recent-jobs-table", DataTable)

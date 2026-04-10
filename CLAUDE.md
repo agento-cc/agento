@@ -54,6 +54,7 @@ agento upgrade [--version X.Y.Z]                       # Upgrade CLI + Docker im
 agento up                                              # Start Docker Compose
 agento down                                            # Stop containers
 agento logs [service]                                  # View container logs
+agento admin                                           # Launch admin TUI (runs inside Docker)
 
 # Restart after code changes (dev compose)
 cd docker && docker compose -f docker-compose.dev.yml restart cron toolbox
@@ -80,6 +81,8 @@ agento config:get <path>                               # exact path: per-scope v
 agento config:get <module>                             # module prefix: tree view by scope
 agento config:list [prefix]
 agento config:remove <path> [--scope=<scope>] [--scope-id=<id>]
+agento config:schema [module] [--json]                 # Show config field definitions from system.json
+agento config:resolve <module> [--scope=S] [--scope-id=N] [--json]  # Resolve effective config values with source info
 
 # Tokens
 agento token:list

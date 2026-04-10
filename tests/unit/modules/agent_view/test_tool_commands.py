@@ -28,7 +28,7 @@ class TestToolListCommand:
     def test_properties(self):
         cmd = ToolListCommand()
         assert cmd.name == "tool:list"
-        assert cmd.shortcut == "to:li"
+        assert cmd.shortcut == "tl:li"
         assert "tool" in cmd.help.lower()
 
     @patch("agento.framework.workspace.get_agent_view_by_code")
@@ -147,7 +147,7 @@ class TestToolEnableCommand:
     def test_properties(self):
         cmd = ToolEnableCommand()
         assert cmd.name == "tool:enable"
-        assert cmd.shortcut == "to:en"
+        assert cmd.shortcut == "tl:en"
 
     def test_rejects_name_with_spaces(self):
         import pytest
@@ -220,7 +220,7 @@ class TestToolDisableCommand:
     def test_properties(self):
         cmd = ToolDisableCommand()
         assert cmd.name == "tool:disable"
-        assert cmd.shortcut == "to:di"
+        assert cmd.shortcut == "tl:di"
 
     def test_rejects_name_with_spaces(self):
         import pytest

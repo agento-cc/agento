@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -55,13 +56,25 @@ def _proxy_to_docker(argv: list[str]) -> None:
 
     clean_argv = [a for a in argv if a != "--local"]
     cmd = _get_command(clean_argv)
-    tty_flag = "-it" if cmd in _INTERACTIVE_COMMANDS else "-T"
-    result = subprocess.run([
+    is_interactive = cmd in _INTERACTIVE_COMMANDS
+    tty_flag = "-it" if is_interactive else "-T"
+    env_flags: list[str] = []
+    if is_interactive:
+        term = os.environ.get("TERM", "xterm-256color")
+        env_flags = ["-e", f"TERM={term}", "-e", "COLORTERM=truecolor"]
+
+    exec_args = [
         "docker", "compose", "-f", str(compose_file),
-        "exec", tty_flag, "cron",
+        "exec", tty_flag, *env_flags, "cron",
         "/opt/cron-agent/run.sh", *clean_argv,
-    ])
-    sys.exit(result.returncode)
+    ]
+
+    if is_interactive:
+        # Replace current process to give Docker full TTY control (mouse events, signals)
+        os.execvp("docker", exec_args)
+    else:
+        result = subprocess.run(exec_args)
+        sys.exit(result.returncode)
 
 
 def _register_framework_commands() -> None:

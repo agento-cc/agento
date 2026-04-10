@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Input, Select, Static, TextArea, Tree
-from textual import work
+from textual.widgets import Button, DataTable, Footer, Input, Select, Static, TextArea, Tree
 
 from ..data import ResolvedField
 from ..widgets.field_detail import FieldDetailPanel
 from ..widgets.scope_selector import ModeChanged, ScopeChanged, ScopeSelector
+from ..widgets.sidebar import Sidebar
 
 
 class ConfigScreen(Screen):
@@ -33,13 +34,16 @@ class ConfigScreen(Screen):
         self._search_text: str = ""
 
     def compose(self) -> ComposeResult:
-        yield ScopeSelector(id="config-top")
-        with Horizontal(id="config-main"):
-            yield Tree("Modules", id="module-tree")
-            with Vertical(id="field-table-container"):
-                yield Input(placeholder="Filter fields...", id="field-search")
-                yield DataTable(id="field-table")
-        yield FieldDetailPanel(id="field-detail")
+        yield Sidebar(active="config")
+        with Vertical(classes="screen-content"):
+            yield ScopeSelector(id="config-top")
+            with Horizontal(id="config-main"):
+                yield Tree("Modules", id="module-tree")
+                with Vertical(id="field-table-container"):
+                    yield Input(placeholder="Filter fields...", id="field-search")
+                    yield DataTable(id="field-table")
+            yield FieldDetailPanel(id="field-detail")
+        yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#field-table", DataTable)
@@ -146,6 +150,9 @@ class ConfigScreen(Screen):
         # Clear detail panel
         self.query_one(FieldDetailPanel).update_field(None)
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self.action_edit_field()
+
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.row_key is None:
             return
@@ -228,9 +235,9 @@ class ConfigScreen(Screen):
         self.query_one("#field-search", Input).focus()
 
     def action_refresh(self) -> None:
-        import agento.framework.admin.data as data_mod
+        from ..data import clear_module_schema_cache
 
-        data_mod._module_schema_cache = None
+        clear_module_schema_cache()
         self._load_tree()
         if self._current_module:
             self._load_fields()

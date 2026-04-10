@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import subprocess
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Input, Static
-from textual import work
+from textual.widgets import DataTable, Footer, Input, Static
+
+from ..widgets.confirm import ConfirmScreen
+from ..widgets.sidebar import Sidebar
 
 _STATUS_CYCLE = [None, "TODO", "RUNNING", "SUCCESS", "FAILED", "DEAD"]
 
@@ -43,12 +46,15 @@ class JobsScreen(Screen):
         self._search_value: str | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="jobs-filter-bar"):
-            yield Input(placeholder="Search by reference ID...", id="jobs-search")
-            yield Static("Filter: All", id="jobs-status-label")
-        with Vertical(id="jobs-table-panel", classes="panel"):
-            yield Static("Jobs", classes="panel-title")
-            yield DataTable(id="jobs-table")
+        yield Sidebar(active="jobs")
+        with Vertical(classes="screen-content"):
+            with Horizontal(id="jobs-filter-bar"):
+                yield Input(placeholder="Search by reference ID...", id="jobs-search")
+                yield Static("Filter: All", id="jobs-status-label")
+            with Vertical(id="jobs-table-panel", classes="panel"):
+                yield Static("Jobs", classes="panel-title")
+                yield DataTable(id="jobs-table")
+        yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#jobs-table", DataTable)
@@ -75,6 +81,9 @@ class JobsScreen(Screen):
         self.query_one("#jobs-status-label", Static).update(f"Filter: {label}")
         self._load_data()
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self.action_view_detail()
+
     def action_view_detail(self) -> None:
         table = self.query_one("#jobs-table", DataTable)
         if table.row_count == 0:
@@ -96,7 +105,11 @@ class JobsScreen(Screen):
         if not job_id_str.isdigit():
             return
         job_id = int(job_id_str)
-        self.app.push_screen(ReplayConfirmScreen(job_id))
+        def _on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self._run_replay(job_id)
+
+        self.app.push_screen(ConfirmScreen(f"Replay job #{job_id}?"), _on_confirm)
 
     @work(thread=True)
     def _load_data(self) -> None:
@@ -123,6 +136,19 @@ class JobsScreen(Screen):
                 )
         else:
             table.add_row("--", "--", "No jobs found", "--", "--", "--", "--")
+
+    @work(thread=True)
+    def _run_replay(self, job_id: int) -> None:
+        try:
+            subprocess.run(
+                ["/opt/cron-agent/run.sh", "replay", str(job_id)],
+                capture_output=True, text=True, timeout=120,
+            )
+            self.app.call_from_thread(self.notify, f"Replay started for job #{job_id}")
+        except subprocess.TimeoutExpired:
+            self.app.call_from_thread(self.notify, f"Replay timed out for job #{job_id}", severity="error")
+        except Exception as e:
+            self.app.call_from_thread(self.notify, f"Replay failed: {e}", severity="error")
 
 
 class JobDetailScreen(ModalScreen):
@@ -194,22 +220,3 @@ class JobDetailScreen(ModalScreen):
         self.query_one("#job-detail-content", Static).update("\n".join(lines))
 
 
-class ReplayConfirmScreen(ModalScreen):
-
-    BINDINGS = [  # noqa: RUF012
-        Binding("y", "confirm", "y Confirm", show=True),
-        Binding("escape", "dismiss", "Esc Cancel", show=True),
-    ]
-
-    def __init__(self, job_id: int, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._job_id = job_id
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="replay-confirm", classes="panel"):
-            yield Static(f"Replay job #{self._job_id}?", classes="panel-title")
-            yield Static("Press [y] to confirm or [escape] to cancel.")
-
-    def action_confirm(self) -> None:
-        self.dismiss()
-        subprocess.run(["agento", "replay", str(self._job_id)])
