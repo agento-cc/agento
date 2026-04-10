@@ -69,7 +69,14 @@ def _register_framework_commands() -> None:
     from ..admin import AdminCommand
     from ..commands import register_command
     from .compose import DownCommand, LogsCommand, UpCommand
-    from .config import ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSetCommand
+    from .config import (
+        ConfigGetCommand,
+        ConfigListCommand,
+        ConfigRemoveCommand,
+        ConfigResolveCommand,
+        ConfigSchemaCommand,
+        ConfigSetCommand,
+    )
     from .doctor import DoctorCommand
     from .install import InstallCommand
     from .module import (
@@ -95,7 +102,7 @@ def _register_framework_commands() -> None:
         UpCommand, DownCommand, LogsCommand,
         DoctorCommand, InstallCommand, UpgradeCommand,
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
-        ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand,
+        ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSchemaCommand, ConfigResolveCommand,
         ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, E2eCommand,
         TokenRegisterCommand, TokenRefreshCommand, TokenListCommand, TokenDeregisterCommand, TokenSetCommand, TokenUsageCommand,
     ]:
