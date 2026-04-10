@@ -337,6 +337,221 @@ class ConfigListCommand:
             conn.close()
 
 
+class ConfigSchemaCommand:
+    @property
+    def name(self) -> str:
+        return "config:schema"
+
+    @property
+    def shortcut(self) -> str:
+        return "co:sc"
+
+    @property
+    def help(self) -> str:
+        return "Show config field definitions from system.json"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("module", nargs="?", default=None, help="Module name (omit for all)")
+        parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
+        from ..module_loader import scan_modules
+
+        manifests = scan_modules(CORE_MODULES_DIR) + scan_modules(USER_MODULES_DIR)
+
+        if args.module:
+            manifests = [m for m in manifests if m.name == args.module]
+            if not manifests:
+                print(f"Error: Module '{args.module}' not found.")
+                return
+
+        if args.as_json:
+            data = []
+            for m in manifests:
+                if not m.config and not m.tools:
+                    continue
+                tools_schema = {}
+                for tool in m.tools:
+                    fields = tool.get("fields", {})
+                    if fields:
+                        tools_schema[tool["name"]] = fields
+                data.append({
+                    "module": m.name,
+                    "fields": m.config,
+                    "tools": tools_schema,
+                })
+            print(json.dumps(data, indent=2))
+            return
+
+        found = False
+        for m in manifests:
+            if not m.config and not m.tools:
+                continue
+            found = True
+            print(f"Module: {m.name}")
+            for field_name, field_schema in m.config.items():
+                ftype = field_schema.get("type", "string")
+                label = field_schema.get("label", "")
+                print(f"  {field_name:<20s}{ftype:<10s}{label}")
+            for tool in m.tools:
+                for field_name, field_schema in tool.get("fields", {}).items():
+                    ftype = field_schema.get("type", "string")
+                    label = field_schema.get("label", "")
+                    print(f"  tools/{tool['name']}/{field_name:<20s}{ftype:<10s}{label}")
+
+        if not found:
+            print("No config schema found.")
+
+
+class ConfigResolveCommand:
+    @property
+    def name(self) -> str:
+        return "config:resolve"
+
+    @property
+    def shortcut(self) -> str:
+        return ""
+
+    @property
+    def help(self) -> str:
+        return "Resolve effective config values with source info"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("module", help="Module name")
+        parser.add_argument("--scope", default="default",
+                           choices=["default", "workspace", "agent_view"],
+                           help="Config scope")
+        parser.add_argument("--scope-id", type=int, default=0,
+                           help="Scope ID (workspace or agent_view ID)")
+        parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
+        from ..config_resolver import (
+            _db_path,
+            read_config_defaults,
+            resolve_field,
+            resolve_tool_field,
+        )
+        from ..module_loader import scan_modules
+        from ..scoped_config import load_scoped_db_overrides
+
+        manifests = scan_modules(CORE_MODULES_DIR) + scan_modules(USER_MODULES_DIR)
+        manifest = next((m for m in manifests if m.name == args.module), None)
+        if manifest is None:
+            print(f"Error: Module '{args.module}' not found.")
+            return
+
+        if not manifest.config and not manifest.tools:
+            print(f"Module '{args.module}' has no config fields.")
+            return
+
+        scope = args.scope
+        scope_id = getattr(args, "scope_id", 0)
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            config_defaults = read_config_defaults(manifest.path)
+
+            # Load overrides for the requested scope
+            scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
+            # Load default overrides for inherited detection
+            default_overrides = load_scoped_db_overrides(conn, "default", 0) if scope != "default" else {}
+            # Load parent scope overrides for inherited detection
+            parent_overrides: dict[str, tuple[str, bool]] = {}
+            if scope == "agent_view":
+                # Check workspace scope — need workspace_id from agent_view
+                with conn.cursor() as cur:
+                    cur.execute("SELECT workspace_id FROM agent_view WHERE id=%s", (scope_id,))
+                    row = cur.fetchone()
+                    if row:
+                        ws_id = row["workspace_id"] if isinstance(row, dict) else row[0]
+                        parent_overrides = load_scoped_db_overrides(conn, "workspace", ws_id)
+
+            # Merge overrides with scope chain: default -> workspace/parent -> requested scope
+            merged_overrides: dict[str, tuple[str, bool]] = {}
+            merged_overrides.update(default_overrides)
+            merged_overrides.update(parent_overrides)
+            merged_overrides.update(scope_overrides)
+
+            fields_output = []
+
+            for field_name, field_schema in manifest.config.items():
+                rv = resolve_field(
+                    manifest.name, field_name, field_schema,
+                    config_defaults, merged_overrides,
+                )
+                # Determine precise source with inherited detection
+                source = rv.source
+                inherited = False
+                if source == "db" and scope != "default":
+                    db_p = _db_path(manifest.name, field_name)
+                    if db_p not in scope_overrides:
+                        source = "db:inherited"
+                        inherited = True
+
+                is_obscure = field_schema.get("type") == "obscure"
+                display = "****" if is_obscure and rv.value is not None else _format_value(rv.value)
+
+                fields_output.append({
+                    "path": f"{manifest.name}/{field_name}",
+                    "field": field_name,
+                    "value": rv.value,
+                    "display_value": display,
+                    "source": source,
+                    "type": field_schema.get("type", "string"),
+                    "label": field_schema.get("label", ""),
+                    "obscure": is_obscure,
+                    "inherited": inherited,
+                })
+
+            for tool in manifest.tools:
+                for field_name, field_schema in tool.get("fields", {}).items():
+                    rv = resolve_tool_field(
+                        manifest.name, tool["name"], field_name,
+                        field_schema, config_defaults, merged_overrides,
+                    )
+                    source = rv.source
+                    inherited = False
+                    if source == "db" and scope != "default":
+                        db_p = f"{manifest.name}/tools/{tool['name']}/{field_name}".replace("-", "_")
+                        if db_p not in scope_overrides:
+                            source = "db:inherited"
+                            inherited = True
+
+                    is_obscure = field_schema.get("type") == "obscure"
+                    display = "****" if is_obscure and rv.value is not None else _format_value(rv.value)
+
+                    fields_output.append({
+                        "path": f"{manifest.name}/tools/{tool['name']}/{field_name}",
+                        "field": field_name,
+                        "value": rv.value,
+                        "display_value": display,
+                        "source": source,
+                        "type": field_schema.get("type", "string"),
+                        "label": field_schema.get("label", ""),
+                        "obscure": is_obscure,
+                        "inherited": inherited,
+                    })
+
+            if args.as_json:
+                print(json.dumps({
+                    "module": manifest.name,
+                    "scope": scope,
+                    "scope_id": scope_id,
+                    "fields": fields_output,
+                }, indent=2))
+            else:
+                print(f"Module: {manifest.name} (scope={scope})")
+                for f in fields_output:
+                    source_tag = f["source"] if f["source"] != "none" else "-"
+                    print(f"  {f['field']:<20s}= {f['display_value']:<25s}[{source_tag}]")
+        finally:
+            conn.close()
+
+
 class ConfigRemoveCommand:
     @property
     def name(self) -> str:
