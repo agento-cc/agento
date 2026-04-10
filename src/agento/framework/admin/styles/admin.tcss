@@ -61,3 +61,40 @@ Screen {
 DataTable {
     height: auto;
 }
+
+#jobs-filter-bar {
+    height: auto;
+    max-height: 3;
+    margin-bottom: 1;
+}
+
+#jobs-search {
+    width: 1fr;
+}
+
+#jobs-status-label {
+    width: auto;
+    min-width: 20;
+    padding: 1 2;
+    text-style: bold;
+}
+
+#jobs-table {
+    height: auto;
+}
+
+#jobs-table-panel {
+    height: 1fr;
+}
+
+#job-detail-scroll {
+    width: 80%;
+    height: 80%;
+    margin: 2 4;
+}
+
+#replay-confirm {
+    width: 50;
+    height: auto;
+    margin: 4 auto;
+}
