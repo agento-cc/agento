@@ -1,32 +1,55 @@
 # Agento
+**Security by design, not by prompt.**
 
 [![CI](https://github.com/agento-cc/agento/actions/workflows/ci.yml/badge.svg)](https://github.com/agento-cc/agento/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-Self-hosted agent automation platform with modular integrations, Python execution runtime, Node.js toolbox, scoped config, and extension modules. Automates tasks using AI agents (Claude Code, OpenAI Codex) in Docker containers.
+Stop running agents in YOLO mode. Build them with isolation, policy, and modular control.
 
-## Why Two Runtimes?
+Agento is an open-source, self-hosted platform for building modular agentic software with **hard runtime boundaries, controlled tool access, secure secrets handling, and deployment-specific extensibility**.
 
-Agento enforces a strict security boundary between the AI sandbox and credentials. The sandbox where agents run has **zero access** to secrets. The toolbox is the only container that holds credentials, exposed via an MCP server that the agent calls through controlled tool interfaces.
+Modern agent stacks are powerful, but in practice they are often glued together from prompts, scripts, MCP servers, and broad permissions. The result is fragile and risky: duplicated files, unclear tool access policies, missing human approval steps, over-permissioned agents, and no clean way to route the right task to the right agent and model.
 
-```
-┌───────────────────────────────────────────────────────┐
-│                    Docker Network                     │
-│                                                       │
-│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐  │
-│  │   Sandbox   │   │   Toolbox   │   │     Cron    │  │
-│  │   Claude/   │   │   Node.js   │   │    Python   │  │
-│  │   Codex     │   │  MCP Server │   │   Consumer  │  │
-│  │             │   │             │   │ + Scheduler │  │
-│  │ NO secrets  │   │ Credentials │   │  Job Queue  │  │
-│  └─────────────┘   └──────┬──────┘   └─────────────┘  │
-│                           │                           │
-│                     ┌─────┴─────┐                     │
-│                     │   MySQL   │                     │
-│                     └───────────┘                     │
-└───────────────────────────────────────────────────────┘
-```
+Agento is extendible by design. It means it's super easy to create and share custom module. Let's say you want to distribute your QA agent as a template. Just pack it inside a self-containing module and send to your friend.
+
+## Why Agento?
+
+- **Secure by architecture** — agents run in an isolated sandbox without direct access to secrets.
+- **Controlled tool access** — enforce policies for tools like email, browser, and external systems.
+- **Modular by default** — extend behavior through modules, not by patching core code.
+- **Deployment-specific customization** — adapt agents, policies, and workflows per workspace or environment.
+- **Routing-ready** — decide which agent, model, and tool policy should handle each task.
+- **Built for self-hosting** — keep control over your infrastructure, credentials, and runtime boundaries.
+
+## The problem
+
+Teams adopting AI agents quickly run into the same issues:
+
+- too many separate agents with duplicated prompt and config files,
+- unclear separation between runtime, tools, and secrets,
+- agents operating with permissions that are too broad,
+- missing or weak HITL / approval flows,
+- no enforceable policy layer for actions like sending email or browsing the web,
+- no clean routing layer for deciding which task should go to which agent and model.
+
+We keep hearing the same failure stories: deleted workspaces, leaked emails, agents browsing beyond intended domains, and automations acting with more access than they should ever have had.
+
+## The solution
+
+Agento brings structure, security, and extensibility to agentic systems through:
+
+- **task routing**
+- **runtime isolation**
+- **tool access policies**
+- **secrets separation**
+- **filesystem and environment separation**
+- **custom MCP-based security proxy**
+- **module-driven extensibility**
+
+## Inspiration
+
+Agento is inspired by **Magento Open Source** — especially its extensibility, extension-first architecture, and strong community model — but rethought for the age of AI agents, MCP tools, and secure autonomous workflows.
 
 ## Quick Start
 

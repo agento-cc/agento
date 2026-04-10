@@ -1,0 +1,11 @@
+# Project-specific Docker Compose overrides — safe to edit.
+# Docker Compose automatically merges this with docker-compose.yml.
+#
+# Examples:
+#   - Add volumes to existing services (cron, toolbox, mysql)
+#   - Add new services (redis, emulators, etc.)
+#   - Override environment variables
+#
+# See docs/deployment/docker-compose-override.md for details.
+
+services: {}
