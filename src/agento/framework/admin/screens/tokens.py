@@ -5,7 +5,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Static
-from textual.worker import work
+from textual import work
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -51,7 +51,7 @@ class ConfirmScreen(ModalScreen[bool]):
 class TokenUsageScreen(ModalScreen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape", "pop_screen", "Close"),
+        Binding("escape", "pop_screen", "Esc Close", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -105,9 +105,9 @@ class TokenUsageScreen(ModalScreen):
 class TokensScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("enter", "view_token", "View", show=False),
-        Binding("s", "set_primary", "Set Primary"),
-        Binding("x", "deregister", "Deregister"),
+        Binding("enter", "view_token", "Enter Detail", show=True),
+        Binding("s", "set_primary", "s Set Primary", show=True),
+        Binding("x", "deregister", "x Deregister", show=True),
     ]
 
     def __init__(self) -> None:

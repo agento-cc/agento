@@ -11,7 +11,7 @@ class ToolListCommand:
 
     @property
     def shortcut(self) -> str:
-        return "to:li"
+        return "tl:li"
 
     @property
     def help(self) -> str:

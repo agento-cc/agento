@@ -20,14 +20,14 @@ class AdminApp(App):
     CSS_PATH = CSS_PATH
 
     BINDINGS = [  # noqa: RUF012
-        Binding("d", "switch_screen('dashboard')", "Dashboard"),
-        Binding("j", "switch_screen('jobs')", "Jobs"),
-        Binding("t", "switch_screen('tokens')", "Tokens"),
-        Binding("a", "switch_screen('agents')", "Agents"),
-        Binding("c", "switch_screen('config')", "Config"),
-        Binding("r", "refresh", "Refresh"),
-        Binding("q", "quit", "Quit"),
-        Binding("question_mark", "help", "Help"),
+        Binding("f1", "switch_screen('dashboard')", "F1 Dashboard", show=True),
+        Binding("f2", "switch_screen('jobs')", "F2 Jobs", show=True),
+        Binding("f3", "switch_screen('tokens')", "F3 Tokens", show=True),
+        Binding("f4", "switch_screen('agents')", "F4 Agents", show=True),
+        Binding("f5", "switch_screen('config')", "F5 Config", show=True),
+        Binding("r", "refresh", "r Refresh", show=True),
+        Binding("q", "quit", "q Quit", show=True),
+        Binding("ctrl+x", "quit", "^X Quit", show=True, priority=True),
     ]
 
     SCREENS = {  # noqa: RUF012
@@ -62,12 +62,6 @@ class AdminApp(App):
         screen = self.screen
         if hasattr(screen, "action_refresh"):
             screen.action_refresh()
-
-    def action_help(self) -> None:
-        self.notify(
-            "d=Dashboard  j=Jobs  t=Tokens  a=Agents  c=Config  r=Refresh  q=Quit",
-            title="Key Bindings",
-        )
 
     async def action_switch_screen(self, screen: str) -> None:
         self.switch_screen(screen)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Commands that always run on the host (no Docker proxy)
 _LOCAL_COMMANDS = frozenset({
-    "admin", "doctor", "install", "upgrade", "up", "down", "logs",
+    "doctor", "install", "upgrade", "up", "down", "logs",
     "module:list", "module:enable", "module:disable", "module:validate",
     "make:module",
     # Shortcuts for local commands
@@ -16,7 +16,7 @@ _LOCAL_COMMANDS = frozenset({
 
 # Commands that need an interactive TTY (OAuth flows, onboarding prompts)
 _INTERACTIVE_COMMANDS = frozenset({
-    "token:register", "token:refresh", "setup:upgrade",
+    "admin", "token:register", "token:refresh", "setup:upgrade",
     # Shortcuts for interactive commands
     "to:reg", "to:ref", "se:up",
 })

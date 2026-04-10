@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea, Tree
-from textual.worker import work
+from textual import work
 
 from ..data import ResolvedField
 from ..widgets.field_detail import FieldDetailPanel
@@ -17,10 +17,10 @@ from ..widgets.scope_selector import ModeChanged, ScopeChanged, ScopeSelector
 class ConfigScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("e", "edit_field", "Edit", priority=True),
-        Binding("delete", "delete_override", "Delete Override", priority=True),
-        Binding("m", "toggle_mode", "Toggle Mode"),
-        Binding("slash", "focus_search", "Search"),
+        Binding("e", "edit_field", "e Edit", show=True, priority=True),
+        Binding("delete", "delete_override", "Del Remove Override", show=True, priority=True),
+        Binding("m", "toggle_mode", "m Mode", show=True),
+        Binding("slash", "focus_search", "/ Search", show=True),
     ]
 
     def __init__(self, **kwargs) -> None:
@@ -239,7 +239,7 @@ class ConfigScreen(Screen):
 class ConfigFieldEditorScreen(ModalScreen[bool]):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Esc Cancel", show=True),
     ]
 
     def __init__(self, field: ResolvedField, scope: str, scope_id: int) -> None:

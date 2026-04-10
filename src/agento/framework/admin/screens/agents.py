@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Static
-from textual.worker import work
+from textual import work
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -30,7 +30,7 @@ class ConfirmScreen(ModalScreen[bool]):
 class AgentDetailScreen(ModalScreen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("escape", "pop_screen", "Back"),
+        Binding("escape", "pop_screen", "Esc Close", show=True),
     ]
 
     def __init__(self, agent: dict) -> None:
@@ -57,9 +57,9 @@ class AgentDetailScreen(ModalScreen):
 class AgentsScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
-        Binding("enter", "view_detail", "Detail", show=False),
-        Binding("b", "build", "Build"),
-        Binding("c", "switch_screen('config')", "Config"),
+        Binding("enter", "view_detail", "Enter Detail", show=True),
+        Binding("b", "build", "b Build", show=True),
+        Binding("c", "switch_screen('config')", "c Config", show=True),
     ]
 
     def compose(self) -> ComposeResult:
