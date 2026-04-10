@@ -1,0 +1,63 @@
+Screen {
+    padding: 1;
+}
+
+.panel {
+    border: round $primary;
+    padding: 1 2;
+    margin: 0 1 1 0;
+    height: auto;
+}
+
+.panel-title {
+    text-style: bold;
+    color: $text;
+    margin-bottom: 1;
+}
+
+#dashboard-top {
+    height: auto;
+    max-height: 12;
+}
+
+#health-panel {
+    width: 1fr;
+}
+
+#system-panel {
+    width: 1fr;
+}
+
+#jobs-panel {
+    height: auto;
+    max-height: 14;
+}
+
+#dashboard-bottom {
+    height: auto;
+    max-height: 12;
+}
+
+#tokens-panel {
+    width: 1fr;
+}
+
+#agents-panel {
+    width: 1fr;
+}
+
+#recent-jobs-table {
+    height: auto;
+    max-height: 8;
+}
+
+#placeholder {
+    padding: 2 4;
+    text-align: center;
+    text-style: italic;
+    color: $text-muted;
+}
+
+DataTable {
+    height: auto;
+}

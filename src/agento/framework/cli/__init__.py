@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Commands that always run on the host (no Docker proxy)
 _LOCAL_COMMANDS = frozenset({
-    "doctor", "install", "upgrade", "up", "down", "logs",
+    "admin", "doctor", "install", "upgrade", "up", "down", "logs",
     "module:list", "module:enable", "module:disable", "module:validate",
     "make:module",
     # Shortcuts for local commands
@@ -66,6 +66,7 @@ def _proxy_to_docker(argv: list[str]) -> None:
 
 def _register_framework_commands() -> None:
     """Register framework commands directly (no bootstrap needed)."""
+    from ..admin import AdminCommand
     from ..commands import register_command
     from .compose import DownCommand, LogsCommand, UpCommand
     from .config import ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSetCommand
@@ -90,6 +91,7 @@ def _register_framework_commands() -> None:
     from .upgrade import UpgradeCommand
 
     for cmd_cls in [
+        AdminCommand,
         UpCommand, DownCommand, LogsCommand,
         DoctorCommand, InstallCommand, UpgradeCommand,
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
@@ -112,6 +114,7 @@ _GROUP_LABELS = {
 }
 
 _STANDALONE_GROUPS = {
+    "admin": "project",
     "doctor": "project", "install": "project", "up": "project",
     "down": "project", "logs": "project",
     "consumer": "job", "publish": "job", "replay": "job", "rotate": "job",
