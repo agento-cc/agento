@@ -5,12 +5,14 @@ import subprocess
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Input, Static
 
 from ..widgets.confirm import ConfirmScreen
 from ..widgets.sidebar import Sidebar
+
+_AGENT_SEARCH_KEYS = ("code", "workspace_code", "label")
 
 
 class AgentsScreen(Screen):
@@ -18,11 +20,13 @@ class AgentsScreen(Screen):
     BINDINGS = [  # noqa: RUF012
         Binding("b", "build", "b Build", show=True),
         Binding("c", "switch_screen('config')", "c Config", show=True),
+        Binding("slash", "focus_search", "/ Search", show=True),
     ]
 
     def compose(self) -> ComposeResult:
         yield Sidebar(active="agents")
-        with VerticalScroll(classes="screen-content"):
+        with Vertical(classes="screen-content"):
+            yield Input(placeholder="Search...", id="agents-search")
             with Vertical(id="agents-list-panel", classes="panel"):
                 yield Static("Agent Views", classes="panel-title")
                 yield DataTable(id="agents-table")
@@ -36,7 +40,18 @@ class AgentsScreen(Screen):
         table.add_columns("Code", "Workspace", "Ingress", "Build Status")
         table.cursor_type = "row"
         self._agents: list[dict] = []
+        self._filtered_agents: list[dict] = []
+        self._search_text: str = ""
+        self._just_highlighted = False
         self._load_data()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "agents-search":
+            self._search_text = event.value.strip().lower()
+            self._refresh_table()
+
+    def action_focus_search(self) -> None:
+        self.query_one("#agents-search", Input).focus()
 
     def action_refresh(self) -> None:
         self._load_data()
@@ -50,10 +65,20 @@ class AgentsScreen(Screen):
 
     def _update_ui(self, agents: list[dict]) -> None:
         self._agents = agents
+        self._refresh_table()
+
+    def _refresh_table(self) -> None:
         table = self.query_one("#agents-table", DataTable)
         table.clear()
-        if agents:
-            for agent in agents:
+        filtered = self._agents
+        if self._search_text:
+            filtered = [
+                a for a in filtered
+                if self._search_text in " ".join(str(a.get(k, "") or "") for k in _AGENT_SEARCH_KEYS).lower()
+            ]
+        self._filtered_agents = filtered
+        if filtered:
+            for agent in filtered:
                 table.add_row(
                     agent["code"],
                     agent.get("workspace_code", ""),
@@ -64,17 +89,21 @@ class AgentsScreen(Screen):
             table.add_row("--", "--", "--", "No agent views found")
 
     def _get_selected_agent(self) -> dict | None:
-        if not self._agents:
+        if not self._filtered_agents:
             return None
         table = self.query_one("#agents-table", DataTable)
-        if table.cursor_row is not None and 0 <= table.cursor_row < len(self._agents):
-            return self._agents[table.cursor_row]
+        if table.cursor_row is not None and 0 <= table.cursor_row < len(self._filtered_agents):
+            return self._filtered_agents[table.cursor_row]
         return None
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if self._just_highlighted:
+            self._just_highlighted = False
+            return
         self.action_build()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._just_highlighted = True
         agent = self._get_selected_agent()
         if agent is None:
             return

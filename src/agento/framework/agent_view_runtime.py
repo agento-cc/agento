@@ -64,15 +64,7 @@ def resolve_agent_view_runtime(conn, agent_view_id: int | None) -> AgentViewRunt
     )
 
     provider = runtime.get_value("agent_view/provider")
-
-    # Model resolution: check provider-specific path first, fall back to generic
-    model = None
-    if provider == "claude":
-        model = runtime.get_value("agent_view/claude/model")
-    elif provider == "codex":
-        model = runtime.get_value("agent_view/codex/model")
-    if model is None:
-        model = runtime.get_value("agent_view/model")
+    model = runtime.get_value("agent_view/model")
 
     priority_raw = runtime.get_value("agent_view/scheduling/priority")
     priority = DEFAULT_PRIORITY

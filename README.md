@@ -111,6 +111,20 @@ The installer offers **Basic** (recommended) and **Advanced** modes. Basic uses 
 agento doctor                         # Verify prerequisites
 ```
 
+## Admin TUI
+
+`agento admin` launches an interactive terminal dashboard for operational visibility and configuration management.
+
+![Admin TUI](docs/images/admin-config.png)
+
+- **Dashboard** -- system health, recent jobs, tokens, agent views at a glance
+- **Jobs** -- browse, filter, search, view details, replay jobs
+- **Agents** -- manage agent views, trigger workspace builds
+- **Tokens** -- usage stats, set primary, deregister
+- **Config** -- schema-driven editor with scope selector and live search
+
+Keyboard-first with full mouse support. See [Admin TUI docs](docs/cli/admin.md) for details.
+
 ## Creating Your First Module
 
 ```bash

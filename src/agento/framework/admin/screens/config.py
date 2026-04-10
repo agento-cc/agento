@@ -10,6 +10,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Select, Static, TextArea, Tree
 
 from ..data import ResolvedField
+from ..widgets.confirm import ConfirmScreen
 from ..widgets.field_detail import FieldDetailPanel
 from ..widgets.scope_selector import ModeChanged, ScopeChanged, ScopeSelector
 from ..widgets.sidebar import Sidebar
@@ -19,7 +20,7 @@ class ConfigScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
         Binding("e", "edit_field", "e Edit", show=True, priority=True),
-        Binding("delete", "delete_override", "Del Remove Override", show=True, priority=True),
+        Binding("d", "delete_entry", "d Delete", show=True, priority=True),
         Binding("m", "toggle_mode", "m Mode", show=True),
         Binding("slash", "focus_search", "/ Search", show=True),
     ]
@@ -32,6 +33,7 @@ class ConfigScreen(Screen):
         self._current_mode: str = "all"
         self._fields: list[ResolvedField] = []
         self._search_text: str = ""
+        self._just_highlighted = False
 
     def compose(self) -> ComposeResult:
         yield Sidebar(active="config")
@@ -151,9 +153,13 @@ class ConfigScreen(Screen):
         self.query_one(FieldDetailPanel).update_field(None)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if self._just_highlighted:
+            self._just_highlighted = False
+            return
         self.action_edit_field()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._just_highlighted = True
         if event.row_key is None:
             return
         path = str(event.row_key.value)
@@ -196,7 +202,7 @@ class ConfigScreen(Screen):
         if saved:
             self._load_fields()
 
-    def action_delete_override(self) -> None:
+    def action_delete_entry(self) -> None:
         field = self._get_selected_field()
         if field is None:
             self.notify("No field selected", severity="warning")
@@ -204,7 +210,15 @@ class ConfigScreen(Screen):
         if field.source != "db":
             self.notify("Only DB overrides can be deleted", severity="warning")
             return
-        self._do_delete(field)
+
+        def _on_confirm(confirmed: bool) -> None:
+            if confirmed:
+                self._do_delete(field)
+
+        self.app.push_screen(
+            ConfirmScreen(f"Do you want to remove this entry '{field.path}'?", default_no=True),
+            callback=_on_confirm,
+        )
 
     @work(thread=True)
     def _do_delete(self, field: ResolvedField) -> None:

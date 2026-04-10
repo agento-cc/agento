@@ -22,18 +22,18 @@ def work_dir(tmp_path):
 class TestGetAgentConfig:
     def test_extracts_agent_prefix(self):
         overrides = {
-            "agent_view/claude/model": ("opus-4", False),
+            "agent_view/model": ("opus-4", False),
             "agent_view/mcp/servers": ('{"toolbox": {}}', False),
             "jira/token": ("abc", False),
         }
         result = _get_agent_config(overrides)
         assert result == {
-            "claude/model": "opus-4",
+            "model": "opus-4",
             "mcp/servers": '{"toolbox": {}}',
         }
 
     def test_skips_none_values(self):
-        overrides = {"agent_view/claude/model": (None, False)}
+        overrides = {"agent_view/model": (None, False)}
         assert _get_agent_config(overrides) == {}
 
     def test_empty_overrides(self):
@@ -43,7 +43,7 @@ class TestGetAgentConfig:
 class TestGenerateClaudeConfig:
     def test_generates_claude_json(self, work_dir):
         work_dir.mkdir(parents=True)
-        generate_claude_config(work_dir, {"claude/model": "opus-4"})
+        generate_claude_config(work_dir, {"model": "opus-4"})
 
         config_path = work_dir / ".claude.json"
         assert config_path.exists()
@@ -53,7 +53,7 @@ class TestGenerateClaudeConfig:
     def test_generates_system_prompt(self, work_dir):
         work_dir.mkdir(parents=True)
         generate_claude_config(
-            work_dir, {"claude/model": "sonnet", "claude/personality": "Be concise."}
+            work_dir, {"model": "sonnet", "claude/personality": "Be concise."}
         )
         data = json.loads((work_dir / ".claude.json").read_text())
         assert data["systemPrompt"] == "Be concise."
@@ -68,7 +68,7 @@ class TestGenerateClaudeConfig:
     def test_skips_invalid_permissions_json(self, work_dir):
         work_dir.mkdir(parents=True)
         generate_claude_config(
-            work_dir, {"claude/model": "opus", "claude/permissions": "not-json{"}
+            work_dir, {"model": "opus", "claude/permissions": "not-json{"}
         )
         data = json.loads((work_dir / ".claude.json").read_text())
         assert "permissions" not in data
@@ -153,7 +153,7 @@ class TestGenerateMcpConfig:
 class TestGenerateCodexConfig:
     def test_generates_config_toml(self, work_dir):
         work_dir.mkdir(parents=True)
-        generate_codex_config(work_dir, {"codex/model": "o3"})
+        generate_codex_config(work_dir, {"model": "o3"})
 
         config_path = work_dir / ".codex" / "config.toml"
         assert config_path.exists()
@@ -163,7 +163,7 @@ class TestGenerateCodexConfig:
     def test_approval_mode(self, work_dir):
         work_dir.mkdir(parents=True)
         generate_codex_config(
-            work_dir, {"codex/model": "o3", "codex/approval_mode": "full-auto"}
+            work_dir, {"model": "o3", "codex/approval_mode": "full-auto"}
         )
         content = (work_dir / ".codex" / "config.toml").read_text()
         assert 'approval_mode = "full-auto"' in content
@@ -177,7 +177,7 @@ class TestGenerateCodexConfig:
 class TestPopulateAgentConfigs:
     def test_creates_working_dir(self, tmp_path):
         wd = tmp_path / "new" / "deep" / "path"
-        overrides = {"agent_view/claude/model": ("opus-4", False)}
+        overrides = {"agent_view/model": ("opus-4", False)}
         populate_agent_configs(wd, overrides)
         assert wd.exists()
         assert (wd / ".claude.json").exists()
@@ -185,9 +185,9 @@ class TestPopulateAgentConfigs:
     def test_generates_all_config_types(self, tmp_path):
         wd = tmp_path / "ws"
         overrides = {
-            "agent_view/claude/model": ("opus-4", False),
+            "agent_view/model": ("opus-4", False),
             "agent_view/mcp/servers": ('{"toolbox": {"command": "node"}}', False),
-            "agent_view/codex/model": ("o3", False),
+            "agent_view/codex/approval_mode": ("full-auto", False),
         }
         populate_agent_configs(wd, overrides)
         assert (wd / ".claude.json").exists()
@@ -205,14 +205,14 @@ class TestPopulateAgentConfigs:
 
     def test_accepts_string_path(self, tmp_path):
         wd = str(tmp_path / "ws")
-        overrides = {"agent_view/claude/model": ("sonnet", False)}
+        overrides = {"agent_view/model": ("sonnet", False)}
         populate_agent_configs(wd, overrides)
         assert (tmp_path / "ws" / ".claude.json").exists()
 
     def test_passes_agent_view_id_to_mcp_config(self, tmp_path):
         wd = tmp_path / "ws"
         overrides = {
-            "agent_view/claude/model": ("opus-4", False),
+            "agent_view/model": ("opus-4", False),
             "agent_view/mcp/servers": ('{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}', False),
         }
         populate_agent_configs(wd, overrides, agent_view_id=3)

@@ -76,7 +76,7 @@ def _make_runtime_with_agent_view(
                 '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}',
                 False,
             ),
-            "agent_view/claude/model": ("opus-4", False),
+            "agent_view/model": ("opus-4", False),
         },
     )
 
