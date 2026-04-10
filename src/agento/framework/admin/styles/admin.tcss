@@ -98,3 +98,70 @@ DataTable {
     height: auto;
     margin: 4 auto;
 }
+
+/* Config screen layout */
+#config-top {
+    height: auto;
+    padding: 0 1;
+}
+
+#scope-bar {
+    height: auto;
+}
+
+#scope-bar Select {
+    width: 1fr;
+    margin: 0 1 0 0;
+}
+
+#config-main {
+    height: 1fr;
+}
+
+#module-tree {
+    width: 25;
+    border: solid $secondary;
+    padding: 0 1;
+}
+
+#field-table-container {
+    width: 1fr;
+}
+
+#field-search {
+    margin: 0 0 1 0;
+}
+
+#field-table {
+    width: 1fr;
+}
+
+#field-detail {
+    height: auto;
+    min-height: 5;
+    max-height: 8;
+    border: solid $secondary;
+    padding: 0 1;
+}
+
+/* Modal screens */
+#editor-dialog {
+    width: 60;
+    height: auto;
+    border: thick $primary;
+    padding: 1 2;
+    background: $surface;
+}
+
+#editor-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#editor-buttons Button {
+    margin: 0 1 0 0;
+}
+
+ModalScreen {
+    align: center middle;
+}
