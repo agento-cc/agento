@@ -11,6 +11,7 @@ include = [
     "src/agento/**/*.yaml",
     "src/agento/**/*.md",
     "src/agento/**/*.sql",
+    "src/agento/**/*.tcss",
     "src/agento/framework/cli/templates/*",
     "src/agento/toolbox/package.json",
     "src/agento/toolbox/package-lock.json",
@@ -73,6 +74,7 @@ known-first-party = ["agento"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-mock>=3.14", "respx>=0.22", "ruff>=0.11", "basedpyright>=1.29"]
 test = ["pytest>=8.0", "pytest-mock>=3.14", "respx>=0.22"]
+admin = ["textual>=1.0,<2.0"]
 
 [dependency-groups]
 dev = [
