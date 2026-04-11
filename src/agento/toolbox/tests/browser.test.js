@@ -78,7 +78,7 @@ describe('browser tools', () => {
   });
 
   describe('browser_stop_video', () => {
-    it('parses video path and saves to runtime dir', async () => {
+    it('parses video path, copies to runtime dir, cleans up source', async () => {
       mockClient.callTool.mockResolvedValue({
         content: [{ type: 'text', text: '- [Video](/tmp/pw-video/video.webm)' }],
       });
@@ -88,15 +88,51 @@ describe('browser tools', () => {
       const result = await handlers.browser_stop_video({
         user: 'a@b.com',
         job_id: '42',
-        reference_id: 'K3-1',
       });
 
-      expect(mockMkdir).toHaveBeenCalledWith('/workspace/tmp/videos/42-K3-1', { recursive: true });
-      expect(mockCopyFile).toHaveBeenCalledWith('/tmp/pw-video/video.webm', '/workspace/tmp/videos/42-K3-1/video.webm');
-      expect(result.content).toContainEqual({
-        type: 'text',
-        text: 'Video saved to: /workspace/tmp/videos/42-K3-1/video.webm',
+      expect(mockMkdir).toHaveBeenCalledWith('/workspace/tmp/videos/42', { recursive: true });
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        expect.stringContaining('/tmp/pw-video/video.webm'),
+        expect.stringMatching(/^\/workspace\/tmp\/videos\/42\/\d+\.webm$/),
+      );
+      expect(mockUnlink).toHaveBeenCalled();
+      expect(result.content[0].text).toMatch(/^Video saved to: \/workspace\/tmp\/videos\/42\/\d+\.webm$/);
+    });
+
+    it('uses custom filename when provided', async () => {
+      mockClient.callTool.mockResolvedValue({
+        content: [{ type: 'text', text: '- [Video](/tmp/pw-video/video.webm)' }],
       });
+
+      const { handlers } = await importAndRegister(['browser_stop_video']);
+
+      const result = await handlers.browser_stop_video({
+        user: 'a@b.com',
+        job_id: '42',
+        filename: 'demo.webm',
+      });
+
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        expect.stringContaining('/tmp/pw-video/video.webm'),
+        '/workspace/tmp/videos/42/demo.webm',
+      );
+      expect(result.content[0].text).toBe('Video saved to: /workspace/tmp/videos/42/demo.webm');
+    });
+
+    it('matches video links with dimensions in text (e.g. [Video 1280x720])', async () => {
+      mockClient.callTool.mockResolvedValue({
+        content: [{ type: 'text', text: '- [Video 1280x720](/tmp/pw/recording.webm)' }],
+      });
+
+      const { handlers } = await importAndRegister(['browser_stop_video']);
+
+      const result = await handlers.browser_stop_video({
+        user: 'a@b.com',
+        filename: 'out.webm',
+      });
+
+      expect(mockCopyFile).toHaveBeenCalled();
+      expect(result.content[0].text).toMatch(/Video saved to:/);
     });
 
     it('returns raw result when no video files in response', async () => {
@@ -109,7 +145,6 @@ describe('browser tools', () => {
       const result = await handlers.browser_stop_video({
         user: 'a@b.com',
         job_id: '42',
-        reference_id: 'K3-1',
       });
 
       expect(mockCopyFile).not.toHaveBeenCalled();
