@@ -1,7 +1,8 @@
-"""Integration: Consumer retry, dead-letter, concurrent dequeue (real MySQL)."""
+"""Integration: Consumer retry, dead-letter, concurrent dequeue, resume (real MySQL)."""
 from __future__ import annotations
 
 import logging
+import subprocess
 from unittest.mock import patch
 
 from agento.framework.consumer import Consumer
@@ -118,3 +119,98 @@ class TestConcurrentDequeue:
         # Third dequeue should return None (queue empty)
         job3 = consumer._try_dequeue()
         assert job3 is None
+
+
+class TestResumeOnTimeout:
+
+    def test_timeout_captures_session_id_then_resumes(self, int_db_config, int_consumer_config):
+        """Attempt 1 times out with session_id captured -> Attempt 2 resumes."""
+        insert_primary_token("claude")
+        logger = logging.getLogger("test")
+        job_id = insert_queued_job(
+            reference_id="AI-RESUME-1",
+            idempotency_key="resume:1",
+            max_attempts=3,
+        )
+
+        # Attempt 1: simulate TimeoutExpired with session_id attached
+        timeout_exc = subprocess.TimeoutExpired(cmd="claude", timeout=600)
+        timeout_exc.session_id = "sess-timeout-abc"  # type: ignore[attr-defined]
+
+        with patch.object(TokenClaudeRunner, "run", side_effect=timeout_exc):
+            consumer = Consumer(int_db_config, int_consumer_config, logger)
+            job = consumer._try_dequeue()
+            assert job is not None
+            consumer._execute_job(job)
+
+        # Verify: job retried as TODO with session_id persisted
+        row = fetch_job(job_id)
+        assert row["status"] == "TODO"
+        assert row["attempt"] == 1
+        assert row["session_id"] == "sess-timeout-abc"
+
+        # Move scheduled_after to past
+        update_job(job_id, scheduled_after="2000-01-01 00:00:00")
+
+        # Attempt 2: mock resume to succeed
+        resume_result = ClaudeResult(
+            raw_output="resumed ok",
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.01,
+            num_turns=2,
+            duration_ms=3000,
+            subtype="sess-timeout-abc",
+        )
+        with (
+            patch.object(TokenClaudeRunner, "resume", return_value=resume_result) as mock_resume,
+            patch.object(Consumer, "_is_pid_alive", return_value=False),
+        ):
+            consumer2 = Consumer(int_db_config, int_consumer_config, logger)
+            job2 = consumer2._try_dequeue()
+            assert job2 is not None
+            assert job2.id == job_id
+            assert job2.session_id == "sess-timeout-abc"
+            consumer2._execute_job(job2)
+
+            mock_resume.assert_called_once_with("sess-timeout-abc", model=None)
+
+        row = fetch_job(job_id)
+        assert row["status"] == "SUCCESS"
+        assert row["attempt"] == 2
+
+    def test_stale_recovery_with_dead_pid(self, int_db_config, int_consumer_config):
+        """RUNNING job with dead PID is recovered to TODO."""
+        logger = logging.getLogger("test")
+        job_id = insert_queued_job(
+            reference_id="AI-STALE-1",
+            idempotency_key="stale:1",
+            max_attempts=3,
+        )
+        # Manually set to RUNNING with a dead PID
+        update_job(job_id, status="RUNNING", attempt=1, pid=99999)
+
+        consumer = Consumer(int_db_config, int_consumer_config, logger)
+        consumer._recover_stale_jobs()
+
+        row = fetch_job(job_id)
+        assert row["status"] == "TODO"
+        assert row["error_class"] == "StaleJobRecovery"
+        assert "pid=99999" in row["error_message"]
+
+    def test_stale_recovery_dead_pid_max_attempts(self, int_db_config, int_consumer_config):
+        """RUNNING job with dead PID and max attempts exhausted -> DEAD."""
+        logger = logging.getLogger("test")
+        job_id = insert_queued_job(
+            reference_id="AI-STALE-2",
+            idempotency_key="stale:2",
+            max_attempts=2,
+        )
+        update_job(job_id, status="RUNNING", attempt=2, pid=99999)
+
+        consumer = Consumer(int_db_config, int_consumer_config, logger)
+        consumer._recover_stale_jobs()
+
+        row = fetch_job(job_id)
+        assert row["status"] == "DEAD"
+        assert row["error_class"] == "StaleJobRecovery"

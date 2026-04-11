@@ -38,6 +38,8 @@ def _make_job(**overrides) -> Job:
         result_summary="subtype=success turns=3",
         error_message=None,
         error_class=None,
+        pid=None,
+        session_id=None,
         created_at=datetime(2026, 2, 20, 7, 59),
         updated_at=datetime(2026, 2, 20, 8, 1, 0),
     )
@@ -50,7 +52,7 @@ def _mock_runner_for(agent_type: str):
     runner = MagicMock()
     if agent_type == "claude":
         def build_cmd(prompt, *, model=None):
-            cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions", "--output-format", "json"]
+            cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"]
             if model:
                 cmd.extend(["--model", model])
             return cmd
@@ -86,7 +88,7 @@ class TestBuildReplayCommand:
         assert rc.args[2] == job.prompt
         assert "--dangerously-skip-permissions" in rc.args
         assert "--output-format" in rc.args
-        assert "json" in rc.args
+        assert "stream-json" in rc.args
         assert "--model" in rc.args
         assert "claude-sonnet-4-20250514" in rc.args
 

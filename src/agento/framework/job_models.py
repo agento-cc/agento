@@ -46,6 +46,8 @@ class Job:
     result_summary: str | None
     error_message: str | None
     error_class: str | None
+    pid: int | None
+    session_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -70,7 +72,8 @@ class Job:
             context=context, idempotency_key="", status=JobStatus.RUNNING,
             attempt=1, max_attempts=3, scheduled_after=now, started_at=now,
             finished_at=None, result_summary=None, error_message=None,
-            error_class=None, created_at=now, updated_at=now,
+            error_class=None, pid=None, session_id=None,
+            created_at=now, updated_at=now,
         )
 
     @classmethod
@@ -100,6 +103,8 @@ class Job:
             result_summary=row["result_summary"],
             error_message=row["error_message"],
             error_class=row["error_class"],
+            pid=row.get("pid"),
+            session_id=row.get("session_id"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

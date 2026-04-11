@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 import time
@@ -51,6 +52,7 @@ class _JobResult:
     output_tokens: int | None = None
     prompt: str | None = None
     output: str | None = None
+    session_id: str | None = None
 
     @classmethod
     def from_run_result(cls, result: RunResult, summary: str) -> _JobResult:
@@ -62,6 +64,7 @@ class _JobResult:
             output_tokens=result.output_tokens,
             prompt=result.prompt,
             output=result.raw_output,
+            session_id=result.subtype,
         )
 
 DEQUEUE_SQL = """
@@ -151,50 +154,130 @@ class Consumer:
         self.logger.info(f"Received {sig_name}, initiating graceful shutdown")
         self._shutdown.set()
 
+    def _save_pid(self, job_id: int, pid: int) -> None:
+        """Best-effort: save subprocess PID to job row."""
+        try:
+            conn = get_connection(self._db_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE job SET pid = %s, updated_at = NOW() WHERE id = %s",
+                        (pid, job_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            self.logger.warning(f"Failed to save PID {pid} for job {job_id} (best-effort)")
+
+    def _save_session_id(self, job_id: int, session_id: str) -> None:
+        """Best-effort: save session_id to job row."""
+        try:
+            conn = get_connection(self._db_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE job SET session_id = %s, updated_at = NOW() WHERE id = %s",
+                        (session_id, job_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            self.logger.warning(f"Failed to save session_id for job {job_id} (best-effort)")
+
+    @staticmethod
+    def _is_pid_alive(pid: int | None) -> bool:
+        if pid is None:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
     def _recover_stale_jobs(self) -> None:
-        """Reset RUNNING jobs orphaned by previous consumer crashes."""
+        """Recover RUNNING jobs whose process has died (PID-based check).
+
+        Jobs with a PID are checked via os.kill(pid, 0).  Jobs without a PID
+        (callback hasn't fired yet) fall back to the timestamp threshold so we
+        don't kill freshly-claimed jobs in multi-worker mode.
+        """
         threshold = self._consumer_config.job_timeout_seconds + 60
         try:
             conn = get_connection(self._db_config)
             try:
                 with conn.cursor() as cur:
-                    # Retry-eligible jobs → TODO
                     cur.execute(
-                        """
-                        UPDATE job
-                        SET status = 'TODO', finished_at = NOW(),
-                            error_message = 'Recovered stale job: process died or timed out',
-                            error_class = 'StaleJobRecovery',
-                            scheduled_after = NOW(), updated_at = NOW()
-                        WHERE status = 'RUNNING'
-                          AND started_at < NOW() - INTERVAL %s SECOND
-                          AND attempt < max_attempts
-                        """,
-                        (threshold,),
+                        "SELECT id, reference_id, pid, attempt, max_attempts, started_at "
+                        "FROM job WHERE status = 'RUNNING'"
                     )
-                    retried = cur.rowcount
+                    running_jobs = cur.fetchall()
 
-                    # Exhausted jobs → DEAD
-                    cur.execute(
-                        """
-                        UPDATE job
-                        SET status = 'DEAD', finished_at = NOW(),
-                            error_message = 'Recovered stale job: max attempts reached',
-                            error_class = 'StaleJobRecovery',
-                            updated_at = NOW()
-                        WHERE status = 'RUNNING'
-                          AND started_at < NOW() - INTERVAL %s SECOND
-                          AND attempt >= max_attempts
-                        """,
-                        (threshold,),
-                    )
-                    dead = cur.rowcount
+                    retried = 0
+                    dead = 0
+                    for row in running_jobs:
+                        job_id = row["id"]
+                        ref_id = row["reference_id"]
+                        pid = row["pid"]
+                        attempt = row["attempt"]
+                        max_attempts = row["max_attempts"]
+
+                        if pid is not None:
+                            if self._is_pid_alive(int(pid)):
+                                continue
+                        else:
+                            # No PID yet — fall back to timestamp guard
+                            started_at = row["started_at"]
+                            if started_at is None:
+                                continue
+                            # PyMySQL returns naive datetimes (UTC assumed)
+                            now = datetime.now(UTC).replace(tzinfo=None)
+                            elapsed = (now - started_at).total_seconds()
+                            if elapsed < threshold:
+                                continue
+
+                        if attempt < max_attempts:
+                            cur.execute(
+                                """
+                                UPDATE job
+                                SET status = 'TODO', finished_at = NOW(),
+                                    error_message = %s,
+                                    error_class = 'StaleJobRecovery',
+                                    scheduled_after = NOW(), updated_at = NOW()
+                                WHERE id = %s AND status = 'RUNNING'
+                                """,
+                                (f"Recovered: process dead (pid={pid})", job_id),
+                            )
+                            retried += 1
+                            self.logger.warning(
+                                f"Recovered stale job -> TODO (retry) | "
+                                f"job_id={job_id} reference_id={ref_id} "
+                                f"pid={pid} attempt={attempt}/{max_attempts}"
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                UPDATE job
+                                SET status = 'DEAD', finished_at = NOW(),
+                                    error_message = %s,
+                                    error_class = 'StaleJobRecovery',
+                                    updated_at = NOW()
+                                WHERE id = %s AND status = 'RUNNING'
+                                """,
+                                (f"Recovered: process dead (pid={pid}), max attempts reached", job_id),
+                            )
+                            dead += 1
+                            self.logger.warning(
+                                f"Recovered stale job -> DEAD | "
+                                f"job_id={job_id} reference_id={ref_id} "
+                                f"pid={pid} attempt={attempt}/{max_attempts}"
+                            )
 
                 conn.commit()
                 if retried or dead:
                     self.logger.warning(
-                        f"Recovered stale jobs: {retried} retried, {dead} dead-lettered "
-                        f"(threshold={threshold}s)"
+                        f"Stale job recovery: {retried} retried, {dead} dead-lettered"
                     )
             finally:
                 conn.close()
@@ -347,6 +430,25 @@ class Consumer:
                 working_dir=str(run_dir) if run_dir else None,
                 credentials_path=token.credentials_path,
             )
+            runner.pid_callback = lambda pid: self._save_pid(job.id, pid)
+            runner.session_id_callback = lambda sid: self._save_session_id(job.id, sid)
+
+            # Resume instead of fresh run if previous attempt left a session_id
+            should_resume = (
+                job.attempt > 1
+                and job.session_id is not None
+                and not self._is_pid_alive(job.pid)
+            )
+            if should_resume:
+                self.logger.info(
+                    f"Resuming session {job.session_id} for job {job.id} "
+                    f"(attempt={job.attempt}, prev_pid={job.pid})"
+                )
+                result = runner.resume(job.session_id, model=model_override)
+                result.prompt = f"[RESUME] session_id={job.session_id}"
+                summary = f"resumed session_id={job.session_id} {result.stats_line}"
+                return _JobResult.from_run_result(result, summary)
+
             workflow = get_workflow_class(job.type)(runner, self.logger)
 
             module_config = get_module_config(job.source) if job.source != "blank" else {}
@@ -459,6 +561,11 @@ class Consumer:
                         JobFailedEvent(job=job, error=error, elapsed_ms=elapsed_ms),
                     )
 
+                    # Extract session_id from result or error (best-effort)
+                    session_id = job_result.session_id if job_result else None
+                    if session_id is None:
+                        session_id = getattr(error, "session_id", None)
+
                     if decision.should_retry:
                         scheduled_after = datetime.now(UTC) + timedelta(seconds=decision.delay_seconds)
                         with conn.cursor() as cur:
@@ -467,10 +574,11 @@ class Consumer:
                                 UPDATE job
                                 SET status = 'TODO', finished_at = NOW(),
                                     error_message = %s, error_class = %s,
+                                    session_id = COALESCE(%s, session_id),
                                     scheduled_after = %s, updated_at = NOW()
                                 WHERE id = %s
                                 """,
-                                (error_msg, error_class, scheduled_after, job.id),
+                                (error_msg, error_class, session_id, scheduled_after, job.id),
                             )
                         conn.commit()
                         self.logger.info(
@@ -497,10 +605,12 @@ class Consumer:
                                 """
                                 UPDATE job
                                 SET status = 'DEAD', finished_at = NOW(),
-                                    error_message = %s, error_class = %s, updated_at = NOW()
+                                    error_message = %s, error_class = %s,
+                                    session_id = COALESCE(%s, session_id),
+                                    updated_at = NOW()
                                 WHERE id = %s
                                 """,
-                                (error_msg, error_class, job.id),
+                                (error_msg, error_class, session_id, job.id),
                             )
                         conn.commit()
                         self.logger.warning(

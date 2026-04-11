@@ -42,6 +42,8 @@ def _make_job(**overrides) -> Job:
         result_summary=None,
         error_message=None,
         error_class=None,
+        pid=None,
+        session_id=None,
         created_at=datetime(2026, 2, 20, 7, 59),
         updated_at=datetime(2026, 2, 20, 7, 59),
     )

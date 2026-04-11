@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -54,6 +55,8 @@ def _make_job(**overrides) -> Job:
         result_summary=None,
         error_message=None,
         error_class=None,
+        pid=None,
+        session_id=None,
         created_at=datetime(2026, 2, 20, 7, 59),
         updated_at=datetime(2026, 2, 20, 7, 59),
     )
@@ -97,6 +100,8 @@ def _make_row(**overrides) -> dict:
         "result_summary": None,
         "error_message": None,
         "error_class": None,
+        "pid": None,
+        "session_id": None,
         "created_at": datetime(2026, 2, 20, 7, 59),
         "updated_at": datetime(2026, 2, 20, 7, 59),
     }
@@ -125,34 +130,92 @@ def _make_claude_result(**overrides) -> ClaudeResult:
 
 class TestRecoverStaleJobs:
     @patch("agento.framework.consumer.get_connection")
-    def test_recover_resets_stale_jobs(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+    def test_recover_with_dead_pid(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+        """RUNNING job with dead PID -> TODO."""
         mock_conn, mock_cursor = _mock_connection()
-        mock_cursor.rowcount = 2  # simulate 2 rows affected per UPDATE
+        mock_cursor.fetchall.return_value = [
+            {"id": 1, "reference_id": "AI-1", "pid": 99999, "attempt": 1, "max_attempts": 3},
+        ]
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
-        consumer._recover_stale_jobs()
+        with patch.object(Consumer, "_is_pid_alive", return_value=False):
+            consumer._recover_stale_jobs()
 
-        # Two UPDATE calls: one for TODO reset, one for DEAD
+        # SELECT + 1 UPDATE
         assert mock_cursor.execute.call_count == 2
-        first_sql = mock_cursor.execute.call_args_list[0][0][0]
-        second_sql = mock_cursor.execute.call_args_list[1][0][0]
-        assert "status = 'TODO'" in first_sql
-        assert "status = 'DEAD'" in second_sql
+        update_sql = mock_cursor.execute.call_args_list[1][0][0]
+        assert "status = 'TODO'" in update_sql
         mock_conn.commit.assert_called_once()
 
     @patch("agento.framework.consumer.get_connection")
-    def test_recover_uses_timeout_plus_buffer(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+    def test_recover_with_alive_pid_skips(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+        """RUNNING job with alive PID -> skip (still running)."""
         mock_conn, mock_cursor = _mock_connection()
-        mock_cursor.rowcount = 0
+        mock_cursor.fetchall.return_value = [
+            {"id": 1, "reference_id": "AI-1", "pid": os.getpid(), "attempt": 1, "max_attempts": 3},
+        ]
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        with patch.object(Consumer, "_is_pid_alive", return_value=True):
+            consumer._recover_stale_jobs()
+
+        # Only SELECT, no UPDATE
+        assert mock_cursor.execute.call_count == 1
+        mock_conn.commit.assert_called_once()
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_recover_dead_pid_max_attempts_reached(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+        """RUNNING job with dead PID and attempt >= max_attempts -> DEAD."""
+        mock_conn, mock_cursor = _mock_connection()
+        mock_cursor.fetchall.return_value = [
+            {"id": 1, "reference_id": "AI-1", "pid": 99999, "attempt": 3, "max_attempts": 3},
+        ]
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        with patch.object(Consumer, "_is_pid_alive", return_value=False):
+            consumer._recover_stale_jobs()
+
+        update_sql = mock_cursor.execute.call_args_list[1][0][0]
+        assert "status = 'DEAD'" in update_sql
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_recover_null_pid_old_job_treated_as_dead(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+        """RUNNING job with NULL pid and old started_at -> treated as dead (timestamp fallback)."""
+        mock_conn, mock_cursor = _mock_connection()
+        # started_at far in the past — exceeds threshold
+        old_started = datetime(2020, 1, 1, 0, 0, 0)
+        mock_cursor.fetchall.return_value = [
+            {"id": 1, "reference_id": "AI-1", "pid": None, "attempt": 1, "max_attempts": 3, "started_at": old_started},
+        ]
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
         consumer._recover_stale_jobs()
 
-        threshold = sample_consumer_config.job_timeout_seconds + 60
-        first_params = mock_cursor.execute.call_args_list[0][0][1]
-        assert first_params == (threshold,)
+        # SELECT + UPDATE (null PID, old timestamp -> dead)
+        assert mock_cursor.execute.call_count == 2
+        update_sql = mock_cursor.execute.call_args_list[1][0][0]
+        assert "status = 'TODO'" in update_sql
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_recover_null_pid_fresh_job_skipped(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+        """RUNNING job with NULL pid but recent started_at -> skipped (PID callback hasn't fired yet)."""
+        mock_conn, mock_cursor = _mock_connection()
+        # started_at is now — well within threshold
+        mock_cursor.fetchall.return_value = [
+            {"id": 1, "reference_id": "AI-1", "pid": None, "attempt": 1, "max_attempts": 3, "started_at": datetime.now()},
+        ]
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        consumer._recover_stale_jobs()
+
+        # Only SELECT, no UPDATE — fresh job without PID is not touched
+        assert mock_cursor.execute.call_count == 1
+        mock_conn.commit.assert_called_once()
 
     @patch("agento.framework.consumer.get_connection")
     def test_recover_db_error_does_not_crash(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
@@ -344,7 +407,7 @@ class TestRunJob:
         self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary,
         sample_config, sample_db_config, sample_consumer_config,
     ):
-        """Consumer passes through to workflow — no TODO-specific branching."""
+        """Consumer passes through to workflow -- no TODO-specific branching."""
         mock_conn.return_value = MagicMock()
         no_work_result = RunResult(raw_output="No TODO tasks found", subtype="no_work")
         mock_workflow = MagicMock()
@@ -384,7 +447,7 @@ class TestRunJob:
         job = _make_job(
             type=AgentType.FOLLOWUP,
             reference_id="AI-3",
-            context="Sprawdź czy reindeks się zakończył",
+            context="Check reindex status",
             source="jira",
         )
 
@@ -454,9 +517,74 @@ class TestRunJob:
             with pytest.raises(RuntimeError, match="No agent_view/provider configured"):
                 consumer._run_job(job)
 
-        # TokenResolver.resolve should never be reached — error raised before token selection
+        # TokenResolver.resolve should never be reached
         self._token_resolver_mock.resolve.assert_not_called()
 
+    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    def test_run_job_resumes_when_session_id_present(
+        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary,
+        sample_config, sample_db_config, sample_consumer_config,
+    ):
+        """When attempt > 1 and session_id is set, consumer calls runner.resume()."""
+        mock_conn.return_value = MagicMock()
+
+        resume_result = _make_claude_result(subtype="sess-resume")
+        mock_runner = MagicMock()
+        mock_runner.resume.return_value = resume_result
+        MockRunner.return_value = mock_runner
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        job = _make_job(
+            type=AgentType.CRON,
+            reference_id="AI-1",
+            attempt=2,
+            session_id="sess-abc",
+            pid=99999,
+            status=JobStatus.RUNNING,
+        )
+
+        with patch.object(Consumer, "_is_pid_alive", return_value=False):
+            result = consumer._run_job(job)
+
+        mock_runner.resume.assert_called_once_with("sess-abc", model=None)
+        assert "resumed" in result.summary
+        assert result.session_id == "sess-resume"
+
+    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    def test_run_job_no_resume_on_first_attempt(
+        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary,
+        sample_config, sample_db_config, sample_consumer_config,
+    ):
+        """First attempt (attempt=1) never resumes, even if session_id is somehow set."""
+        mock_conn.return_value = MagicMock()
+        mock_result = _make_claude_result()
+        mock_workflow = MagicMock()
+        mock_workflow.execute_job.return_value = mock_result
+        mock_get_wf.return_value.return_value = mock_workflow
+        mock_get_ch.return_value = MagicMock(name="jira")
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        job = _make_job(
+            type=AgentType.CRON,
+            reference_id="AI-1",
+            attempt=1,
+            session_id="sess-abc",
+        )
+
+        consumer._run_job(job)
+
+        # Should NOT have called resume
+        mock_runner = MockRunner.return_value
+        mock_runner.resume.assert_not_called()
+        mock_workflow.execute_job.assert_called_once()
 
 
 # ---- Section 7: Finalization ----
@@ -534,7 +662,29 @@ class TestFinalize:
         sql_arg = mock_cursor.execute.call_args[0][0]
         assert "TODO" in sql_arg
         assert "scheduled_after" in sql_arg
+        assert "session_id" in sql_arg  # session_id COALESCE in retry SQL
         mock_conn.commit.assert_called_once()
+
+    @patch("agento.framework.consumer.evaluate_retry")
+    @patch("agento.framework.consumer.get_connection")
+    def test_finalize_retry_extracts_session_id_from_error(self, mock_get_conn, mock_eval, sample_config, sample_db_config, sample_consumer_config):
+        from agento.framework.retry_policy import RetryDecision
+
+        mock_eval.return_value = RetryDecision(should_retry=True, delay_seconds=60, reason="retry")
+
+        mock_conn, mock_cursor = _mock_connection()
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        job = _make_job(attempt=1)
+
+        error = RuntimeError("timeout")
+        error.session_id = "sess-from-error"  # type: ignore[attr-defined]
+        consumer._finalize_job(job, error=error, job_result=None, elapsed_ms=5000)
+
+        params = mock_cursor.execute.call_args[0][1]
+        # session_id should be extracted from error
+        assert "sess-from-error" in params
 
     @patch("agento.framework.consumer.evaluate_retry")
     @patch("agento.framework.consumer.get_connection")
@@ -662,3 +812,80 @@ class TestLifecycle:
 
         # run() should exit quickly without blocking
         consumer.run()
+
+
+# ---- Section 9: PID & Session helpers ----
+
+
+class TestIsPidAlive:
+    def test_current_pid_is_alive(self):
+        assert Consumer._is_pid_alive(os.getpid()) is True
+
+    def test_none_pid_is_not_alive(self):
+        assert Consumer._is_pid_alive(None) is False
+
+    def test_dead_pid_is_not_alive(self):
+        # PID 99999999 is almost certainly not running
+        assert Consumer._is_pid_alive(99999999) is False
+
+
+class TestSavePid:
+    @patch("agento.framework.consumer.get_connection")
+    def test_save_pid_updates_db(self, mock_get_conn, sample_db_config, sample_consumer_config):
+        mock_conn, mock_cursor = _mock_connection()
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        consumer._save_pid(42, 12345)
+
+        mock_cursor.execute.assert_called_once()
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "pid" in sql
+        params = mock_cursor.execute.call_args[0][1]
+        assert params == (12345, 42)
+        mock_conn.commit.assert_called_once()
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_save_pid_db_error_does_not_crash(self, mock_get_conn, sample_db_config, sample_consumer_config):
+        mock_get_conn.side_effect = RuntimeError("DB down")
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        # Should not raise
+        consumer._save_pid(42, 12345)
+
+
+class TestSaveSessionId:
+    @patch("agento.framework.consumer.get_connection")
+    def test_save_session_id_updates_db(self, mock_get_conn, sample_db_config, sample_consumer_config):
+        mock_conn, mock_cursor = _mock_connection()
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        consumer._save_session_id(42, "sess-abc")
+
+        mock_cursor.execute.assert_called_once()
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "session_id" in sql
+        params = mock_cursor.execute.call_args[0][1]
+        assert params == ("sess-abc", 42)
+        mock_conn.commit.assert_called_once()
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_save_session_id_db_error_does_not_crash(self, mock_get_conn, sample_db_config, sample_consumer_config):
+        mock_get_conn.side_effect = RuntimeError("DB down")
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        # Should not raise
+        consumer._save_session_id(42, "sess-abc")
+
+
+class TestJobResultSessionId:
+    def test_from_run_result_captures_session_id(self):
+        result = RunResult(raw_output="ok", subtype="sess-xyz")
+        jr = _JobResult.from_run_result(result, "summary")
+        assert jr.session_id == "sess-xyz"
+
+    def test_from_run_result_no_session_id(self):
+        result = RunResult(raw_output="ok")
+        jr = _JobResult.from_run_result(result, "summary")
+        assert jr.session_id is None

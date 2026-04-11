@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.agent_manager.runner import TokenRunner
 from agento.framework.runner import RunResult
@@ -25,7 +27,20 @@ class TokenClaudeRunner(TokenRunner):
         cmd = [
             "claude", "-p", prompt,
             "--dangerously-skip-permissions",
-            "--output-format", "json",
+            "--output-format", "stream-json",
+            "--verbose",
+        ]
+        if model:
+            cmd.extend(["--model", model])
+        return cmd
+
+    def _build_resume_command(self, session_id: str, model: str | None = None) -> list[str]:
+        cmd = [
+            "claude", "--resume", session_id,
+            "-p", "Continue working from where you left off.",
+            "--dangerously-skip-permissions",
+            "--output-format", "stream-json",
+            "--verbose",
         ]
         if model:
             cmd.extend(["--model", model])
@@ -33,3 +48,12 @@ class TokenClaudeRunner(TokenRunner):
 
     def _parse_output(self, raw: str) -> RunResult:
         return parse_claude_output(raw, self.logger)
+
+    def _try_parse_session_id(self, line: str) -> str | None:
+        try:
+            event = json.loads(line.strip())
+            if isinstance(event, dict) and event.get("session_id"):
+                return event["session_id"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None
