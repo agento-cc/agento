@@ -69,3 +69,24 @@ toolbox:
 ```
 
 Source: [src/agento/toolbox/adapters/sql-timeout.js](../../src/agento/toolbox/adapters/sql-timeout.js)
+
+## Large Result Offload
+
+When a query result exceeds a configurable size threshold, the full result is saved as a CSV file to disk and a summary with sample rows is returned to the agent instead. This prevents oversized responses from consuming agent context window.
+
+**Config paths** (core module, 3-level fallback):
+
+| Path | Default | Description |
+|------|---------|-------------|
+| `core/toolbox/result_offload/threshold` | 20000 | Size threshold in bytes (estimated via JSON.stringify) |
+| `core/toolbox/result_offload/sample_rows` | 5 | Number of sample rows included in the summary |
+| `core/toolbox/result_offload/text_preview_chars` | 200 | Number of preview characters for text offload |
+
+Files are written to `${artifactsDir}/mcp-results/{toolName}/result_{timestamp}.csv` (where `artifactsDir` is `/workspace/artifacts/{workspace}/{agent_view}/{job_id}`). Cleanup of old offload files is the responsibility of the artifacts dir lifecycle manager, not this middleware.
+
+Override per agent_view:
+```bash
+agento config:set core/toolbox/result_offload/threshold 50000 --scope=agent_view --scope-id=1
+```
+
+Source: [src/agento/toolbox/adapters/large-result.js](../../src/agento/toolbox/adapters/large-result.js)

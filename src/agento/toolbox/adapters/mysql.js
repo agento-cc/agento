@@ -2,6 +2,7 @@ import { z } from 'zod';
 import mysql from 'mysql2/promise';
 import { logToolbox as log } from '../log.js';
 import { getSqlTimeoutMs, setSqlTimeoutSeconds } from './sql-timeout.js';
+import { maybeOffloadRows } from './large-result.js';
 
 const ALLOWED_KEYWORDS = ['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN', 'WITH'];
 
@@ -11,7 +12,7 @@ function isReadOnly(query) {
   return ALLOWED_KEYWORDS.includes(firstWord);
 }
 
-function createMysqlTool(server, toolName, description, config) {
+function createMysqlTool(server, toolName, description, config, offload) {
   let pool = null;
 
   function getPool() {
@@ -53,11 +54,23 @@ function createMysqlTool(server, toolName, description, config) {
         };
       }
 
+      log(toolName, 'QUERY', `user=${user} | ${query}`);
+      const start = Date.now();
+
       try {
         const [rows] = await getPool().query({ sql: query, timeout: getSqlTimeoutMs() });
-        const result = JSON.stringify(rows, null, 2);
-        log(toolName, 'OK', `user=${user} rows=${Array.isArray(rows) ? rows.length : '?'} | ${query.substring(0, 100)}`);
-        return { content: [{ type: 'text', text: result }] };
+        const elapsed = Date.now() - start;
+        const rowCount = Array.isArray(rows) ? rows.length : '?';
+
+        const offloaded = Array.isArray(rows) && rows.length > 0
+          ? await maybeOffloadRows(rows, toolName, offload)
+          : null;
+
+        const offloadInfo = offloaded ? `offload=${offloaded.filePath}` : 'offload=none';
+        log(toolName, 'OK', `user=${user} time=${elapsed}ms rows=${rowCount} ${offloadInfo}`);
+
+        const text = offloaded ? offloaded.summary : JSON.stringify(rows, null, 2);
+        return { content: [{ type: 'text', text }] };
       } catch (err) {
         log(toolName, 'ERROR', `user=${user} ${err.message}`);
         return {
@@ -85,7 +98,7 @@ export function registerMysqlTools(server, tools, options = {}) {
   const poolRefs = [];
 
   for (const tool of tools) {
-    const getPool = createMysqlTool(server, tool.name, tool.description, tool.config);
+    const getPool = createMysqlTool(server, tool.name, tool.description, tool.config, options.offload || {});
     registered.push(tool.name);
     poolRefs.push({ name: tool.name, getPool, config: tool.config });
   }

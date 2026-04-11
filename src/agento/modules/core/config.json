@@ -5,5 +5,8 @@
   "allow_subdomains": true,
   "allow_http": false,
   "toolbox/file_manager/allowed_extensions": ".pdf,.xlsx,.xls,.csv,.txt,.md,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.svg,.webp",
-  "toolbox/file_manager/max_file_size": 524288000
+  "toolbox/file_manager/max_file_size": 524288000,
+  "toolbox/result_offload/threshold": 20000,
+  "toolbox/result_offload/sample_rows": 5,
+  "toolbox/result_offload/text_preview_chars": 200
 }
