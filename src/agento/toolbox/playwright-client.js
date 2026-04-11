@@ -8,7 +8,7 @@ let transport = null;
 let discoveredTools = [];
 
 async function buildMcpArgs() {
-  const args = ['@playwright/mcp', '--headless', '--browser', 'chromium', '--ignore-https-errors'];
+  const args = ['@playwright/mcp', '--headless', '--browser', 'chromium', '--ignore-https-errors', '--caps', 'devtools'];
 
   let session = {};
   try {
