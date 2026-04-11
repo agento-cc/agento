@@ -1,0 +1,48 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { readFile, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+
+const execFileAsync = promisify(execFile);
+
+async function convertPdf(inputPath) {
+  const outputPath = inputPath.replace(/\.pdf$/i, '.md');
+  await execFileAsync('pdftotext', ['-layout', inputPath, outputPath], { timeout: 30_000 });
+  return outputPath;
+}
+
+let _xlsxModule = null;
+
+export function _setXlsx(mod) {
+  _xlsxModule = mod;
+}
+
+async function loadXlsx() {
+  if (_xlsxModule) return _xlsxModule;
+  const m = await import('xlsx');
+  return m.default || m;
+}
+
+async function convertXlsx(inputPath) {
+  const XLSX = await loadXlsx();
+  const buf = await readFile(inputPath);
+  const wb = XLSX.read(buf, { type: 'buffer' });
+  const dir = dirname(inputPath);
+  const base = basename(inputPath).replace(/\.xlsx$/i, '');
+  const results = [];
+
+  for (const name of wb.SheetNames) {
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+    const dest = wb.SheetNames.length === 1
+      ? join(dir, `${base}.csv`)
+      : join(dir, `${base}_${name}.csv`);
+    await writeFile(dest, csv, 'utf-8');
+    results.push(dest);
+  }
+  return results[0];
+}
+
+export const converters = [
+  { fromExt: '.pdf', toExt: '.md', convert: convertPdf },
+  { fromExt: '.xlsx', toExt: '.csv', convert: convertXlsx },
+];

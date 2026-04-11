@@ -10,5 +10,7 @@
   "playwright_tool_whitelist": {"type": "string", "label": "Allowed Playwright tools (comma-separated)"},
   "allowed_domains": {"type": "string", "label": "Allowed browser domains (comma-separated)"},
   "allow_subdomains": {"type": "boolean", "label": "Allow subdomains for browser"},
-  "allow_http": {"type": "boolean", "label": "Allow HTTP (not just HTTPS) for browser"}
+  "allow_http": {"type": "boolean", "label": "Allow HTTP (not just HTTPS) for browser"},
+  "toolbox/file_manager/allowed_extensions": {"type": "string", "label": "Allowed file extensions (comma-separated)"},
+  "toolbox/file_manager/max_file_size": {"type": "integer", "label": "Max file size in bytes"}
 }

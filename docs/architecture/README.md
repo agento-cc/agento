@@ -30,3 +30,4 @@ Agento runs as Docker containers with strict security separation between the AI 
 - [Zero-Trust Security](zero-trust.md) — credential isolation model
 - [Publisher-Consumer](publisher-consumer.md) — job queue architecture
 - [Event-Observer System](events.md) — cross-module communication via events
+- [FileManager](file-manager.md) — external file handling, conversion, and security
