@@ -28,6 +28,22 @@ class TokenCodexRunner(TokenRunner):
             cmd.extend(["--model", model])
         return cmd
 
+    def _build_resume_command(self, session_id: str, model: str | None = None) -> list[str]:
+        cmd = [
+            "codex", "resume", session_id,
+            "Continue working from where you left off.",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ]
+        if model:
+            cmd.extend(["--model", model])
+        return cmd
+
+    def _try_parse_session_id(self, line: str) -> str | None:
+        stripped = line.strip()
+        if stripped.startswith("session id:"):
+            return stripped.split(":", 1)[1].strip() or None
+        return None
+
     def _extract_raw(self, proc: subprocess.CompletedProcess) -> str:
         """Codex puts the response on stdout and header/stats on stderr.
 
