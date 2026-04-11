@@ -11,16 +11,23 @@ const ADAPTERS = {
 /**
  * Register config-driven adapter tools (mysql, mssql, opensearch) from module.json declarations.
  * @param {object} moduleConfigs - Resolved module-level configs (for sql_timeout_seconds etc.)
+ * @param {object} context - Shared context with artifactsDir
  * @returns {{ names: string[], healthchecks: Array<() => Promise<Array>> }}
  */
-export function registerAdapterTools(server, allTools, moduleToolTypes, moduleConfigs = {}) {
+export function registerAdapterTools(server, allTools, moduleToolTypes, moduleConfigs = {}, context = {}) {
   const dynamicNames = [];
   const healthchecks = [];
   const sqlTimeoutSeconds = parseInt(moduleConfigs?.core?.sql_timeout_seconds || '300', 10);
+  const offload = {
+    artifactsDir: context.artifactsDir,
+    threshold: parseInt(moduleConfigs?.core?.['toolbox/result_offload/threshold'] || '20000', 10),
+    sampleRows: parseInt(moduleConfigs?.core?.['toolbox/result_offload/sample_rows'] || '5', 10),
+    textPreviewChars: parseInt(moduleConfigs?.core?.['toolbox/result_offload/text_preview_chars'] || '200', 10),
+  };
 
   for (const [type, registerFn] of Object.entries(ADAPTERS)) {
     const tools = allTools.filter(t => t.type === type);
-    const { names, healthcheck } = registerFn(server, tools, { sqlTimeoutSeconds });
+    const { names, healthcheck } = registerFn(server, tools, { sqlTimeoutSeconds, offload });
     dynamicNames.push(...names);
     healthchecks.push(healthcheck);
   }

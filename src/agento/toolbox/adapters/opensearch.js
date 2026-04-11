@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { logToolbox as log } from '../log.js';
+import { maybeOffloadRows } from './large-result.js';
 
-function createOpensearchTool(server, toolName, description, config) {
+function createOpensearchTool(server, toolName, description, config, offload) {
   server.tool(
     toolName,
     description,
@@ -30,14 +31,39 @@ function createOpensearchTool(server, toolName, description, config) {
         if (query) {
           url = `${config.host}/${index}/_search`;
           options = { method: 'POST', headers, body: query };
+          log(toolName, 'QUERY', `user=${agentUser} index=${index} | ${query}`);
         } else {
           url = `${config.host}/${index}`;
           options = { method: 'GET', headers };
         }
 
+        const start = Date.now();
         const response = await fetch(url, options);
         const data = await response.json();
-        log(toolName, 'OK', `user=${agentUser} index=${index} search=${!!query}`);
+        const elapsed = Date.now() - start;
+
+        // For search queries, try to offload large hit sets
+        if (query && data.hits?.hits?.length > 0) {
+          const flatRows = data.hits.hits.map(h => ({ _id: h._id, ...h._source }));
+          const offloaded = await maybeOffloadRows(flatRows, toolName, offload);
+
+          if (offloaded) {
+            const total = data.hits.total?.value ?? data.hits.total;
+            const took = data.took;
+            const offloadInfo = `offload=${offloaded.filePath}`;
+            log(toolName, 'OK', `user=${agentUser} time=${elapsed}ms hits=${flatRows.length} ${offloadInfo}`);
+            const text = `OpenSearch: total=${total}, took=${took}ms\n\n${offloaded.summary}`;
+            return { content: [{ type: 'text', text }] };
+          }
+        }
+
+        const hitCount = data.hits?.hits?.length;
+        const offloadInfo = 'offload=none';
+        if (query) {
+          log(toolName, 'OK', `user=${agentUser} time=${elapsed}ms hits=${hitCount ?? '?'} ${offloadInfo}`);
+        } else {
+          log(toolName, 'OK', `user=${agentUser} index=${index} search=false`);
+        }
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
       } catch (err) {
         log(toolName, 'ERROR', `user=${agentUser} ${err.message}`);
@@ -54,12 +80,12 @@ function createOpensearchTool(server, toolName, description, config) {
  * Register OpenSearch tools from pre-resolved tool configs.
  * @returns {{ names: string[], healthcheck: () => Promise<Array> }}
  */
-export function registerOpensearchTools(server, tools, _options = {}) {
+export function registerOpensearchTools(server, tools, options = {}) {
   const registered = [];
   const configRefs = [];
 
   for (const tool of tools) {
-    createOpensearchTool(server, tool.name, tool.description, tool.config);
+    createOpensearchTool(server, tool.name, tool.description, tool.config, options.offload || {});
     registered.push(tool.name);
     configRefs.push({ name: tool.name, config: tool.config });
   }

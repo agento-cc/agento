@@ -411,7 +411,7 @@ export async function registerTools(server, context, agentViewId = null, preload
   const allTools = await loadTools(dbOverrides);
   const enabledTools = allTools.filter(t => enabledCheck(t.name));
   const moduleToolTypes = getModuleToolTypes();
-  const { healthchecks: adapterHealthchecks } = registerAdapterTools(server, enabledTools, moduleToolTypes, moduleConfigs);
+  const { healthchecks: adapterHealthchecks } = registerAdapterTools(server, enabledTools, moduleToolTypes, moduleConfigs, enrichedContext);
 
   const healthchecks = [...adapterHealthchecks];
 
