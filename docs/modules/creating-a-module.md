@@ -248,7 +248,7 @@ export function register(server, { log }) {
 EOF
 ```
 
-Convention-based discovery: any `.js` file in `toolbox/` is auto-discovered by the Toolbox at startup. The `context` object provides `{ app, log, db, playwright }` — no imports from framework files needed.
+Convention-based discovery: any `.js` file in `toolbox/` is auto-discovered by the Toolbox at startup. The `context` object provides `{ app, log, db, playwright, fileManager }` -- no imports from framework files needed.
 
 Restart toolbox after adding tools:
 
@@ -256,7 +256,34 @@ Restart toolbox after adding tools:
 cd docker && docker compose restart toolbox
 ```
 
-## 12. Declare Schema Migrations (Optional)
+**Security note:** When handling files from external systems, always use `context.fileManager.download()` -- never download files directly with `fetch` + `writeFile`.
+
+## 12. Register File Converters (Optional)
+
+If your module needs to convert file formats (e.g., DOCX to plain text), create a `toolbox/converters.js` file that exports a `converters` array:
+
+```bash
+cat > modules/my-crm/toolbox/converters.js << 'EOF'
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+async function convertDocx(inputPath) {
+  const outputPath = inputPath.replace(/\.docx$/i, '.txt');
+  await execFileAsync('pandoc', [inputPath, '-t', 'plain', '-o', outputPath]);
+  return outputPath;
+}
+
+export const converters = [
+  { fromExt: '.docx', toExt: '.txt', convert: convertDocx },
+];
+EOF
+```
+
+Each converter implements: `{ fromExt, toExt, convert(srcPath) -> convertedPath }`. The framework auto-discovers and registers converters during module loading. See [FileManager](../architecture/file-manager.md) for the full architecture.
+
+## 13. Declare Schema Migrations (Optional)
 
 If your module needs database tables, create a `sql/` directory with numbered SQL files:
 
@@ -275,7 +302,7 @@ EOF
 
 Applied by `setup:upgrade` in module dependency order. Tracked in the `schema_migration` table.
 
-## 13. Declare Data Patches (Optional)
+## 14. Declare Data Patches (Optional)
 
 Create `data_patch.json` to seed or transform data:
 
@@ -306,7 +333,7 @@ EOF
 
 Patch classes implement `apply(conn)` and `require()`. Applied by `setup:upgrade` in topological order.
 
-## 14. Declare Cron Jobs (Optional)
+## 15. Declare Cron Jobs (Optional)
 
 Create `cron.json` to schedule CLI commands:
 
@@ -322,7 +349,7 @@ EOF
 
 The `command` references a CLI subcommand contributed via `di.json`. Installed by `setup:upgrade` into the system crontab.
 
-## 15. Declare Onboarding (Optional)
+## 16. Declare Onboarding (Optional)
 
 If your module needs to configure external systems (create API resources, set up custom fields, etc.) before it can work, declare an interactive onboarding flow in `di.json`:
 

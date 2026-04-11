@@ -11,6 +11,11 @@ RUN npm ci --omit=dev
 # Note: Google Chrome has no official Linux ARM64 build; Chromium supports ARM64
 RUN npx playwright install --with-deps chromium
 
+# Install poppler-utils for PDF-to-text conversion (pdftotext CLI)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends poppler-utils && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 COPY src/agento/toolbox/ .
 COPY src/agento/modules/ /app/modules/core/
 

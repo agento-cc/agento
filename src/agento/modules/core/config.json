@@ -3,5 +3,7 @@
   "sql_timeout_seconds": 300,
   "smtp_port": 587,
   "allow_subdomains": true,
-  "allow_http": false
+  "allow_http": false,
+  "toolbox/file_manager/allowed_extensions": ".pdf,.xlsx,.xls,.csv,.txt,.md,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.svg,.webp",
+  "toolbox/file_manager/max_file_size": 524288000
 }

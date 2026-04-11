@@ -3,6 +3,7 @@ import path from 'path';
 import { getCronPool } from './db.js';
 import { decrypt, hasEncryptionKey } from './crypto.js';
 import { registerAdapterTools } from './adapters/index.js';
+import { FileManager, ConverterRegistry } from './file-manager.js';
 
 const CORE_MODULES_DIR = process.env.CORE_MODULES_DIR || '/app/modules/core';
 const USER_MODULES_DIR = process.env.USER_MODULES_DIR || '/app/modules/user';
@@ -317,6 +318,21 @@ export async function loadModuleConfigs(dbOverrides = null) {
 }
 
 /**
+ * Create a FileManager instance from module configs.
+ * Parses allowed extensions and max file size from core config.
+ */
+function createFileManager(moduleConfigs) {
+  const coreConfig = moduleConfigs.core || {};
+  const extString = coreConfig['toolbox/file_manager/allowed_extensions']
+    || '.pdf,.xlsx,.xls,.csv,.txt,.md,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.svg,.webp';
+  const allowedExtensions = new Set(extString.split(',').map(e => e.trim().toLowerCase()));
+  const maxFileSize = parseInt(coreConfig['toolbox/file_manager/max_file_size'], 10) || 524288000;
+
+  const converterRegistry = new ConverterRegistry();
+  return new FileManager({ converterRegistry, allowedExtensions, maxFileSize });
+}
+
+/**
  * Register module REST API routes on the Express app at startup.
  * This ensures endpoints like /api/jira/request are available before any
  * MCP session connects (needed by setup:upgrade onboarding).
@@ -325,7 +341,8 @@ export async function registerModuleRestApis(context) {
   const modules = scanModules();
   const dbOverrides = await loadDbOverrides();
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
-  const enrichedContext = { ...context, moduleConfigs, loadModuleConfigs, loadScopedDbOverrides };
+  const fileManager = createFileManager(moduleConfigs);
+  const enrichedContext = { ...context, moduleConfigs, loadModuleConfigs, loadScopedDbOverrides, fileManager };
 
   const sorted = [...modules].sort((a, b) => (a.order || 100) - (b.order || 100));
 
@@ -334,6 +351,12 @@ export async function registerModuleRestApis(context) {
     for (const file of files) {
       try {
         const toolModule = await import(file);
+        if (Array.isArray(toolModule.converters)) {
+          for (const conv of toolModule.converters) {
+            fileManager.converterRegistry.register(conv);
+          }
+          context.log('discovery', 'OK', `Registered ${toolModule.converters.length} converter(s) from ${mod.name}/toolbox/${path.basename(file)}`);
+        }
         if (typeof toolModule.register === 'function') {
           // Pass a stub server — only Express routes matter at startup
           const stubServer = { tool: () => {} };
@@ -364,7 +387,8 @@ export async function registerTools(server, context, agentViewId = null, preload
   // Resolve module-level config (system.json fields) — passed to JS tools via context
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
   const enabledCheck = (toolName) => isToolEnabled(toolName, dbOverrides);
-  const enrichedContext = { ...context, moduleConfigs, isToolEnabled: enabledCheck };
+  const fileManager = createFileManager(moduleConfigs);
+  const enrichedContext = { ...context, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
 
   // Track all tool names registered on the server (adapter + JS module tools)
   const allToolNames = [];
@@ -391,10 +415,16 @@ export async function registerTools(server, context, agentViewId = null, preload
     for (const file of files) {
       try {
         const toolModule = await import(file);
+        if (Array.isArray(toolModule.converters)) {
+          for (const conv of toolModule.converters) {
+            fileManager.converterRegistry.register(conv);
+          }
+          context.log('discovery', 'OK', `Registered ${toolModule.converters.length} converter(s) from ${mod.name}/toolbox/${path.basename(file)}`);
+        }
         if (typeof toolModule.register === 'function') {
           await toolModule.register(server, enrichedContext);
           context.log('discovery', 'OK', `Registered toolbox/${path.basename(file)} from ${mod.name}`);
-        } else {
+        } else if (!Array.isArray(toolModule.converters)) {
           context.log('discovery', 'SKIP', `${file} has no register() export`);
         }
         if (typeof toolModule.healthcheck === 'function') {

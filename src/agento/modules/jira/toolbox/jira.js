@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { writeFile, mkdir, readFile } from 'fs/promises';
-import { extname, basename } from 'path';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 
 export async function healthcheck({ moduleConfigs }) {
   const cfg = moduleConfigs?.jira || {};
@@ -29,7 +29,7 @@ export async function healthcheck({ moduleConfigs }) {
   }
 }
 
-export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir }) {
+export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir, fileManager }) {
   if (isToolEnabled && !isToolEnabled('jira')) return;
   const cfg = moduleConfigs?.jira || {};
   const config = {
@@ -94,8 +94,9 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
     'jira_get_issue',
     [
       'Get full details of a Jira issue by key. Returns summary, status, assignee (with accountId), reporter (with accountId), priority, dates, description, comments, and attachments.',
-      'Image attachments are automatically downloaded to the runtime directory and referenced in description/comments as [Obrazek: filename](local_path).',
-      'To view an image, use the Read tool on the local path.',
+      'Attachments are automatically downloaded to the runtime directory. Binary files (PDF, XLSX) are auto-converted to text formats (MD, CSV) when converters are available.',
+      'Image attachments are referenced in description/comments as [Obrazek: filename](local_path). To view an image, use the Read tool on the local path.',
+      'For converted files, use the Read tool on convertedPath (e.g. .md for PDF, .csv for XLSX).',
       'Comments include author accountId — use it with jira_add_comment reply_to_comment_id to reply.',
       'AssigneeAccountId and ReporterAccountId can be used with jira_assign_issue.',
       'Examples:',
@@ -124,25 +125,22 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
         const data = await response.json();
         const f = data.fields;
 
-        // Download image attachments to disk
-        const imageAttachments = (f.attachment || [])
-          .filter(a => a.mimeType?.startsWith('image/') && a.size < 5_000_000)
-          .slice(0, 10);
+        // Download ALL attachments through FileManager
+        const allAttachments = (f.attachment || []).slice(0, 15);
+        const fileMap = new Map();
 
-        const imageMap = new Map();
-        if (imageAttachments.length > 0) {
+        if (allAttachments.length > 0 && fileManager) {
           const dir = `${runtimeDir}/jira/${data.key}`;
-          await mkdir(dir, { recursive: true });
 
-          await Promise.all(imageAttachments.map(async (att) => {
+          await Promise.all(allAttachments.map(async (att) => {
             try {
-              const ext = extname(att.filename) || '.png';
-              const localPath = `${dir}/${att.id}${ext}`;
-              const imgRes = await fetch(att.content, { headers: authHeader });
-              if (imgRes.ok) {
-                const buf = Buffer.from(await imgRes.arrayBuffer());
-                await writeFile(localPath, buf);
-                imageMap.set(att.filename, localPath);
+              const result = await fileManager.download(att.content, att.filename, {
+                headers: authHeader,
+                dir,
+                maxSize: att.size,
+              });
+              if (!result.skipped) {
+                fileMap.set(att.filename, result);
               }
             } catch (_) { /* skip broken attachment */ }
           }));
@@ -151,8 +149,8 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
         const replaceImageRefs = (text) => {
           if (!text || typeof text !== 'string') return text;
           return text.replace(/!([^|!\n]+)(\|[^!\n]*)?!/g, (match, filename) => {
-            const localPath = imageMap.get(filename);
-            return localPath ? `[Obrazek: ${filename}](${localPath})` : match;
+            const file = fileMap.get(filename);
+            return file ? `[Obrazek: ${filename}](${file.localPath})` : match;
           });
         };
 
@@ -175,17 +173,21 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
             body: replaceImageRefs(c.body),
             created: c.created,
           })),
-          Attachments: (f.attachment || []).map(a => ({
-            id: a.id,
-            filename: a.filename,
-            mimeType: a.mimeType,
-            size: a.size,
-            localPath: imageMap.get(a.filename) || null,
-          })),
+          Attachments: (f.attachment || []).map(a => {
+            const file = fileMap.get(a.filename);
+            return {
+              id: a.id,
+              filename: a.filename,
+              mimeType: a.mimeType,
+              size: a.size,
+              localPath: file?.localPath || null,
+              convertedPath: file?.convertedPath || null,
+            };
+          }),
         };
 
-        const imgCount = imageMap.size;
-        log('jira_get_issue', 'OK', `user=${user} ${issue_key} "${issue.Summary}" ${issue.Comments.length} comments ${imgCount} images`);
+        const fileCount = fileMap.size;
+        log('jira_get_issue', 'OK', `user=${user} ${issue_key} "${issue.Summary}" ${issue.Comments.length} comments ${fileCount} attachments`);
         return { content: [{ type: 'text', text: JSON.stringify(issue, null, 2) }] };
       } catch (err) {
         log('jira_get_issue', 'ERROR', `user=${user} ${issue_key} ${err.message}`);
