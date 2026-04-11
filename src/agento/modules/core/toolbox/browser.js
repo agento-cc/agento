@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { readFile, writeFile, mkdir, copyFile } from 'fs/promises';
+import { readFile, writeFile, mkdir, copyFile, unlink } from 'fs/promises';
+import { resolve } from 'path';
 
 // --- Session cookie injection ---
 let sessionCookies = [];
@@ -103,13 +104,12 @@ const BROWSER_TOOLS = {
     description: [
       'Take a screenshot of the current page.',
       'Returns a PNG image. Navigate to a page first.',
-      'The screenshot is also saved to the runtime directory under screenshots/{job_id}-{reference_id}/{filename}.',
-      'Pass job_id and reference_id from your execution context (SOUL.md) to organise the file correctly.',
+      'The screenshot is also saved to the runtime directory under screenshots/{job_id}/{filename}.',
+      'Pass job_id from your execution context (SOUL.md) to organise the file correctly.',
     ].join('\n'),
     schema: {
       user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),
       job_id: z.string().optional().describe('Job ID from SOUL.md — used to organise the screenshot folder'),
-      reference_id: z.string().optional().describe('Jira issue key from SOUL.md (e.g. "K3-42") — used to organise the screenshot folder'),
       filename: z.string().optional().describe('PNG filename. Defaults to {timestamp}.png. Use a fixed name to overwrite on each run.'),
     },
     urlParam: null,
@@ -138,8 +138,8 @@ const BROWSER_TOOLS = {
   browser_start_video: {
     description: [
       'Start recording a video of the browser page.',
-      'Requires devtools capability enabled on the Playwright MCP server.',
       'Pass width and height to set the video resolution (defaults to viewport size).',
+      'Stop recording with browser_stop_video when done.',
     ].join('\n'),
     schema: {
       user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),
@@ -151,13 +151,13 @@ const BROWSER_TOOLS = {
   browser_stop_video: {
     description: [
       'Stop recording and save the video.',
-      'The video file is copied to the runtime directory under videos/{job_id}-{reference_id}/.',
-      'Pass job_id and reference_id from your execution context (SOUL.md) to organise the file correctly.',
+      'The video file is saved to the runtime directory under videos/{job_id}/{filename}.',
+      'Pass job_id from your execution context (SOUL.md) to organise the file correctly.',
     ].join('\n'),
     schema: {
       user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),
       job_id: z.string().optional().describe('Job ID from SOUL.md — used to organise the video folder'),
-      reference_id: z.string().optional().describe('Jira issue key from SOUL.md (e.g. "K3-42") — used to organise the video folder'),
+      filename: z.string().optional().describe('WebM filename. Defaults to {timestamp}.webm.'),
     },
     urlParam: null,
   },
@@ -248,7 +248,7 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
       def.schema,
       async (args) => {
         // Strip our params — they're not Playwright MCP's
-        const { user, job_id, reference_id, filename, width, height, ...toolArgs } = args;
+        const { user, job_id, filename, width, height, ...toolArgs } = args;
 
         // Domain validation for URL-bearing tools
         if (def.urlParam && args[def.urlParam]) {
@@ -316,6 +316,55 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
             return result;
           }
 
+          // browser_stop_video: stop recording, find saved file(s), move to organized path
+          if (name === 'browser_stop_video') {
+            log(name, 'FORWARD', `user=${user} stopping video recording`);
+            const result = await client.callTool({ name: 'browser_stop_video', arguments: {} });
+            if (result.isError) {
+              log(name, 'PW-ERROR', `user=${user} ${(result.content?.[0]?.text || '').substring(0, 200)}`);
+              return result;
+            }
+
+            const text = result.content?.find(c => c.type === 'text')?.text || '';
+            const pathMatches = [...text.matchAll(/\[Video[^\]]*\]\(([^)]+\.webm)\)/g)];
+
+            if (pathMatches.length === 0) {
+              log(name, 'OK', `user=${user} no video files found in response`);
+              return result;
+            }
+
+            const savedPaths = [];
+            for (const [i, match] of pathMatches.entries()) {
+              const srcPath = resolve(match[1]);
+              const suffix = pathMatches.length > 1 ? `-${i}` : '';
+              const fname = filename
+                ? filename.replace(/\.webm$/i, '') + suffix + '.webm'
+                : `${Date.now()}${suffix}.webm`;
+              const folder = job_id
+                ? `${runtimeDir}/videos/${job_id}`
+                : `${runtimeDir}/videos`;
+              const destPath = `${folder}/${fname}`;
+
+              try {
+                await mkdir(folder, { recursive: true });
+                await copyFile(srcPath, destPath);
+                await unlink(srcPath).catch(() => {});
+                savedPaths.push(destPath);
+                log(name, 'SAVED', `user=${user} ${srcPath} → ${destPath}`);
+              } catch (moveErr) {
+                log(name, 'WARN', `user=${user} failed to move video: ${moveErr.message}`);
+                savedPaths.push(srcPath);
+              }
+            }
+
+            log(name, 'OK', `user=${user} ${savedPaths.length} video(s) saved`);
+            return {
+              content: [
+                { type: 'text', text: savedPaths.map(p => `Video saved to: ${p}`).join('\n') },
+              ],
+            };
+          }
+
           log(name, 'FORWARD', `user=${user} args=${JSON.stringify(toolArgs)}`);
           let result = await client.callTool({ name: def.playwrightName || name, arguments: toolArgs });
           if (result.isError) {
@@ -325,40 +374,13 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
             log(name, 'OK', `user=${user} contentItems=${result.content?.length || 0}`);
           }
 
-          // For browser_stop_video: parse video path from result, copy to runtime dir
-          if (name === 'browser_stop_video' && !result.isError) {
-            const textItem = result.content?.find(c => c.type === 'text' && c.text);
-            const videoMatch = textItem?.text?.match(/\[Video\]\(([^)]+)\)/);
-            if (videoMatch) {
-              const videoSrc = videoMatch[1];
-              const folder = (job_id && reference_id)
-                ? `${runtimeDir}/videos/${job_id}-${reference_id}`
-                : `${runtimeDir}/videos`;
-              const videoFilename = videoSrc.split('/').pop();
-              const destPath = `${folder}/${videoFilename}`;
-              try {
-                await mkdir(folder, { recursive: true });
-                await copyFile(videoSrc, destPath);
-                log(name, 'SAVED', `user=${user} path=${destPath}`);
-                result = {
-                  content: [
-                    ...result.content,
-                    { type: 'text', text: `Video saved to: ${destPath}` },
-                  ],
-                };
-              } catch (saveErr) {
-                log(name, 'WARN', `user=${user} failed to save video: ${saveErr.message}`);
-              }
-            }
-          }
-
           // For browser_take_screenshot: save PNG to disk and append the path as a text content item
           if (name === 'browser_take_screenshot' && !result.isError) {
             const imageItem = result.content?.find(c => c.type === 'image' && c.data);
             if (imageItem) {
               const fname = filename || `${Date.now()}.png`;
-              const folder = (job_id && reference_id)
-                ? `${runtimeDir}/screenshots/${job_id}-${reference_id}`
+              const folder = job_id
+                ? `${runtimeDir}/screenshots/${job_id}`
                 : `${runtimeDir}/screenshots`;
               const filePath = `${folder}/${fname}`;
               try {
