@@ -29,6 +29,16 @@ class TestPrepareRunDir:
         prepare_run_dir(run_dir)
         assert run_dir.is_dir()
 
+    def test_cleans_stale_contents_on_retry(self, tmp_path):
+        run_dir = tmp_path / "runs" / "1"
+        run_dir.mkdir(parents=True)
+        (run_dir / "app").symlink_to(tmp_path)
+        (run_dir / "leftover.txt").write_text("stale")
+        prepare_run_dir(run_dir)
+        assert run_dir.is_dir()
+        assert not (run_dir / "app").exists()
+        assert not (run_dir / "leftover.txt").exists()
+
 
 class TestCleanupRunDir:
     def test_removes_directory(self, tmp_path):

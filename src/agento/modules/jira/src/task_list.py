@@ -20,17 +20,19 @@ class TaskListBuilder:
         config: object,
         ai_user: str,
         logger: logging.Logger,
+        agent_view_id: int | None = None,
     ):
         self.toolbox = toolbox
         self.config = config
         self.ai_user = ai_user
         self.logger = logger
+        self.agent_view_id = agent_view_id
 
     def get_todo_tasks(self) -> list[TaskAction]:
         jql = (
             f'{self.config.jira_project_jql} '
             f'AND assignee = "{self.ai_user}" '
-            f'AND status = "To Do" '
+            f'AND {self.config.todo_status_jql} '
             f'ORDER BY priority DESC, created ASC'
         )
         return self._search_and_map(
@@ -72,6 +74,7 @@ class TaskListBuilder:
             jql=jql,
             fields=["key", "summary", "description", "status", "priority", "assignee", "reporter", "created", "updated"],
             max_results=50,
+            agent_view_id=self.agent_view_id,
         )
         return [
             TaskAction(

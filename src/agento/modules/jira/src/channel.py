@@ -213,14 +213,14 @@ class JiraPublisher:
             return 0
 
         toolbox = ToolboxClient(config.toolbox_url)
-        builder = TaskListBuilder(toolbox, config, ai_user, logger)
+        builder = TaskListBuilder(toolbox, config, ai_user, logger, agent_view_id=agent_view_id)
         candidates = builder.get_unanswered_mentions()
 
         publish_cfg = db_config or config
         published = 0
         for task in candidates:
             try:
-                comments = toolbox.jira_get_comments(task.issue.key)
+                comments = toolbox.jira_get_comments(task.issue.key, agent_view_id=agent_view_id)
                 mention = find_unanswered_mention(comments, agent_account_id)
                 if mention is None:
                     logger.debug(f"{task.issue.key}: no unanswered mention, skipping")

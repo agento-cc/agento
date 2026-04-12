@@ -148,16 +148,15 @@ class PublishCommand:
                 logger.warning("jira_assignee/user not set for this agent_view, skipping")
                 return
             toolbox = ToolboxClient(jira_config.toolbox_url)
-            builder = TaskListBuilder(toolbox, jira_config, ai_user, logger)
+            builder = TaskListBuilder(toolbox, jira_config, ai_user, logger, agent_view_id=agent_view_id)
             tasks = builder.get_todo_tasks()
             if not tasks:
                 logger.debug("No TODO tasks, skipping")
                 return
             _publisher.publish_todo(
-                db_config, issue_key=tasks[0].issue.key,
+                db_config, reference_id=tasks[0].issue.key,
                 updated=tasks[0].issue.updated, logger=logger,
                 agent_view_id=agent_view_id, priority=priority,
-                payload=dataclasses.asdict(tasks[0].issue),
             )
 
     def _execute_global(self, kind, args, db_config, jira_config, logger):
