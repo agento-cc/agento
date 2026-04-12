@@ -21,7 +21,9 @@ def build_run_dir(workspace_code: str, agent_view_code: str, job_id: int) -> Pat
 
 
 def prepare_run_dir(run_dir: Path) -> None:
-    """Create the run directory tree."""
+    """Create the run directory tree, cleaning any stale contents from prior attempts."""
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
 

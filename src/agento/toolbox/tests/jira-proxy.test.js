@@ -25,7 +25,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('rejects missing method/path', async () => {
-    const handler = createJiraProxyHandler(validConfig, log);
+    const handler = createJiraProxyHandler(() => validConfig, log);
     const { req, res } = mockReqRes({});
     await handler(req, res);
 
@@ -36,7 +36,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('rejects invalid HTTP method', async () => {
-    const handler = createJiraProxyHandler(validConfig, log);
+    const handler = createJiraProxyHandler(() => validConfig, log);
     const { req, res } = mockReqRes({ method: 'PATCH', path: '/rest/api/3/field' });
     await handler(req, res);
 
@@ -47,7 +47,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('returns 500 when Jira not configured', async () => {
-    const handler = createJiraProxyHandler({ host: null, user: null, token: null }, log);
+    const handler = createJiraProxyHandler(() => ({ host: null, user: null, token: null }), log);
     const { req, res } = mockReqRes({ method: 'GET', path: '/rest/api/3/field' });
     await handler(req, res);
 
@@ -58,7 +58,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('proxies successful GET with ok: true', async () => {
-    const handler = createJiraProxyHandler(validConfig, log);
+    const handler = createJiraProxyHandler(() => validConfig, log);
     const mockData = [{ id: 'f1', name: 'Summary' }];
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true, status: 200,
@@ -78,7 +78,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('proxies Jira error with ok: false', async () => {
-    const handler = createJiraProxyHandler(validConfig, log);
+    const handler = createJiraProxyHandler(() => validConfig, log);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false, status: 403,
       text: () => Promise.resolve(JSON.stringify({ errorMessages: ['Forbidden'] })),
@@ -94,7 +94,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('does not send body on GET requests', async () => {
-    const handler = createJiraProxyHandler(validConfig, log);
+    const handler = createJiraProxyHandler(() => validConfig, log);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true, status: 200,
       text: () => Promise.resolve('{}'),
@@ -108,7 +108,7 @@ describe('createJiraProxyHandler', () => {
   });
 
   it('returns 500 on network error', async () => {
-    const handler = createJiraProxyHandler(validConfig, log);
+    const handler = createJiraProxyHandler(() => validConfig, log);
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
 
     const { req, res } = mockReqRes({ method: 'GET', path: '/rest/api/3/myself' });

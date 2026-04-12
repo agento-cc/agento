@@ -9,5 +9,6 @@
   "jira_user": {"type": "string", "label": "Jira API user email"},
   "jira_token": {"type": "obscure", "label": "Jira API token"},
   "jira_admin_token": {"type": "obscure", "label": "Jira admin API token (optional, enables auto-configuration of statuses, fields, and screens)"},
+  "todo_statuses": {"type": "json", "label": "Jira statuses treated as To Do (JSON array)"},
   "create_issue_limit_per_hour": {"type": "integer", "label": "Max issues created per hour"}
 }

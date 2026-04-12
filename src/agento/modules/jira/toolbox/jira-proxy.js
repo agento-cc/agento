@@ -1,15 +1,13 @@
 /**
  * Jira API proxy handler — extracted for testability.
  *
- * @param {Function|Object} configOrResolver - { host, user, token } or async () => { host, user, token }
+ * @param {Function} configResolver - async (agentViewId?) => { host, user, token }
  * @param {Function} log - logging function
  * @returns {Function} Express route handler for POST /api/jira/request
  */
-export function createJiraProxyHandler(configOrResolver, log) {
+export function createJiraProxyHandler(configResolver, log) {
   return async (req, res) => {
-    const config = typeof configOrResolver === 'function'
-      ? await configOrResolver()
-      : configOrResolver;
+    const config = await configResolver(req.body.agent_view_id || null);
 
     const { method, path } = req.body;
     const body = req.body.body || null;
@@ -23,7 +21,7 @@ export function createJiraProxyHandler(configOrResolver, log) {
       return res.status(400).json({ error: `Invalid method: ${method}` });
     }
 
-    // Allow per-request overrides (for scoped agent_view operations)
+    // Allow per-request overrides (for onboarding/admin without agent_view context)
     const host = req.body.jira_host || config.host;
     const user = req.body.auth_user || config.user;
     const token = req.body.auth_token || config.token;

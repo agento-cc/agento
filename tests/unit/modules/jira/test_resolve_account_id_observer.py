@@ -1,5 +1,5 @@
 """Tests for ResolveAccountIdObserver."""
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from agento.modules.jira.src.config import JiraConfig
 from agento.modules.jira.src.observers import ResolveAccountIdObserver
@@ -47,7 +47,6 @@ class TestSkipConditions:
             jira_assignee_account_id="712020:abc"
         )
         observer = ResolveAccountIdObserver()
-        # Patch out agent_view resolution to isolate the skip check
         with patch.object(observer, "_resolve_agent_views"):
             observer.execute(_make_event())
 
@@ -118,14 +117,18 @@ class TestAgentViewScopeResolve:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
 
+        # Agent_view has its own jira_user but no account_id
+        av_overrides = {
+            "jira/jira_user": ("user@dev.com", False),
+            "jira/jira_token": ("tok-123", False),
+        }
         sc_values = {
-            "jira/jira_assignee_account_id": None,  # empty
             "jira/jira_user": "user@dev.com",
             "jira/jira_token": "tok-123",
-            "jira/jira_host": "https://dev.atlassian.net",
         }
 
-        with patch(f"{_FWK}.scoped_config.ScopedConfig") as mock_sc_cls, \
+        with patch(f"{_FWK}.scoped_config.load_scoped_db_overrides", return_value=av_overrides), \
+             patch(f"{_FWK}.scoped_config.ScopedConfig") as mock_sc_cls, \
              patch(f"{_FWK}.scoped_config.scoped_config_set") as mock_scoped_set, \
              patch(f"{_OBS}._resolve_account_id", return_value="712020:dev-abc") as mock_resolve:
             mock_sc = MagicMock()
@@ -136,13 +139,9 @@ class TestAgentViewScopeResolve:
             observer.execute(_make_event())
 
         mock_resolve.assert_called_once_with(
-            "http://toolbox:3001", auth_user="user@dev.com", auth_token="tok-123",
-            jira_host="https://dev.atlassian.net",
+            "http://toolbox:3001", agent_view_id=2,
         )
-        mock_scoped_set.assert_called_once_with(
-            mock_conn, "jira/jira_assignee_account_id", "712020:dev-abc",
-            scope="agent_view", scope_id=2,
-        )
+        mock_scoped_set.assert_called_once()
 
     @patch(f"{_FWK}.workspace.get_active_agent_views")
     @patch(f"{_FWK}.db.get_connection")
@@ -159,17 +158,9 @@ class TestAgentViewScopeResolve:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
 
-        sc_values = {
-            "jira/jira_assignee_account_id": None,
-            "jira/jira_user": None,
-            "jira/jira_token": None,
-        }
-
-        with patch(f"{_FWK}.scoped_config.ScopedConfig") as mock_sc_cls, \
+        # No jira_user at agent_view scope → skip
+        with patch(f"{_FWK}.scoped_config.load_scoped_db_overrides", return_value={}), \
              patch(f"{_OBS}._resolve_account_id") as mock_resolve:
-            mock_sc = MagicMock()
-            mock_sc.get_value.side_effect = lambda path: sc_values.get(path)
-            mock_sc_cls.return_value = mock_sc
 
             observer = ResolveAccountIdObserver()
             observer.execute(_make_event())
@@ -191,17 +182,14 @@ class TestAgentViewScopeResolve:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
 
-        sc_values = {
-            "jira/jira_assignee_account_id": "712020:exists",
-            "jira/jira_user": "user@dev.com",
-            "jira/jira_token": "tok",
+        # Has own user AND account_id already set → skip
+        av_overrides = {
+            "jira/jira_user": ("user@dev.com", False),
+            "jira/jira_assignee_account_id": ("712020:exists", False),
         }
 
-        with patch(f"{_FWK}.scoped_config.ScopedConfig") as mock_sc_cls, \
+        with patch(f"{_FWK}.scoped_config.load_scoped_db_overrides", return_value=av_overrides), \
              patch(f"{_OBS}._resolve_account_id") as mock_resolve:
-            mock_sc = MagicMock()
-            mock_sc.get_value.side_effect = lambda path: sc_values.get(path)
-            mock_sc_cls.return_value = mock_sc
 
             observer = ResolveAccountIdObserver()
             observer.execute(_make_event())

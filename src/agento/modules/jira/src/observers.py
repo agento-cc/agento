@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _resolve_account_id(toolbox_url, auth_user=None, auth_token=None, jira_host=None):
+def _resolve_account_id(toolbox_url, agent_view_id=None):
     """Call /myself via toolbox and return accountId or None."""
     from .toolbox_client import ToolboxClient
 
@@ -15,8 +15,7 @@ def _resolve_account_id(toolbox_url, auth_user=None, auth_token=None, jira_host=
     try:
         myself = toolbox.jira_request(
             "GET", "/rest/api/3/myself",
-            auth_user=auth_user, auth_token=auth_token,
-            jira_host=jira_host,
+            agent_view_id=agent_view_id,
         )
     finally:
         toolbox.close()
@@ -76,7 +75,7 @@ class ResolveAccountIdObserver:
         try:
             from agento.framework.database_config import DatabaseConfig
             from agento.framework.db import get_connection
-            from agento.framework.scoped_config import ScopedConfig, scoped_config_set
+            from agento.framework.scoped_config import Scope, ScopedConfig, scoped_config_set
             from agento.framework.workspace import get_active_agent_views
 
             conn = get_connection(DatabaseConfig.from_env())
@@ -90,28 +89,35 @@ class ResolveAccountIdObserver:
             logger.warning("jira: failed to resolve agent_view account IDs (non-fatal)", exc_info=True)
 
     def _resolve_single_agent_view(self, conn, av, toolbox_url):
-        from agento.framework.encryptor import get_encryptor
-        from agento.framework.scoped_config import Scope, ScopedConfig, scoped_config_set
+        from agento.framework.scoped_config import (
+            Scope,
+            ScopedConfig,
+            load_scoped_db_overrides,
+            scoped_config_set,
+        )
 
-        sc = ScopedConfig(conn, scope=Scope.AGENT_VIEW, scope_id=av.id)
-
-        # Already resolved at this scope?
-        account_id = sc.get_value("jira/jira_assignee_account_id")
-        if account_id:
+        # Check if this agent_view has its own Jira credentials at agent_view scope
+        av_overrides = load_scoped_db_overrides(conn, Scope.AGENT_VIEW, av.id)
+        has_own_user = "jira/jira_user" in av_overrides
+        has_own_account_id = "jira/jira_assignee_account_id" in av_overrides
+        if not has_own_user:
+            logger.debug("jira: agent_view %s has no own jira_user, skipping", av.code)
             return
+        if has_own_account_id:
+            existing = av_overrides["jira/jira_assignee_account_id"][0]
+            if existing:
+                logger.debug("jira: agent_view %s already has account_id, skipping", av.code)
+                return
 
-        # Need scoped credentials to call /myself for this agent_view
+        # Verify credentials are actually set (non-empty)
+        sc = ScopedConfig(conn, scope=Scope.AGENT_VIEW, scope_id=av.id)
         scoped_user = sc.get_value("jira/jira_user")
         scoped_token = sc.get_value("jira/jira_token")
-        scoped_host = sc.get_value("jira/jira_host")
         if not scoped_user or not scoped_token:
             return
 
         try:
-            account_id = _resolve_account_id(
-                toolbox_url, auth_user=scoped_user, auth_token=scoped_token,
-                jira_host=scoped_host,
-            )
+            account_id = _resolve_account_id(toolbox_url, agent_view_id=av.id)
             if not account_id:
                 logger.warning("jira: /myself missing accountId for agent_view %s", av.code)
                 return
