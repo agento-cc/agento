@@ -115,7 +115,7 @@ agento doctor                         # Verify prerequisites
 
 `agento admin` launches an interactive terminal dashboard for operational visibility and configuration management.
 
-![Admin TUI](docs/images/admin-config.png)
+![Admin TUI](docs/images/admin_config.jpg)
 
 - **Dashboard** -- system health, recent jobs, tokens, agent views at a glance
 - **Jobs** -- browse, filter, search, view details, replay jobs
