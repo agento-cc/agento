@@ -6,6 +6,8 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Select
 
+from agento.framework.scoped_config import Scope
+
 
 class ScopeChanged(Message):
     def __init__(self, scope: str, scope_id: int) -> None:
@@ -30,9 +32,9 @@ class ScopeSelector(Widget):
     def compose(self) -> ComposeResult:
         with Horizontal(id="scope-bar"):
             yield Select(
-                [("default", "default"), ("workspace", "workspace"), ("agent_view", "agent_view")],
+                [(Scope.DEFAULT, Scope.DEFAULT), (Scope.WORKSPACE, Scope.WORKSPACE), (Scope.AGENT_VIEW, Scope.AGENT_VIEW)],
                 prompt="Scope",
-                value="default",
+                value=Scope.DEFAULT,
                 allow_blank=False,
                 id="scope-type",
             )
@@ -60,16 +62,16 @@ class ScopeSelector(Widget):
     def scope(self) -> str:
         val = self.query_one("#scope-type", Select).value
         if val is Select.BLANK:
-            return "default"
+            return Scope.DEFAULT
         return str(val)
 
     @property
     def scope_id(self) -> int:
         scope = self.scope
-        if scope == "agent_view":
+        if scope == Scope.AGENT_VIEW:
             val = self.query_one("#scope-agent-view", Select).value
             return int(val) if val is not Select.BLANK else 0
-        if scope == "workspace":
+        if scope == Scope.WORKSPACE:
             val = self.query_one("#scope-workspace", Select).value
             return int(val) if val is not Select.BLANK else 0
         return 0
@@ -98,13 +100,13 @@ class ScopeSelector(Widget):
         ws_select = self.query_one("#scope-workspace", Select)
         av_select = self.query_one("#scope-agent-view", Select)
 
-        if scope == "default":
+        if scope == Scope.DEFAULT:
             ws_select.disabled = True
             av_select.disabled = True
-        elif scope == "workspace":
+        elif scope == Scope.WORKSPACE:
             ws_select.disabled = False
             av_select.disabled = True
-        elif scope == "agent_view":
+        elif scope == Scope.AGENT_VIEW:
             ws_select.disabled = False
             av_select.disabled = False
             self._refresh_agent_views()
@@ -112,7 +114,7 @@ class ScopeSelector(Widget):
         self.post_message(ScopeChanged(self.scope, self.scope_id))
 
     def _on_workspace_changed(self) -> None:
-        if self.scope == "agent_view":
+        if self.scope == Scope.AGENT_VIEW:
             self._refresh_agent_views()
         self.post_message(ScopeChanged(self.scope, self.scope_id))
 

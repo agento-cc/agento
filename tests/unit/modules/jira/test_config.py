@@ -52,9 +52,30 @@ class TestJiraConfig:
         data = {}
         config = JiraConfig.from_dict(data)
 
+        assert config.enabled is True
         assert config.toolbox_url == ""
         assert config.user == ""
         assert config.jira_assignee == ""
+
+    def test_enabled_true_by_default(self):
+        config = JiraConfig.from_dict({})
+        assert config.enabled is True
+
+    def test_enabled_false_from_bool(self):
+        config = JiraConfig.from_dict({"enabled": False})
+        assert config.enabled is False
+
+    def test_enabled_false_from_string_zero(self):
+        config = JiraConfig.from_dict({"enabled": "0"})
+        assert config.enabled is False
+
+    def test_enabled_false_from_int_zero(self):
+        config = JiraConfig.from_dict({"enabled": 0})
+        assert config.enabled is False
+
+    def test_enabled_true_from_string_one(self):
+        config = JiraConfig.from_dict({"enabled": "1"})
+        assert config.enabled is True
 
 
 class TestDatabaseConfig:

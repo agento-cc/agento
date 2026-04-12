@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .encryptor import get_encryptor
+from .scoped_config import Scope
 
 
 def config_set(conn, path: str, value: str, *, encrypted: bool = False) -> None:
@@ -63,9 +64,9 @@ def config_get_tree(conn, prefix: str) -> list[dict]:
         r = row if isinstance(row, dict) else dict(zip(
             ("scope", "scope_id", "path", "value", "encrypted"), row, strict=False
         ))
-        if r["scope"] == "workspace":
+        if r["scope"] == Scope.WORKSPACE:
             ws_ids.add(r["scope_id"])
-        elif r["scope"] == "agent_view":
+        elif r["scope"] == Scope.AGENT_VIEW:
             av_ids.add(r["scope_id"])
 
     # Resolve labels
@@ -77,7 +78,7 @@ def config_get_tree(conn, prefix: str) -> list[dict]:
                 tuple(ws_ids),
             )
             for r in cur.fetchall():
-                labels[("workspace", r["id"])] = r["code"]
+                labels[(Scope.WORKSPACE, r["id"])] = r["code"]
     if av_ids:
         with conn.cursor() as cur:
             cur.execute(
@@ -85,7 +86,7 @@ def config_get_tree(conn, prefix: str) -> list[dict]:
                 tuple(av_ids),
             )
             for r in cur.fetchall():
-                labels[("agent_view", r["id"])] = r["code"]
+                labels[(Scope.AGENT_VIEW, r["id"])] = r["code"]
 
     results = []
     for row in rows:
@@ -105,12 +106,12 @@ def config_get_tree(conn, prefix: str) -> list[dict]:
 
 
 def config_delete(
-    conn, path: str, *, scope: str = "default", scope_id: int = 0
+    conn, path: str, *, scope: str = Scope.DEFAULT, scope_id: int = 0
 ) -> bool:
     """Delete a single config override. Returns True if row existed."""
     if not path or "/" not in path:
         raise ValueError(f"Invalid config path: {path!r} (expected module/field format)")
-    if scope not in ("default", "workspace", "agent_view"):
+    if scope not in (Scope.DEFAULT, Scope.WORKSPACE, Scope.AGENT_VIEW):
         raise ValueError(f"Invalid scope: {scope!r}")
     with conn.cursor() as cur:
         cur.execute(
@@ -220,7 +221,7 @@ def is_path_obscure(path: str) -> bool:
 
 
 def config_set_auto_encrypt(
-    conn, path: str, value: str, *, scope: str = "default", scope_id: int = 0
+    conn, path: str, value: str, *, scope: str = Scope.DEFAULT, scope_id: int = 0
 ) -> bool:
     """Set a config value, auto-detecting if it should be encrypted based on module.json field type.
 

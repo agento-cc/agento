@@ -1,4 +1,5 @@
 {
+  "enabled": {"type": "boolean", "label": "Enable Jira channel"},
   "toolbox_url": {"type": "string", "label": "Toolbox URL"},
   "user": {"type": "string", "label": "AI User"},
   "jira_projects": {"type": "json", "label": "Jira Projects (JSON array)"},

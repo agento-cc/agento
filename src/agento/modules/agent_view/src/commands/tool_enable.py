@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import re
 
+from agento.framework.scoped_config import Scope
+
 
 class ToolEnableCommand:
     @property
@@ -21,7 +23,7 @@ class ToolEnableCommand:
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("tool_name", help="Name of the tool to enable")
         parser.add_argument("--agent-view", dest="agent_view_code", default=None, help="Agent view code (shortcut for --scope agent_view)")
-        parser.add_argument("--scope", default="default", choices=["default", "workspace", "agent_view"], help="Config scope (default: default)")
+        parser.add_argument("--scope", default=Scope.DEFAULT, choices=[Scope.DEFAULT, Scope.WORKSPACE, Scope.AGENT_VIEW], help="Config scope (default: default)")
         parser.add_argument("--scope-id", dest="scope_id", type=int, default=0, help="Scope ID (default: 0)")
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -60,5 +62,5 @@ def _resolve_scope(conn, args):
         av = get_agent_view_by_code(conn, args.agent_view_code)
         if av is None:
             raise SystemExit(f"Error: agent_view '{args.agent_view_code}' not found")
-        return "agent_view", av.id
+        return Scope.AGENT_VIEW, av.id
     return args.scope, args.scope_id

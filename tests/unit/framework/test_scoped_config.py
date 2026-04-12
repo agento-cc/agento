@@ -1,10 +1,12 @@
 """Tests for scoped config resolution (agent_view -> workspace -> global fallback)."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from agento.framework.scoped_config import (
+    Scope,
     build_scoped_overrides,
+    get_module_config,
     load_scoped_db_overrides,
     resolve_scoped_field,
     resolve_scoped_module_config,
@@ -302,3 +304,98 @@ class TestScopedConfigSet:
         stored_value = args[1][3]
         assert stored_value.startswith("aes256:")
         assert args[1][4] == 1
+
+
+class TestScope:
+    def test_constants(self):
+        assert Scope.DEFAULT == "default"
+        assert Scope.WORKSPACE == "workspace"
+        assert Scope.AGENT_VIEW == "agent_view"
+
+
+class TestGetModuleConfig:
+    def _make_manifest(self):
+        manifest = MagicMock()
+        manifest.name = "testmod"
+        manifest.path = "/fake/path"
+        manifest.config = {
+            "url": {"type": "string"},
+            "enabled": {"type": "boolean"},
+        }
+        manifest.provides = {}
+        return manifest
+
+    def test_returns_none_if_module_not_found(self):
+        conn = _make_conn([])
+        with patch("agento.framework.bootstrap.get_manifests", return_value=[]):
+            result = get_module_config(conn, "nonexistent")
+        assert result is None
+
+    def test_resolves_default_scope(self):
+        manifest = self._make_manifest()
+        rows = [{"path": "testmod/url", "value": "https://test.com", "encrypted": 0}]
+        conn = _make_conn(rows)
+        with (
+            patch("agento.framework.bootstrap.get_manifests", return_value=[manifest]),
+            patch("agento.framework.config_resolver.read_config_defaults", return_value={"enabled": True}),
+        ):
+            result = get_module_config(conn, "testmod")
+        assert result["url"] == "https://test.com"
+        assert result["enabled"] is True
+
+    def test_resolves_agent_view_scope_with_auto_workspace(self):
+        manifest = self._make_manifest()
+        call_count = [0]
+
+        def make_cursor():
+            cur = MagicMock()
+            idx = call_count[0]
+            call_count[0] += 1
+            if idx == 0:
+                # workspace_id lookup from agent_view table
+                cur.fetchone.return_value = {"workspace_id": 5}
+                cur.fetchall.return_value = []
+            elif idx == 1:
+                # global overrides
+                cur.fetchall.return_value = [
+                    {"path": "testmod/url", "value": "https://global.test", "encrypted": 0},
+                ]
+            elif idx == 2:
+                # workspace overrides
+                cur.fetchall.return_value = []
+            else:
+                # agent_view overrides
+                cur.fetchall.return_value = [
+                    {"path": "testmod/url", "value": "https://av.test", "encrypted": 0},
+                ]
+            return cur
+
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__ = MagicMock(side_effect=make_cursor)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("agento.framework.bootstrap.get_manifests", return_value=[manifest]),
+            patch("agento.framework.config_resolver.read_config_defaults", return_value={"enabled": True}),
+        ):
+            result = get_module_config(conn, "testmod", scope=Scope.AGENT_VIEW, scope_id=10)
+        assert result["url"] == "https://av.test"
+
+    def test_converts_to_typed_config_class(self):
+        manifest = self._make_manifest()
+        manifest.provides = {"config_class": "src.config.TestConfig"}
+
+        class FakeConfig:
+            @classmethod
+            def from_dict(cls, data):
+                return {"typed": True, **data}
+
+        rows = [{"path": "testmod/url", "value": "https://test.com", "encrypted": 0}]
+        conn = _make_conn(rows)
+        with (
+            patch("agento.framework.bootstrap.get_manifests", return_value=[manifest]),
+            patch("agento.framework.config_resolver.read_config_defaults", return_value={"enabled": True}),
+            patch("agento.framework.module_loader.import_class", return_value=FakeConfig),
+        ):
+            result = get_module_config(conn, "testmod")
+        assert result["typed"] is True

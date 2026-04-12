@@ -13,6 +13,7 @@ class JiraConfig:
     Constructed from the resolved module config dict via ``from_dict()``.
     """
 
+    enabled: bool = True
     toolbox_url: str = ""
     user: str = ""
     jira_projects: list[str] = field(default_factory=list)
@@ -32,7 +33,10 @@ class JiraConfig:
         projects = data.get("jira_projects", [])
         if isinstance(projects, str):
             projects = [p.strip() for p in projects.split(",")]
+        enabled_raw = data.get("enabled", True)
+        enabled = enabled_raw not in (False, 0, "0", "false", "False")
         return cls(
+            enabled=enabled,
             toolbox_url=data.get("toolbox_url", ""),
             user=data.get("user", ""),
             jira_projects=projects,

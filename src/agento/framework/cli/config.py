@@ -4,6 +4,7 @@ import argparse
 import json
 
 from ..db import get_connection_or_exit
+from ..scoped_config import Scope
 from .runtime import _load_framework_config
 
 
@@ -94,7 +95,7 @@ def _config_get_tree(conn, prefix: str) -> None:
     groups: OrderedDict[tuple[str, int, str], list[dict]] = OrderedDict()
 
     # Ensure default group exists first
-    groups[("default", 0, "")] = []
+    groups[(Scope.DEFAULT, 0, "")] = []
 
     for row in rows:
         key = (row["scope"], row["scope_id"], row["scope_label"])
@@ -103,10 +104,10 @@ def _config_get_tree(conn, prefix: str) -> None:
         groups[key].append(row)
 
     # Add config.json defaults to default group (if not overridden by DB)
-    db_paths_default = {r["path"] for r in groups.get(("default", 0, ""), [])}
+    db_paths_default = {r["path"] for r in groups.get((Scope.DEFAULT, 0, ""), [])}
     for cfg_path, cfg_value in cfg_entries.items():
         if cfg_path not in db_paths_default:
-            groups[("default", 0, "")].append({
+            groups[(Scope.DEFAULT, 0, "")].append({
                 "path": cfg_path, "value": str(cfg_value), "source": "config.json",
             })
 
@@ -122,8 +123,8 @@ def _config_get_tree(conn, prefix: str) -> None:
         is_last = all(len(e) == 0 for _, e in group_list[i + 1:])
 
         # Scope header
-        if scope == "default":
-            header = "default"
+        if scope == Scope.DEFAULT:
+            header = Scope.DEFAULT
         elif scope_label:
             header = f"{scope}: {scope_label} (id={scope_id})"
         else:
@@ -144,13 +145,13 @@ def _config_get_tree(conn, prefix: str) -> None:
 
 def _format_scope_tag(conn, scope: str, scope_id: int) -> str:
     """Format a human-readable scope tag like 'default' or 'agent_view: Jira'."""
-    if scope == "default":
-        return "default"
-    if scope == "workspace":
+    if scope == Scope.DEFAULT:
+        return Scope.DEFAULT
+    if scope == Scope.WORKSPACE:
         from ..workspace import get_workspace
         ws = get_workspace(conn, scope_id)
         return f"workspace: {ws.code}" if ws else f"workspace/{scope_id}"
-    if scope == "agent_view":
+    if scope == Scope.AGENT_VIEW:
         from ..workspace import get_agent_view
         av = get_agent_view(conn, scope_id)
         return f"agent_view: {av.code}" if av else f"agent_view/{scope_id}"
@@ -188,7 +189,7 @@ class ConfigSetCommand:
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("path", help="Config path (e.g. my_app/tools/mysql_prod/pass)")
         parser.add_argument("value", nargs="?", default=None, help="Value to set")
-        parser.add_argument("--scope", default="default",
+        parser.add_argument("--scope", default=Scope.DEFAULT,
                            help="Config scope: default, workspace, agent_view")
         parser.add_argument("--scope-id", type=int, default=0,
                            help="Scope ID (workspace or agent_view ID)")
@@ -209,9 +210,9 @@ class ConfigSetCommand:
             print(f"Error: Missing value for '{args.path}'")
             return
 
-        scope = getattr(args, "scope", "default")
+        scope = getattr(args, "scope", Scope.DEFAULT)
         scope_id = getattr(args, "scope_id", 0)
-        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
+        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
 
         db_config, _, _ = _load_framework_config()
         conn = get_connection_or_exit(db_config)
@@ -419,8 +420,8 @@ class ConfigResolveCommand:
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("module", help="Module name")
-        parser.add_argument("--scope", default="default",
-                           choices=["default", "workspace", "agent_view"],
+        parser.add_argument("--scope", default=Scope.DEFAULT,
+                           choices=[Scope.DEFAULT, Scope.WORKSPACE, Scope.AGENT_VIEW],
                            help="Config scope")
         parser.add_argument("--scope-id", type=int, default=0,
                            help="Scope ID (workspace or agent_view ID)")
@@ -458,17 +459,17 @@ class ConfigResolveCommand:
             # Load overrides for the requested scope
             scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
             # Load default overrides for inherited detection
-            default_overrides = load_scoped_db_overrides(conn, "default", 0) if scope != "default" else {}
+            default_overrides = load_scoped_db_overrides(conn, Scope.DEFAULT, 0) if scope != Scope.DEFAULT else {}
             # Load parent scope overrides for inherited detection
             parent_overrides: dict[str, tuple[str, bool]] = {}
-            if scope == "agent_view":
+            if scope == Scope.AGENT_VIEW:
                 # Check workspace scope — need workspace_id from agent_view
                 with conn.cursor() as cur:
                     cur.execute("SELECT workspace_id FROM agent_view WHERE id=%s", (scope_id,))
                     row = cur.fetchone()
                     if row:
                         ws_id = row["workspace_id"] if isinstance(row, dict) else row[0]
-                        parent_overrides = load_scoped_db_overrides(conn, "workspace", ws_id)
+                        parent_overrides = load_scoped_db_overrides(conn, Scope.WORKSPACE, ws_id)
 
             # Merge overrides with scope chain: default -> workspace/parent -> requested scope
             merged_overrides: dict[str, tuple[str, bool]] = {}
@@ -486,7 +487,7 @@ class ConfigResolveCommand:
                 # Determine precise source with inherited detection
                 source = rv.source
                 inherited = False
-                if source == "db" and scope != "default":
+                if source == "db" and scope != Scope.DEFAULT:
                     db_p = _db_path(manifest.name, field_name)
                     if db_p not in scope_overrides:
                         source = "db:inherited"
@@ -515,7 +516,7 @@ class ConfigResolveCommand:
                     )
                     source = rv.source
                     inherited = False
-                    if source == "db" and scope != "default":
+                    if source == "db" and scope != Scope.DEFAULT:
                         db_p = f"{manifest.name}/tools/{tool['name']}/{field_name}".replace("-", "_")
                         if db_p not in scope_overrides:
                             source = "db:inherited"
@@ -567,7 +568,7 @@ class ConfigRemoveCommand:
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("path", help="Config path to remove")
-        parser.add_argument("--scope", default="default",
+        parser.add_argument("--scope", default=Scope.DEFAULT,
                           help="Config scope: default, workspace, agent_view")
         parser.add_argument("--scope-id", type=int, default=0,
                           help="Scope ID (workspace or agent_view ID)")
@@ -575,9 +576,9 @@ class ConfigRemoveCommand:
     def execute(self, args: argparse.Namespace) -> None:
         from ..core_config import config_delete
 
-        scope = getattr(args, "scope", "default")
+        scope = getattr(args, "scope", Scope.DEFAULT)
         scope_id = getattr(args, "scope_id", 0)
-        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != "default" else ""
+        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
 
         db_config, _, _ = _load_framework_config()
         conn = get_connection_or_exit(db_config)

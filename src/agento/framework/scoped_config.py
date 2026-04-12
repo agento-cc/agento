@@ -19,9 +19,17 @@ from .config_resolver import ResolvedValue, _coerce_type, _env_key, _env_key_too
 logger = logging.getLogger(__name__)
 
 
+class Scope:
+    """Magento-style scope constants for 3-tier config resolution."""
+
+    DEFAULT = "default"
+    WORKSPACE = "workspace"
+    AGENT_VIEW = "agent_view"
+
+
 def load_scoped_db_overrides(
     conn,
-    scope: str = "default",
+    scope: str = Scope.DEFAULT,
     scope_id: int = 0,
 ) -> dict[str, tuple[str, bool]]:
     """Load core_config_data rows for a specific (scope, scope_id).
@@ -60,16 +68,16 @@ def build_scoped_overrides(
     Later tiers (more specific) override earlier ones for the same path.
     """
     # Start with global
-    merged = load_scoped_db_overrides(conn, "default", 0)
+    merged = load_scoped_db_overrides(conn, Scope.DEFAULT, 0)
 
     # Layer workspace overrides
     if workspace_id is not None:
-        ws_overrides = load_scoped_db_overrides(conn, "workspace", workspace_id)
+        ws_overrides = load_scoped_db_overrides(conn, Scope.WORKSPACE, workspace_id)
         merged.update(ws_overrides)
 
     # Layer agent_view overrides (most specific)
     if agent_view_id is not None:
-        av_overrides = load_scoped_db_overrides(conn, "agent_view", agent_view_id)
+        av_overrides = load_scoped_db_overrides(conn, Scope.AGENT_VIEW, agent_view_id)
         merged.update(av_overrides)
 
     return merged
@@ -152,12 +160,79 @@ def resolve_scoped_module_config(
     return result
 
 
+def get_module_config(
+    conn,
+    module_name: str,
+    scope: str = Scope.DEFAULT,
+    scope_id: int = 0,
+) -> Any:
+    """Resolve full module config with scoped DB fallback.
+
+    Magento-style API: pass scope and scope_id to get config resolved through
+    the 3-tier chain (agent_view -> workspace -> default), with ENV winning
+    and config.json as final fallback.
+
+    If the module declares a config_class, returns a typed dataclass instance.
+    Otherwise returns a plain dict.
+
+    Returns None if the module is not found.
+    """
+    from .bootstrap import get_manifests
+    from .config_resolver import read_config_defaults
+    from .module_loader import import_class
+
+    manifest = next((m for m in get_manifests() if m.name == module_name), None)
+    if manifest is None:
+        return None
+
+    config_defaults = read_config_defaults(manifest.path)
+
+    # Resolve scope parameters for build_scoped_overrides
+    agent_view_id = None
+    workspace_id = None
+    if scope == Scope.AGENT_VIEW:
+        agent_view_id = scope_id
+        # Auto-resolve workspace_id from agent_view
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT workspace_id FROM agent_view WHERE id = %s",
+                    (scope_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    workspace_id = row["workspace_id"] if isinstance(row, dict) else row[0]
+        except Exception:
+            logger.warning("Failed to resolve workspace_id for agent_view_id=%s", scope_id)
+    elif scope == Scope.WORKSPACE:
+        workspace_id = scope_id
+
+    db_overrides = build_scoped_overrides(
+        conn, agent_view_id=agent_view_id, workspace_id=workspace_id
+    )
+    resolved = resolve_scoped_module_config(manifest, config_defaults, db_overrides)
+
+    # Convert to typed dataclass if module declares config_class
+    config_class_path = manifest.provides.get("config_class")
+    if config_class_path:
+        try:
+            cls = import_class(manifest.path, config_class_path)
+            return cls.from_dict(resolved)
+        except Exception:
+            logger.exception(
+                "Failed to load config_class %r from module %s, using dict",
+                config_class_path, module_name,
+            )
+
+    return resolved
+
+
 def scoped_config_set(
     conn,
     path: str,
     value: str,
     *,
-    scope: str = "default",
+    scope: str = Scope.DEFAULT,
     scope_id: int = 0,
     encrypted: bool = False,
 ) -> None:
@@ -178,11 +253,11 @@ class ScopedConfig:
     """Magento-like config service with recursive scope fallback."""
 
     _SCOPE_CHAIN: ClassVar[dict[str, str]] = {
-        "agent_view": "workspace",
-        "workspace": "default",
+        Scope.AGENT_VIEW: Scope.WORKSPACE,
+        Scope.WORKSPACE: Scope.DEFAULT,
     }
 
-    def __init__(self, conn, scope: str = "default", scope_id: int = 0):
+    def __init__(self, conn, scope: str = Scope.DEFAULT, scope_id: int = 0):
         self._conn = conn
         self._scope = scope
         self._scope_id = scope_id
@@ -214,15 +289,15 @@ class ScopedConfig:
         if parent_scope is None:
             return None
 
-        if scope == "agent_view":
+        if scope == Scope.AGENT_VIEW:
             parent_id = self._resolve_workspace_id()
             if parent_id is None:
                 # Skip workspace, try default
-                return self._resolve_db("default", 0, path)
-            return self._resolve_db("workspace", parent_id, path)
+                return self._resolve_db(Scope.DEFAULT, 0, path)
+            return self._resolve_db(Scope.WORKSPACE, parent_id, path)
 
         # workspace -> default
-        return self._resolve_db("default", 0, path)
+        return self._resolve_db(Scope.DEFAULT, 0, path)
 
     def _query_db(self, scope: str, scope_id: int, path: str) -> str | None:
         with self._conn.cursor() as cur:
