@@ -6,6 +6,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agento.framework.scoped_config import Scope
+
 
 @dataclass
 class DashboardData:
@@ -308,7 +310,7 @@ def clear_module_schema_cache() -> None:
     _module_schema_cache = None
 
 
-def get_resolved_fields(conn, module: str, scope: str = "default", scope_id: int = 0) -> list[ResolvedField]:
+def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id: int = 0) -> list[ResolvedField]:
     schemas = get_module_schemas()
     target = None
     for s in schemas:
@@ -327,7 +329,7 @@ def get_resolved_fields(conn, module: str, scope: str = "default", scope_id: int
     config_defaults = read_config_defaults(target.module_path) if target.module_path else {}
 
     # Load scoped overrides and per-scope overrides for source detection
-    if scope == "agent_view":
+    if scope == Scope.AGENT_VIEW:
         # Need workspace_id for scoped resolution
         ws_id = None
         if conn:
@@ -341,7 +343,7 @@ def get_resolved_fields(conn, module: str, scope: str = "default", scope_id: int
                 pass
         merged_overrides = build_scoped_overrides(conn, agent_view_id=scope_id, workspace_id=ws_id)
         scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
-    elif scope == "workspace":
+    elif scope == Scope.WORKSPACE:
         merged_overrides = build_scoped_overrides(conn, workspace_id=scope_id)
         scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
     else:
@@ -420,7 +422,7 @@ def get_agent_views(conn, workspace_id: int | None = None) -> list[dict]:
         return []
 
 
-def set_config_value(conn, path: str, value: str, scope: str = "default", scope_id: int = 0) -> None:
+def set_config_value(conn, path: str, value: str, scope: str = Scope.DEFAULT, scope_id: int = 0) -> None:
     from ..core_config import config_set_auto_encrypt
 
     _ensure_conn(conn)
@@ -428,7 +430,7 @@ def set_config_value(conn, path: str, value: str, scope: str = "default", scope_
     conn.commit()
 
 
-def delete_config_override(conn, path: str, scope: str = "default", scope_id: int = 0) -> bool:
+def delete_config_override(conn, path: str, scope: str = Scope.DEFAULT, scope_id: int = 0) -> bool:
     from ..core_config import config_delete
 
     _ensure_conn(conn)

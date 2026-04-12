@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 
+from agento.framework.scoped_config import Scope
+
 
 class SkillEnableCommand:
     @property
@@ -20,7 +22,7 @@ class SkillEnableCommand:
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("skill_name", help="Skill name")
         parser.add_argument("--agent-view", dest="agent_view_code", default=None, help="Agent view code (shortcut for --scope agent_view)")
-        parser.add_argument("--scope", default="default", choices=["default", "workspace", "agent_view"], help="Config scope")
+        parser.add_argument("--scope", default=Scope.DEFAULT, choices=[Scope.DEFAULT, Scope.WORKSPACE, Scope.AGENT_VIEW], help="Config scope")
         parser.add_argument("--scope-id", type=int, default=0, help="Scope ID")
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -47,5 +49,5 @@ def _resolve_scope(conn, args):
         av = get_agent_view_by_code(conn, args.agent_view_code)
         if av is None:
             raise SystemExit(f"Error: agent_view '{args.agent_view_code}' not found")
-        return "agent_view", av.id
+        return Scope.AGENT_VIEW, av.id
     return args.scope, args.scope_id

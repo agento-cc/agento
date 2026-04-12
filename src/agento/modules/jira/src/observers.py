@@ -91,9 +91,9 @@ class ResolveAccountIdObserver:
 
     def _resolve_single_agent_view(self, conn, av, toolbox_url):
         from agento.framework.encryptor import get_encryptor
-        from agento.framework.scoped_config import ScopedConfig, scoped_config_set
+        from agento.framework.scoped_config import Scope, ScopedConfig, scoped_config_set
 
-        sc = ScopedConfig(conn, scope="agent_view", scope_id=av.id)
+        sc = ScopedConfig(conn, scope=Scope.AGENT_VIEW, scope_id=av.id)
 
         # Already resolved at this scope?
         account_id = sc.get_value("jira/jira_assignee_account_id")
@@ -118,7 +118,7 @@ class ResolveAccountIdObserver:
 
             scoped_config_set(
                 conn, "jira/jira_assignee_account_id", account_id,
-                scope="agent_view", scope_id=av.id,
+                scope=Scope.AGENT_VIEW, scope_id=av.id,
             )
             conn.commit()
             logger.info("jira: auto-resolved account ID for agent_view %s: %s", av.code, account_id)

@@ -9,6 +9,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Select, Static, TextArea, Tree
 
+from agento.framework.scoped_config import Scope
+
 from ..data import ResolvedField
 from ..widgets.confirm import ConfirmScreen
 from ..widgets.field_detail import FieldDetailPanel
@@ -28,7 +30,7 @@ class ConfigScreen(Screen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._current_module: str | None = None
-        self._current_scope: str = "default"
+        self._current_scope: str = Scope.DEFAULT
         self._current_scope_id: int = 0
         self._current_mode: str = "all"
         self._fields: list[ResolvedField] = []

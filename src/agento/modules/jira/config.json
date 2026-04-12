@@ -1,4 +1,5 @@
 {
+  "enabled": true,
   "toolbox_url": "http://toolbox:3001",
   "create_issue_limit_per_hour": 50
 }
