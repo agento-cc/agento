@@ -31,7 +31,6 @@ _ALL_KEYS = {
     "jira/jira_token": "tok",
     "jira/jira_host": "https://myteam.atlassian.net",
     "jira/jira_user": "user@example.com",
-    "jira/jira_assignee_account_id": "abc123",
     "jira/jira_projects": '["AI"]',
 }
 

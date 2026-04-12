@@ -15,7 +15,6 @@ _REQUIRED_KEYS = (
     "jira/jira_token",
     "jira/jira_host",
     "jira/jira_user",
-    "jira/jira_assignee_account_id",
     "jira/jira_projects",
 )
 
