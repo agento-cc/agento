@@ -122,6 +122,7 @@ class TestAgentViewScopeResolve:
             "jira/jira_assignee_account_id": None,  # empty
             "jira/jira_user": "user@dev.com",
             "jira/jira_token": "tok-123",
+            "jira/jira_host": "https://dev.atlassian.net",
         }
 
         with patch(f"{_FWK}.scoped_config.ScopedConfig") as mock_sc_cls, \
@@ -136,6 +137,7 @@ class TestAgentViewScopeResolve:
 
         mock_resolve.assert_called_once_with(
             "http://toolbox:3001", auth_user="user@dev.com", auth_token="tok-123",
+            jira_host="https://dev.atlassian.net",
         )
         mock_scoped_set.assert_called_once_with(
             mock_conn, "jira/jira_assignee_account_id", "712020:dev-abc",

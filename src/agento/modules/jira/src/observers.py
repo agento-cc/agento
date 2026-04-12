@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _resolve_account_id(toolbox_url, auth_user=None, auth_token=None):
+def _resolve_account_id(toolbox_url, auth_user=None, auth_token=None, jira_host=None):
     """Call /myself via toolbox and return accountId or None."""
     from .toolbox_client import ToolboxClient
 
@@ -16,6 +16,7 @@ def _resolve_account_id(toolbox_url, auth_user=None, auth_token=None):
         myself = toolbox.jira_request(
             "GET", "/rest/api/3/myself",
             auth_user=auth_user, auth_token=auth_token,
+            jira_host=jira_host,
         )
     finally:
         toolbox.close()
@@ -102,12 +103,14 @@ class ResolveAccountIdObserver:
         # Need scoped credentials to call /myself for this agent_view
         scoped_user = sc.get_value("jira/jira_user")
         scoped_token = sc.get_value("jira/jira_token")
+        scoped_host = sc.get_value("jira/jira_host")
         if not scoped_user or not scoped_token:
             return
 
         try:
             account_id = _resolve_account_id(
                 toolbox_url, auth_user=scoped_user, auth_token=scoped_token,
+                jira_host=scoped_host,
             )
             if not account_id:
                 logger.warning("jira: /myself missing accountId for agent_view %s", av.code)

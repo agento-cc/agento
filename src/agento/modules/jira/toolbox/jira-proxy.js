@@ -23,8 +23,8 @@ export function createJiraProxyHandler(configOrResolver, log) {
       return res.status(400).json({ error: `Invalid method: ${method}` });
     }
 
-    const { host } = config;
-    // Allow per-request auth override (for admin operations)
+    // Allow per-request overrides (for scoped agent_view operations)
+    const host = req.body.jira_host || config.host;
     const user = req.body.auth_user || config.user;
     const token = req.body.auth_token || config.token;
 

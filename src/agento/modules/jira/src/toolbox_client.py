@@ -37,6 +37,7 @@ class ToolboxClient:
     def jira_request(
         self, method: str, path: str, body: dict | None = None,
         *, auth_user: str | None = None, auth_token: str | None = None,
+        jira_host: str | None = None,
     ) -> dict:
         payload: dict = {"method": method, "path": path}
         if body is not None:
@@ -45,6 +46,8 @@ class ToolboxClient:
             payload["auth_user"] = auth_user
         if auth_token:
             payload["auth_token"] = auth_token
+        if jira_host:
+            payload["jira_host"] = jira_host
         response = self._client.post("/api/jira/request", json=payload)
         if response.status_code != 200:
             raise ToolboxAPIError(response.status_code, response.text)
