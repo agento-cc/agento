@@ -517,7 +517,12 @@ class Consumer:
                 with conn.cursor() as cur:
                     cur.execute("SELECT status FROM job WHERE id = %s", (job.id,))
                     row = cur.fetchone()
-                current_status = row[0] if row else None
+                if row is None:
+                    current_status = None
+                elif isinstance(row, dict):
+                    current_status = row.get("status")
+                else:
+                    current_status = row[0]
                 if current_status != "RUNNING":
                     self.logger.info(
                         "Job finalize skipped (status changed during run)",
