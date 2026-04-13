@@ -123,7 +123,7 @@ class TestIdempotencyKey:
     def test_todo_key(self, mock_dt):
         mock_dt.now.return_value = datetime(2026, 2, 20, 8, 0)
         key = self.jira.build_idempotency_key(AgentType.TODO, "AI-456")
-        assert key == "jira:todo:AI-456:20260220_08"
+        assert key == "jira:todo:AI-456:20260220_0800"
 
     @patch("agento.modules.jira.src.channel.datetime")
     def test_todo_key_with_updated(self, mock_dt):
@@ -131,10 +131,10 @@ class TestIdempotencyKey:
         key = self.jira.build_idempotency_key(
             AgentType.TODO, "AI-456", updated="2026-02-20T16:45:00.000+0000"
         )
-        assert key == "jira:todo:AI-456:20260220_08:u20260220_1645"
+        assert key == "jira:todo:AI-456:u20260220_1645"
 
     @patch("agento.modules.jira.src.channel.datetime")
     def test_dispatch_key(self, mock_dt):
         mock_dt.now.return_value = datetime(2026, 2, 20, 8, 0)
         key = self.jira.build_idempotency_key(AgentType.TODO, None)
-        assert key == "jira:todo:dispatch:20260220_08"
+        assert key == "jira:todo:dispatch:20260220_0800"
