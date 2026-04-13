@@ -330,7 +330,7 @@ export async function loadModuleConfigs(dbOverrides = null) {
  * Create a FileManager instance from module configs.
  * Parses allowed extensions and max file size from core config.
  */
-function createFileManager(moduleConfigs) {
+function createFileManager(moduleConfigs, log) {
   const coreConfig = moduleConfigs.core || {};
   const extString = coreConfig['toolbox/file_manager/allowed_extensions']
     || '.pdf,.xlsx,.xls,.csv,.txt,.md,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.svg,.webp';
@@ -338,7 +338,7 @@ function createFileManager(moduleConfigs) {
   const maxFileSize = parseInt(coreConfig['toolbox/file_manager/max_file_size'], 10) || 524288000;
 
   const converterRegistry = new ConverterRegistry();
-  return new FileManager({ converterRegistry, allowedExtensions, maxFileSize });
+  return new FileManager({ converterRegistry, allowedExtensions, maxFileSize, log });
 }
 
 /**
@@ -350,7 +350,7 @@ export async function registerModuleRestApis(context) {
   const modules = scanModules();
   const dbOverrides = await loadDbOverrides();
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
-  const fileManager = createFileManager(moduleConfigs);
+  const fileManager = createFileManager(moduleConfigs, context.log);
   const enrichedContext = { ...context, moduleConfigs, loadModuleConfigs, loadScopedDbOverrides, fileManager };
 
   const sorted = [...modules].sort((a, b) => (a.order || 100) - (b.order || 100));
@@ -396,7 +396,7 @@ export async function registerTools(server, context, agentViewId = null, preload
   // Resolve module-level config (system.json fields) — passed to JS tools via context
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
   const enabledCheck = (toolName) => isToolEnabled(toolName, dbOverrides);
-  const fileManager = createFileManager(moduleConfigs);
+  const fileManager = createFileManager(moduleConfigs, context.log);
   const enrichedContext = { ...context, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
 
   // Track all tool names registered on the server (adapter + JS module tools)
