@@ -9,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from .agent_config_writer import populate_agent_configs
 from .agent_manager.models import AgentProvider
 from .agent_manager.token_resolver import TokenResolver
 from .agent_manager.token_store import get_primary_token
@@ -403,12 +402,17 @@ class Consumer:
                     job_id=job.id,
                     workspace_code=runtime.workspace.code,
                     agent_view_code=runtime.agent_view.code,
+                    provider=runtime.provider,
                 )
-            else:
-                populate_agent_configs(
-                    run_dir, runtime.scoped_overrides,
-                    agent_view_id=job.agent_view_id,
-                )
+            elif runtime.provider:
+                from .config_writer import get_agent_config, get_config_writer
+                agent_config = get_agent_config(runtime.scoped_overrides)
+                if agent_config:
+                    writer = get_config_writer(runtime.provider)
+                    writer.prepare_workspace(
+                        run_dir, agent_config,
+                        agent_view_id=job.agent_view_id,
+                    )
 
         em.dispatch("agent_view_run_start_before", AgentViewRunStartedEvent(
             job=job,

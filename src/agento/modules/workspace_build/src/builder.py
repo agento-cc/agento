@@ -146,7 +146,8 @@ def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) 
 
 def execute_build(conn, agent_view_id: int) -> BuildResult:
     """Build a materialized workspace for an agent_view."""
-    from agento.framework.agent_config_writer import populate_agent_configs
+    from agento.framework.agent_view_runtime import resolve_agent_view_runtime
+    from agento.framework.config_writer import get_agent_config, get_config_writer
     from agento.framework.scoped_config import build_scoped_overrides
     from agento.framework.workspace import get_agent_view
 
@@ -228,9 +229,13 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
         # 1. Theme as base layer (scaffolding, KnowledgeBase, etc.)
         _copy_theme(build_dir)
 
-        # 2. Agent CLI configs (.claude.json, .mcp.json, .codex/config.toml)
-        #    Overwrites theme defaults with DB-resolved scoped config.
-        populate_agent_configs(build_dir, overrides, agent_view_id=agent_view_id)
+        # 2. Agent CLI configs via provider-specific ConfigWriter
+        runtime = resolve_agent_view_runtime(conn, agent_view_id)
+        if runtime.provider:
+            agent_config = get_agent_config(overrides)
+            if agent_config:
+                writer = get_config_writer(runtime.provider)
+                writer.prepare_workspace(build_dir, agent_config, agent_view_id=agent_view_id)
 
         # 3. Instruction files (AGENTS.md, SOUL.md, CLAUDE.md)
         _write_instruction_files(build_dir, overrides)

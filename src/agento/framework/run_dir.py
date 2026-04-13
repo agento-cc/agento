@@ -5,7 +5,6 @@ Directories are created before execution and cleaned up after completion.
 """
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from pathlib import Path
@@ -59,10 +58,11 @@ def copy_build_to_run_dir(
     job_id: int | None = None,
     workspace_code: str | None = None,
     agent_view_code: str | None = None,
+    provider: str | None = None,
 ) -> None:
     """Thin bootstrap: copy small config files, symlink large readonly content.
 
-    Injects job_id/ws/av into .mcp.json URLs so toolbox knows the runtime path.
+    Dispatches runtime param injection to the provider's ConfigWriter.
     """
     for item in build_dir.iterdir():
         dest = run_dir / item.name
@@ -75,27 +75,16 @@ def copy_build_to_run_dir(
         else:
             dest.symlink_to(item.resolve())
 
-    # Inject runtime params into .mcp.json URLs
-    if job_id is not None:
-        _inject_runtime_params(run_dir, job_id, workspace_code or "", agent_view_code or "")
-
-
-def _inject_runtime_params(
-    run_dir: Path, job_id: int, workspace_code: str, agent_view_code: str,
-) -> None:
-    """Append job_id, ws, av query params to toolbox URLs in .mcp.json."""
-    mcp_path = run_dir / ".mcp.json"
-    if not mcp_path.is_file():
-        return
-    try:
-        data = json.loads(mcp_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return
-    servers = data.get("mcpServers", {})
-    extra = f"job_id={job_id}&ws={workspace_code}&av={agent_view_code}"
-    for server_cfg in servers.values():
-        url = server_cfg.get("url", "")
-        if "/sse" in url or "/mcp" in url:
-            sep = "&" if "?" in url else "?"
-            server_cfg["url"] = f"{url}{sep}{extra}"
-    mcp_path.write_text(json.dumps(data, indent=2))
+    # Inject runtime params via provider-specific ConfigWriter
+    if job_id is not None and provider is not None:
+        try:
+            from agento.framework.config_writer import get_config_writer
+            writer = get_config_writer(provider)
+            writer.inject_runtime_params(
+                run_dir,
+                job_id=job_id,
+                workspace_code=workspace_code or "",
+                agent_view_code=agent_view_code or "",
+            )
+        except KeyError:
+            logger.warning("No ConfigWriter for provider %r, skipping runtime param injection", provider)

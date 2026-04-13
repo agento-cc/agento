@@ -4,5 +4,8 @@
   ],
   "auth_strategies": [
     {"provider": "claude", "class": "src.auth.ClaudeAuthStrategy"}
+  ],
+  "config_writers": [
+    {"provider": "claude", "class": "src.config.ClaudeConfigWriter"}
   ]
 }

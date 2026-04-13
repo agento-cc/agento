@@ -13,6 +13,8 @@ from .channels.base import Channel
 from .commands import Command, register_command
 from .commands import clear as clear_commands
 from .config_resolver import load_db_overrides, read_config_defaults, resolve_module_config
+from .config_writer import ConfigWriter, register_config_writer
+from .config_writer import clear as clear_config_writers
 from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import Observer, ObserverEntry, get_event_manager
 from .event_manager import clear as clear_event_manager
@@ -87,6 +89,7 @@ def bootstrap(
     channel_registry.clear()
     clear_workflows()
     clear_runners()
+    clear_config_writers()
     clear_auth_strategies()
     clear_commands()
     clear_onboardings()
@@ -137,6 +140,7 @@ def bootstrap(
         _load_channels(m)
         _load_workflows(m)
         _load_runtimes(m)
+        _load_config_writers(m)
         _load_auth_strategies(m)
         _load_commands(m)
         _load_onboarding(m)
@@ -246,6 +250,24 @@ def _load_runtimes(m: ModuleManifest) -> None:
             logger.debug("Registered runtime %r from module %s", decl["provider"], m.name)
         except Exception:
             logger.exception("Failed to load runtime %r from module %s", decl.get("provider"), m.name)
+
+
+def _load_config_writers(m: ModuleManifest) -> None:
+    for decl in m.provides.get("config_writers", []):
+        try:
+            cls = import_class(m.path, decl["class"])
+            instance = cls()
+            if not isinstance(instance, ConfigWriter):
+                logger.error(
+                    "ConfigWriter %r from module %s does not implement ConfigWriter protocol, skipping",
+                    decl.get("provider"), m.name,
+                )
+                continue
+            provider = AgentProvider(decl["provider"])
+            register_config_writer(provider, instance)
+            logger.debug("Registered config writer %r from module %s", decl["provider"], m.name)
+        except Exception:
+            logger.exception("Failed to load config writer %r from module %s", decl.get("provider"), m.name)
 
 
 def _load_auth_strategies(m: ModuleManifest) -> None:

@@ -4,5 +4,8 @@
   ],
   "auth_strategies": [
     {"provider": "codex", "class": "src.auth.CodexAuthStrategy"}
+  ],
+  "config_writers": [
+    {"provider": "codex", "class": "src.config.CodexConfigWriter"}
   ]
 }
