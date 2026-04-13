@@ -30,11 +30,13 @@ export class FileManager {
   #converterRegistry;
   #allowedExtensions;
   #maxFileSize;
+  #log;
 
-  constructor({ converterRegistry, allowedExtensions, maxFileSize }) {
+  constructor({ converterRegistry, allowedExtensions, maxFileSize, log }) {
     this.#converterRegistry = converterRegistry;
     this.#allowedExtensions = allowedExtensions;
     this.#maxFileSize = maxFileSize;
+    this.#log = log || (() => {});
   }
 
   get converterRegistry() {
@@ -51,23 +53,32 @@ export class FileManager {
     }
 
     const localPath = join(dir, `${basename(filename, ext)}_${Date.now()}${ext}`);
-    await mkdir(dir, { recursive: true });
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      return { skipped: true, skipReason: `Download failed: HTTP ${res.status}` };
+    try {
+      await mkdir(dir, { recursive: true });
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        this.#log('file_manager', 'ERROR', `Download failed: ${filename} HTTP ${res.status}`);
+        return { skipped: true, skipReason: `Download failed: HTTP ${res.status}` };
+      }
+      await writeFile(localPath, Buffer.from(await res.arrayBuffer()));
+    } catch (err) {
+      this.#log('file_manager', 'ERROR', `Write failed: ${filename} -> ${localPath}: ${err.message}`);
+      return { skipped: true, skipReason: `Write failed: ${err.message}` };
     }
-    await writeFile(localPath, Buffer.from(await res.arrayBuffer()));
 
     let convertedPath = null;
+    let conversionError = null;
     const converter = this.#converterRegistry.get(ext);
     if (converter) {
       try {
         convertedPath = await converter.convert(localPath);
-      } catch {
-        convertedPath = null;
+        this.#log('file_manager', 'OK', `Converted ${filename} -> ${convertedPath}`);
+      } catch (err) {
+        conversionError = err.message;
+        this.#log('file_manager', 'ERROR', `Conversion failed: ${filename}: ${err.message}`);
       }
     }
 
-    return { localPath, convertedPath, skipped: false };
+    return { localPath, convertedPath, conversionError, skipped: false };
   }
 }
