@@ -139,13 +139,13 @@ The protocol (`src/agento/framework/config_writer.py`):
 ```python
 class ConfigWriter(Protocol):
     def prepare_workspace(self, working_dir, agent_config, *, agent_view_id=None) -> None: ...
-    def inject_runtime_params(self, run_dir, *, job_id, workspace_code, agent_view_code) -> None: ...
+    def inject_runtime_params(self, artifacts_dir, *, job_id) -> None: ...
     def owned_paths(self) -> tuple[set[str], set[str]]: ...
 ```
 
 - `prepare_workspace` — write provider config files into the build directory (model, MCP servers, permissions, etc.)
-- `inject_runtime_params` — append per-job query params (`job_id`, `ws`, `av`) to URLs in the runtime copy of the config
-- `owned_paths` — return `(files, dirs)` this writer manages so framework copies (not symlinks) them into per-job run dirs
+- `inject_runtime_params` — append the per-job `job_id` to MCP URLs in the artifacts copy of the config (workspace/agent_view codes are resolved toolbox-side from `agent_view_id`)
+- `owned_paths` — return `(files, dirs)` this writer manages so framework copies (not symlinks) them into per-job artifacts dirs
 
 Class paths are dotted relative to the module directory: `src.channel.JiraChannel` resolves to `<module>/src/channel.py` → `JiraChannel`.
 

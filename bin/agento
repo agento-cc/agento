@@ -139,7 +139,7 @@ HELPEOF
   # Step 1: Create directories
   log_info "Creating directories..."
   mkdir -p "$PROJECT_DIR/workspace/systems"
-  mkdir -p "$PROJECT_DIR/workspace/runtime"
+  mkdir -p "$PROJECT_DIR/workspace/artifacts"
   mkdir -p "$PROJECT_DIR/workspace/build"
   mkdir -p "$PROJECT_DIR/workspace/theme"
   mkdir -p "$PROJECT_DIR/workspace/app"

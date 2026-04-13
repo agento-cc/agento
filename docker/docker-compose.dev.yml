@@ -54,7 +54,7 @@ services:
       - ../src/agento/modules:/app/modules/core:ro
       - ../app/code:/app/modules/user:ro
       - ../logs:/app/logs
-      - ../workspace/runtime:/workspace/runtime
+      - ../workspace/artifacts:/workspace/artifacts
     security_opt:
       - no-new-privileges:true
     networks:

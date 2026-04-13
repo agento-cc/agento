@@ -103,31 +103,25 @@ class TestInjectRuntimeParams:
         mcp = {"mcpServers": {"toolbox": {"url": "http://toolbox:3001/sse?agent_view_id=2"}}}
         (work_dir / ".mcp.json").write_text(json.dumps(mcp))
 
-        writer.inject_runtime_params(
-            work_dir, job_id=10, workspace_code="acme", agent_view_code="dev",
-        )
+        writer.inject_runtime_params(work_dir, job_id=10)
 
         data = json.loads((work_dir / ".mcp.json").read_text())
         assert data["mcpServers"]["toolbox"]["url"] == (
-            "http://toolbox:3001/sse?agent_view_id=2&job_id=10&ws=acme&av=dev"
+            "http://toolbox:3001/sse?agent_view_id=2&job_id=10"
         )
 
     def test_noop_when_no_mcp_json(self, writer, work_dir):
-        writer.inject_runtime_params(
-            work_dir, job_id=10, workspace_code="acme", agent_view_code="dev",
-        )
+        writer.inject_runtime_params(work_dir, job_id=10)
         assert not (work_dir / ".mcp.json").exists()
 
     def test_handles_mcp_url(self, writer, work_dir):
         mcp = {"mcpServers": {"toolbox": {"url": "http://toolbox:3001/mcp?agent_view_id=2"}}}
         (work_dir / ".mcp.json").write_text(json.dumps(mcp))
 
-        writer.inject_runtime_params(
-            work_dir, job_id=5, workspace_code="ws", agent_view_code="av",
-        )
+        writer.inject_runtime_params(work_dir, job_id=5)
 
         data = json.loads((work_dir / ".mcp.json").read_text())
-        assert "job_id=5&ws=ws&av=av" in data["mcpServers"]["toolbox"]["url"]
+        assert "job_id=5" in data["mcpServers"]["toolbox"]["url"]
 
 
 class TestOwnedPaths:

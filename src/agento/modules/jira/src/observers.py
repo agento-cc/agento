@@ -75,7 +75,6 @@ class ResolveAccountIdObserver:
         try:
             from agento.framework.database_config import DatabaseConfig
             from agento.framework.db import get_connection
-            from agento.framework.scoped_config import Scope, ScopedConfig, scoped_config_set
             from agento.framework.workspace import get_active_agent_views
 
             conn = get_connection(DatabaseConfig.from_env())

@@ -42,7 +42,7 @@ describe('browser tools', () => {
         },
       },
       isToolEnabled: () => true,
-      runtimeDir: '/workspace/tmp',
+      artifactsDir: '/workspace/tmp',
     };
   }
 
@@ -178,7 +178,7 @@ describe('browser tools', () => {
           },
         },
         isToolEnabled: () => true,
-        runtimeDir: '/workspace/tmp',
+        artifactsDir: '/workspace/tmp',
       };
       register(server, context);
 

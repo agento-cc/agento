@@ -393,7 +393,7 @@ describe('loadScopedDbOverrides', () => {
       ]])
       // 2nd call: agent_view lookup
       .mockResolvedValueOnce([[
-        { id: 5, workspace_id: 2, label: 'Dev Agent' },
+        { id: 5, workspace_id: 2, label: 'Dev Agent', workspace_code: 'acme', agent_view_code: 'dev' },
       ]])
       // 3rd call: workspace overrides
       .mockResolvedValueOnce([[
@@ -417,7 +417,13 @@ describe('loadScopedDbOverrides', () => {
     const mod = await import('../config-loader.js');
 
     const { overrides, agentViewMeta } = await mod.loadScopedDbOverrides(5);
-    expect(agentViewMeta).toEqual({ id: 5, label: 'Dev Agent', workspaceId: 2 });
+    expect(agentViewMeta).toEqual({
+      id: 5,
+      label: 'Dev Agent',
+      workspaceId: 2,
+      workspaceCode: 'acme',
+      agentViewCode: 'dev',
+    });
     // agent_view override wins
     expect(overrides['jira/jira_host'].value).toBe('https://av.jira.com');
     // global value preserved for non-overridden path
@@ -460,7 +466,7 @@ describe('loadScopedDbOverrides', () => {
         { path: 'app/color', value: 'red', encrypted: 0 },
       ]])
       // agent_view lookup
-      .mockResolvedValueOnce([[{ id: 1, workspace_id: 10, label: 'QA' }]])
+      .mockResolvedValueOnce([[{ id: 1, workspace_id: 10, label: 'QA', workspace_code: 'acme', agent_view_code: 'av1' }]])
       // workspace overrides
       .mockResolvedValueOnce([[
         { path: 'app/color', value: 'blue', encrypted: 0 },
@@ -636,7 +642,7 @@ describe('registerTools integration', () => {
     // global has no host, agent_view scope provides it
     const queryMock = vi.fn()
       .mockResolvedValueOnce([[]])  // global: empty
-      .mockResolvedValueOnce([[{ id: 2, workspace_id: 1, label: 'Dev' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[{ id: 2, workspace_id: 1, label: 'Dev', workspace_code: 'acme', agent_view_code: 'av2' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace: empty
       .mockResolvedValueOnce([[  // agent_view scope
         { path: 'myapp/tools/mysql_prod/host', value: 'scoped-db.internal', encrypted: 0 },
@@ -681,7 +687,7 @@ describe('registerTools integration', () => {
 
     const queryMock = vi.fn()
       .mockResolvedValueOnce([[]])  // global
-      .mockResolvedValueOnce([[{ id: 3, workspace_id: 1, label: 'QA' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[{ id: 3, workspace_id: 1, label: 'QA', workspace_code: 'acme', agent_view_code: 'av3' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace
       .mockResolvedValueOnce([[  // agent_view: disable tool
         { path: 'tools/mysql_prod/is_enabled', value: '0', encrypted: 0 },
@@ -807,7 +813,7 @@ describe('registerTools integration', () => {
     // --- Agent view 10 (developer): all tools enabled (no disable overrides) ---
     const queryDev = vi.fn()
       .mockResolvedValueOnce([[]])  // global overrides
-      .mockResolvedValueOnce([[{ id: 10, workspace_id: 1, label: 'Developer' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[{ id: 10, workspace_id: 1, label: 'Developer', workspace_code: 'acme', agent_view_code: 'av10' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace overrides
       .mockResolvedValueOnce([[]]);  // agent_view overrides: nothing disabled
 
@@ -835,7 +841,7 @@ describe('registerTools integration', () => {
     // --- Agent view 20 (qa-tester): erp_write disabled ---
     const queryQa = vi.fn()
       .mockResolvedValueOnce([[]])  // global overrides
-      .mockResolvedValueOnce([[{ id: 20, workspace_id: 1, label: 'QA Tester' }]])  // agent_view lookup
+      .mockResolvedValueOnce([[{ id: 20, workspace_id: 1, label: 'QA Tester', workspace_code: 'acme', agent_view_code: 'av20' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace overrides
       .mockResolvedValueOnce([[  // agent_view overrides: disable erp_write
         { path: 'tools/erp_write/is_enabled', value: '0', encrypted: 0 },
@@ -871,7 +877,7 @@ describe('registerTools integration', () => {
     // Agent view 30: workspace disables crm_search, agent_view does NOT re-enable
     const queryInherited = vi.fn()
       .mockResolvedValueOnce([[]])  // global
-      .mockResolvedValueOnce([[{ id: 30, workspace_id: 5, label: 'Restricted' }]])
+      .mockResolvedValueOnce([[{ id: 30, workspace_id: 5, label: 'Restricted', workspace_code: 'acme', agent_view_code: 'av30' }]])
       .mockResolvedValueOnce([[  // workspace: disable
         { path: 'tools/crm_search/is_enabled', value: '0', encrypted: 0 },
       ]])
@@ -899,7 +905,7 @@ describe('registerTools integration', () => {
     // Agent view 31: same workspace disables crm_search, but agent_view RE-ENABLES
     const queryOverride = vi.fn()
       .mockResolvedValueOnce([[]])  // global
-      .mockResolvedValueOnce([[{ id: 31, workspace_id: 5, label: 'Privileged' }]])
+      .mockResolvedValueOnce([[{ id: 31, workspace_id: 5, label: 'Privileged', workspace_code: 'acme', agent_view_code: 'av31' }]])
       .mockResolvedValueOnce([[  // workspace: disable
         { path: 'tools/crm_search/is_enabled', value: '0', encrypted: 0 },
       ]])
@@ -942,7 +948,7 @@ describe('registerTools integration', () => {
     // Agent view 40: disable slack_notify
     const queryMock = vi.fn()
       .mockResolvedValueOnce([[]])
-      .mockResolvedValueOnce([[{ id: 40, workspace_id: 1, label: 'NoSlack' }]])
+      .mockResolvedValueOnce([[{ id: 40, workspace_id: 1, label: 'NoSlack', workspace_code: 'acme', agent_view_code: 'av40' }]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([[
         { path: 'tools/slack_notify/is_enabled', value: '0', encrypted: 0 },

@@ -29,7 +29,7 @@ export async function healthcheck({ moduleConfigs }) {
   }
 }
 
-export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir, fileManager }) {
+export function register(server, { log, moduleConfigs, isToolEnabled, artifactsDir, fileManager }) {
   if (isToolEnabled && !isToolEnabled('jira')) return;
   const cfg = moduleConfigs?.jira || {};
   const config = {
@@ -94,7 +94,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
     'jira_get_issue',
     [
       'Get full details of a Jira issue by key. Returns summary, status, assignee (with accountId), reporter (with accountId), priority, dates, description, comments, and attachments.',
-      'Attachments are automatically downloaded to the runtime directory. Binary files (PDF, XLSX) are auto-converted to text formats (MD, CSV) when converters are available.',
+      'Attachments are automatically downloaded to the artifacts directory. Binary files (PDF, XLSX) are auto-converted to text formats (MD, CSV) when converters are available.',
       'Image attachments are referenced in description/comments as [Obrazek: filename](local_path). To view an image, use the Read tool on the local path.',
       'For converted files, use the Read tool on convertedPath (e.g. .md for PDF, .csv for XLSX).',
       'Comments include author accountId — use it with jira_add_comment reply_to_comment_id to reply.',
@@ -130,7 +130,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
         const fileMap = new Map();
 
         if (allAttachments.length > 0 && fileManager) {
-          const dir = `${runtimeDir}/jira/${data.key}`;
+          const dir = `${artifactsDir}/jira/${data.key}`;
 
           await Promise.all(allAttachments.map(async (att) => {
             try {
@@ -440,7 +440,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, runtimeDir
       'Use after browser_take_screenshot to attach the saved screenshot.',
       'file_path must be inside /workspace/ (security restriction).',
       'Examples:',
-      '  issue_key: "AI-1", file_path: "/workspace/runtime/{ws}/{av}/{job_id}/screenshots/123-AI-1/1740000000000.png"',
+      '  issue_key: "AI-1", file_path: "/workspace/artifacts/{ws}/{av}/{job_id}/screenshots/123-AI-1/1740000000000.png"',
     ].join('\n'),
     {
       user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),

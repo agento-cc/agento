@@ -91,7 +91,10 @@ export async function loadScopedDbOverrides(agentViewId) {
     const pool = getCronPool();
 
     const [avRows] = await pool.query(
-      'SELECT id, workspace_id, label FROM agent_view WHERE id = ?',
+      `SELECT av.id, av.workspace_id, av.label, av.code AS agent_view_code, w.code AS workspace_code
+       FROM agent_view av
+       JOIN workspace w ON w.id = av.workspace_id
+       WHERE av.id = ?`,
       [agentViewId]
     );
     if (avRows.length === 0) {
@@ -100,7 +103,13 @@ export async function loadScopedDbOverrides(agentViewId) {
     }
 
     const av = avRows[0];
-    agentViewMeta = { id: av.id, label: av.label, workspaceId: av.workspace_id };
+    agentViewMeta = {
+      id: av.id,
+      label: av.label,
+      workspaceId: av.workspace_id,
+      workspaceCode: av.workspace_code,
+      agentViewCode: av.agent_view_code,
+    };
 
     // Layer workspace overrides
     const [wsRows] = await pool.query(

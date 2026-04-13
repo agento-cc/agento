@@ -1,7 +1,10 @@
-"""Per-run isolated directory management for concurrent agent_view execution.
+"""Per-job artifacts directory management.
 
-Each job gets its own run directory under workspace/runtime/.
-Directories are created before execution and cleaned up after completion.
+Each job gets its own artifacts directory under workspace/artifacts/.
+It contains the copied config files + symlinks to build assets, and holds
+any per-job outputs the agent or toolbox drops (screenshots, videos, session
+scratch). Directories are created at job start; on clean completion they are
+removed, but crashed jobs leave their artifacts dir behind for inspection.
 """
 from __future__ import annotations
 
@@ -9,31 +12,31 @@ import logging
 import shutil
 from pathlib import Path
 
-from agento.framework.workspace_paths import BUILD_DIR, RUNTIME_DIR
+from agento.framework.workspace_paths import ARTIFACTS_DIR, BUILD_DIR
 
 logger = logging.getLogger(__name__)
 
 
-def build_run_dir(workspace_code: str, agent_view_code: str, job_id: int) -> Path:
-    """Build the isolated run directory path for a single job execution."""
-    return Path(RUNTIME_DIR) / workspace_code / agent_view_code / str(job_id)
+def build_artifacts_dir(workspace_code: str, agent_view_code: str, job_id: int) -> Path:
+    """Build the artifacts directory path for a single job execution."""
+    return Path(ARTIFACTS_DIR) / workspace_code / agent_view_code / str(job_id)
 
 
-def prepare_run_dir(run_dir: Path) -> None:
-    """Create the run directory tree, cleaning any stale contents from prior attempts."""
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+def prepare_artifacts_dir(artifacts_dir: Path) -> None:
+    """Create the artifacts directory tree, cleaning any stale contents from prior attempts."""
+    if artifacts_dir.exists():
+        shutil.rmtree(artifacts_dir)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
 
 
-def cleanup_run_dir(run_dir: Path) -> None:
-    """Remove the run directory after job completion."""
+def cleanup_artifacts_dir(artifacts_dir: Path) -> None:
+    """Remove the artifacts directory after successful job completion."""
     try:
-        if run_dir.exists():
-            shutil.rmtree(run_dir)
-            logger.debug("Cleaned up run dir %s", run_dir)
+        if artifacts_dir.exists():
+            shutil.rmtree(artifacts_dir)
+            logger.debug("Cleaned up artifacts dir %s", artifacts_dir)
     except Exception:
-        logger.warning("Failed to clean up run dir %s", run_dir, exc_info=True)
+        logger.warning("Failed to clean up artifacts dir %s", artifacts_dir, exc_info=True)
 
 
 def get_current_build_dir(workspace_code: str, agent_view_code: str) -> Path | None:
@@ -50,13 +53,11 @@ def get_current_build_dir(workspace_code: str, agent_view_code: str) -> Path | N
 _UNIVERSAL_COPY_FILES = {"CLAUDE.md", "AGENTS.md", "SOUL.md"}
 
 
-def copy_build_to_run_dir(
+def copy_build_to_artifacts_dir(
     build_dir: Path,
-    run_dir: Path,
+    artifacts_dir: Path,
     *,
     job_id: int | None = None,
-    workspace_code: str | None = None,
-    agent_view_code: str | None = None,
     provider: str | None = None,
 ) -> None:
     """Thin bootstrap: copy small config files, symlink large readonly content.
@@ -70,7 +71,7 @@ def copy_build_to_run_dir(
     copy_files = owned_files | _UNIVERSAL_COPY_FILES
 
     for item in build_dir.iterdir():
-        dest = run_dir / item.name
+        dest = artifacts_dir / item.name
         if item.name in copy_files and item.is_file():
             shutil.copy2(item, dest)
         elif item.name in owned_dirs and item.is_dir():
@@ -85,11 +86,6 @@ def copy_build_to_run_dir(
         try:
             from agento.framework.config_writer import get_config_writer
             writer = get_config_writer(provider)
-            writer.inject_runtime_params(
-                run_dir,
-                job_id=job_id,
-                workspace_code=workspace_code or "",
-                agent_view_code=agent_view_code or "",
-            )
+            writer.inject_runtime_params(artifacts_dir, job_id=job_id)
         except KeyError:
             logger.warning("No ConfigWriter for provider %r, skipping runtime param injection", provider)
