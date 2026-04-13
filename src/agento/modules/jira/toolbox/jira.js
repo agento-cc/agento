@@ -98,6 +98,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
       'Image attachments are referenced in description/comments as [Obrazek: filename](local_path). To view an image, use the Read tool on the local path.',
       'For converted files, use the Read tool on convertedPath (e.g. .md for PDF, .csv for XLSX).',
       'Comments include author accountId — use it with jira_add_comment reply_to_comment_id to reply.',
+      'If an attachment fails to download or convert, Attachments[].error contains the reason. In that case, inform the reporter via comment — do not silently skip the data.',
       'AssigneeAccountId and ReporterAccountId can be used with jira_assign_issue.',
       'Examples:',
       '  issue_key: "AI-1"',
@@ -128,6 +129,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
         // Download ALL attachments through FileManager
         const allAttachments = (f.attachment || []).slice(0, 15);
         const fileMap = new Map();
+        const errorMap = new Map();
 
         if (allAttachments.length > 0 && fileManager) {
           const dir = `${artifactsDir}/jira/${data.key}`;
@@ -139,10 +141,19 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
                 dir,
                 maxSize: att.size,
               });
-              if (!result.skipped) {
+              if (result.skipped) {
+                errorMap.set(att.filename, result.skipReason);
+                log('jira_get_issue', 'WARN', `Attachment skipped: ${att.filename}: ${result.skipReason}`);
+              } else {
                 fileMap.set(att.filename, result);
+                if (result.conversionError) {
+                  log('jira_get_issue', 'WARN', `Attachment conversion failed: ${att.filename}: ${result.conversionError}`);
+                }
               }
-            } catch (_) { /* skip broken attachment */ }
+            } catch (err) {
+              errorMap.set(att.filename, err.message);
+              log('jira_get_issue', 'ERROR', `Attachment download threw: ${att.filename}: ${err.message}`);
+            }
           }));
         }
 
@@ -182,6 +193,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
               size: a.size,
               localPath: file?.localPath || null,
               convertedPath: file?.convertedPath || null,
+              error: file?.conversionError || errorMap.get(a.filename) || null,
             };
           }),
         };

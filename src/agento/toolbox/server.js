@@ -31,14 +31,14 @@ let registeredToolNames = [];
 let registeredHealthchecks = [];
 
 function buildArtifactsDir(agentViewMeta, jobId) {
-  if (!agentViewMeta || !jobId) return '/workspace/tmp';
+  if (!agentViewMeta || !jobId) return '/workspace/runtime/_fallback';
   const safeWs = String(agentViewMeta.workspaceCode || '').replace(/[^a-zA-Z0-9_-]/g, '');
   const safeAv = String(agentViewMeta.agentViewCode || '').replace(/[^a-zA-Z0-9_-]/g, '');
   const safeJobId = String(jobId).replace(/[^0-9]/g, '');
   if (safeWs && safeAv && safeJobId) {
     return `/workspace/artifacts/${safeWs}/${safeAv}/${safeJobId}`;
   }
-  return '/workspace/tmp';
+  return '/workspace/runtime/_fallback';
 }
 
 async function createServer(agentViewId = null, jobId = null) {
@@ -49,7 +49,7 @@ async function createServer(agentViewId = null, jobId = null) {
 
   // Build scoped context with agent_view-aware logger before registering tools,
   // so adapters use the scoped log from the start.
-  let artifactsDir = '/workspace/tmp';
+  let artifactsDir = '/workspace/runtime/_fallback';
   let sessionContext = { ...context, artifactsDir };
   let preloadedOverrides = null;
   if (agentViewId) {

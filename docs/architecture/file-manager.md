@@ -100,11 +100,20 @@ export function register(server, { fileManager, runtimeDir }) {
 
     if (result.skipped) {
       // File was rejected (bad extension, too large, download failed)
-      console.log(result.skipReason);
-    } else {
-      // result.localPath   -- path to downloaded file
-      // result.convertedPath -- path to converted file (or null)
+      // result.skipReason contains the reason -- surface it to the agent
+      return { error: result.skipReason };
     }
+
+    // result.localPath       -- path to downloaded file
+    // result.convertedPath   -- path to converted file (or null)
+    // result.conversionError -- error message if conversion failed (or null)
+    // Always surface conversionError to the agent so it can report it,
+    // rather than silently returning a binary the agent cannot read.
+    return {
+      localPath: result.localPath,
+      convertedPath: result.convertedPath,
+      error: result.conversionError || null,
+    };
   });
 }
 ```
