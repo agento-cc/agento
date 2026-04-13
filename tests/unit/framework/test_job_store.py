@@ -44,10 +44,11 @@ def _make_row(**overrides) -> dict:
     return row
 
 
-def _mock_conn(row=None):
+def _mock_conn(row=None, rowcount=1):
     conn = MagicMock()
     cursor = MagicMock()
     cursor.fetchone.return_value = row
+    cursor.rowcount = rowcount
     conn.cursor.return_value.__enter__ = lambda s: cursor
     conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     return conn, cursor
@@ -107,6 +108,24 @@ class TestPauseJob:
     def test_pause_paused_job_raises(self):
         conn, _cursor = _mock_conn(_make_row(status="PAUSED"))
         with pytest.raises(ValueError, match="Cannot pause job in status PAUSED"):
+            pause_job(conn, 42)
+
+    def test_pause_race_status_changed_raises(self):
+        """If the job transitions RUNNING → SUCCESS between fetch and UPDATE,
+        rowcount is 0 and pause_job must raise instead of lying."""
+        # First fetch: status=RUNNING. UPDATE affects 0 rows (raced).
+        # Second fetch (post-UPDATE re-read): status=SUCCESS.
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            _make_row(status="RUNNING"),
+            _make_row(status="SUCCESS"),
+        ]
+        cursor.rowcount = 0
+        conn.cursor.return_value.__enter__ = lambda s: cursor
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with pytest.raises(ValueError, match="status changed to SUCCESS"):
             pause_job(conn, 42)
 
 
