@@ -12,6 +12,7 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
     - Event-observers
     - 3-level system config fallback
     - (more in docs/)
+6. **Framework is agent-agnostic.** A new agent (OpenCode, Hermes, etc.) must be added without editing framework code — framework defines protocols (Runner, ConfigWriter, AuthStrategy), agent modules provide implementations and register them via `di.json`. No `if provider == "claude"` branches, no hardcoded `.claude.json` / `.codex/config.toml` logic in `src/agento/framework/`.
 
 ## Key Conventions
 

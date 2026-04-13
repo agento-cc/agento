@@ -100,7 +100,7 @@ Shows the 20 most recent builds:
 ```
    ID  Agent View            Checksum        Status      Current  Created At
 ------------------------------------------------------------------------------------------
-    2  kazar_dev             a6ce0904e451  ready              *  2026-04-08 12:55:47
+    2  dev_01             a6ce0904e451  ready              *  2026-04-08 12:55:47
     1  agent01               cb5933ea9df5  ready              *  2026-04-08 12:55:47
 ```
 
