@@ -4,6 +4,8 @@ from __future__ import annotations
 import dataclasses
 import logging
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +70,8 @@ class ResolveAccountIdObserver:
             set_module_config("jira", updated)
             logger.info("jira: auto-resolved default account ID: %s", account_id)
 
+        except httpx.ConnectError as exc:
+            logger.info("jira: toolbox not reachable yet, skipping account ID resolve (%s)", exc)
         except Exception:
             logger.warning("jira: failed to auto-resolve default account ID (non-fatal)", exc_info=True)
 
@@ -84,6 +88,8 @@ class ResolveAccountIdObserver:
             finally:
                 conn.close()
 
+        except httpx.ConnectError as exc:
+            logger.info("jira: toolbox not reachable yet, skipping agent_view account IDs (%s)", exc)
         except Exception:
             logger.warning("jira: failed to resolve agent_view account IDs (non-fatal)", exc_info=True)
 
@@ -128,6 +134,11 @@ class ResolveAccountIdObserver:
             conn.commit()
             logger.info("jira: auto-resolved account ID for agent_view %s: %s", av.code, account_id)
 
+        except httpx.ConnectError as exc:
+            logger.info(
+                "jira: toolbox not reachable yet, skipping account ID for agent_view %s (%s)",
+                av.code, exc,
+            )
         except Exception:
             logger.warning(
                 "jira: failed to auto-resolve account ID for agent_view %s (non-fatal)",

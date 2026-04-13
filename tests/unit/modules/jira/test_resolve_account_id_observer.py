@@ -206,6 +206,27 @@ class TestErrorHandling:
         observer = ResolveAccountIdObserver()
         observer.execute(_make_event())  # should not raise
 
+    @patch(f"{_FWK}.bootstrap.get_module_config")
+    def test_handles_httpx_connect_error_quietly(self, mock_get_config, caplog):
+        import logging
+
+        import httpx
+
+        mock_get_config.return_value = _make_config()
+        caplog.set_level(logging.INFO, logger="agento.modules.jira.src.observers")
+
+        with patch(
+            f"{_OBS}._resolve_account_id",
+            side_effect=httpx.ConnectError("Connection refused"),
+        ):
+            observer = ResolveAccountIdObserver()
+            with patch.object(observer, "_resolve_agent_views"):
+                observer.execute(_make_event())  # should not raise
+
+        # No traceback should be emitted for ConnectError; just an info line.
+        assert "Traceback" not in caplog.text
+        assert "toolbox not reachable" in caplog.text
+
     @patch(f"{_FWK}.workspace.get_active_agent_views", side_effect=RuntimeError("DB down"))
     @patch(f"{_FWK}.db.get_connection")
     @patch(f"{_FWK}.database_config.DatabaseConfig.from_env")
