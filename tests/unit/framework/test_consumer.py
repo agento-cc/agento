@@ -609,7 +609,7 @@ class TestRunJob:
 class TestFinalize:
     @patch("agento.framework.consumer.get_connection")
     def test_finalize_success(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -626,14 +626,13 @@ class TestFinalize:
 
         consumer._finalize_job(job, error=None, job_result=job_result, elapsed_ms=1000)
 
-        mock_cursor.execute.assert_called_once()
-        sql_arg = mock_cursor.execute.call_args[0][0]
+        sql_arg = mock_cursor.execute.call_args_list[-1][0][0]
         assert "SUCCESS" in sql_arg
         assert "agent_type" in sql_arg
         assert "model" in sql_arg
         assert "prompt" in sql_arg
         assert "output" in sql_arg
-        params = mock_cursor.execute.call_args[0][1]
+        params = mock_cursor.execute.call_args_list[-1][0][1]
         assert params[0] == "done"               # result_summary
         assert params[1] == "claude"             # agent_type
         assert params[2] == "claude-sonnet-4"    # model
@@ -645,7 +644,7 @@ class TestFinalize:
 
     @patch("agento.framework.consumer.get_connection")
     def test_finalize_success_with_none_result(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -653,7 +652,7 @@ class TestFinalize:
 
         consumer._finalize_job(job, error=None, job_result=None, elapsed_ms=1000)
 
-        params = mock_cursor.execute.call_args[0][1]
+        params = mock_cursor.execute.call_args_list[-1][0][1]
         assert params[0] is None  # result_summary
         assert params[1] is None  # agent_type
         assert params[2] is None  # model
@@ -665,7 +664,7 @@ class TestFinalize:
 
         mock_eval.return_value = RetryDecision(should_retry=True, delay_seconds=60, reason="retry")
 
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -675,7 +674,7 @@ class TestFinalize:
             job, error=RuntimeError("timeout"), job_result=None, elapsed_ms=5000
         )
 
-        sql_arg = mock_cursor.execute.call_args[0][0]
+        sql_arg = mock_cursor.execute.call_args_list[-1][0][0]
         assert "TODO" in sql_arg
         assert "scheduled_after" in sql_arg
         assert "session_id" in sql_arg  # session_id COALESCE in retry SQL
@@ -688,7 +687,7 @@ class TestFinalize:
 
         mock_eval.return_value = RetryDecision(should_retry=True, delay_seconds=60, reason="retry")
 
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -698,7 +697,7 @@ class TestFinalize:
         error.session_id = "sess-from-error"  # type: ignore[attr-defined]
         consumer._finalize_job(job, error=error, job_result=None, elapsed_ms=5000)
 
-        params = mock_cursor.execute.call_args[0][1]
+        params = mock_cursor.execute.call_args_list[-1][0][1]
         # session_id should be extracted from error
         assert "sess-from-error" in params
 
@@ -711,7 +710,7 @@ class TestFinalize:
             should_retry=False, delay_seconds=0, reason="non-retryable"
         )
 
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -721,7 +720,7 @@ class TestFinalize:
             job, error=ValueError("bad input"), job_result=None, elapsed_ms=100
         )
 
-        sql_arg = mock_cursor.execute.call_args[0][0]
+        sql_arg = mock_cursor.execute.call_args_list[-1][0][0]
         assert "DEAD" in sql_arg
         mock_conn.commit.assert_called_once()
 
@@ -734,7 +733,7 @@ class TestFinalize:
             should_retry=False, delay_seconds=0, reason="Max attempts (3) reached"
         )
 
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -744,7 +743,7 @@ class TestFinalize:
             job, error=RuntimeError("fail"), job_result=None, elapsed_ms=100
         )
 
-        sql_arg = mock_cursor.execute.call_args[0][0]
+        sql_arg = mock_cursor.execute.call_args_list[-1][0][0]
         assert "DEAD" in sql_arg
 
     @patch("agento.framework.consumer.evaluate_retry")
@@ -756,7 +755,7 @@ class TestFinalize:
             should_retry=False, delay_seconds=0, reason="dead"
         )
 
-        mock_conn, mock_cursor = _mock_connection()
+        mock_conn, mock_cursor = _mock_connection(row=("RUNNING",))
         mock_get_conn.return_value = mock_conn
 
         consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
@@ -765,7 +764,7 @@ class TestFinalize:
         long_error = RuntimeError("x" * 3000)
         consumer._finalize_job(job, error=long_error, job_result=None, elapsed_ms=100)
 
-        params = mock_cursor.execute.call_args[0][1]
+        params = mock_cursor.execute.call_args_list[-1][0][1]
         error_msg = params[0]
         assert len(error_msg) <= 2000
 
@@ -788,10 +787,10 @@ class TestFinalize:
     @patch("agento.framework.consumer.get_connection")
     def test_finalize_retries_on_db_error_then_succeeds(self, mock_get_conn, mock_sleep, sample_config, sample_db_config, sample_consumer_config):
         """DB fails on first attempt, succeeds on second."""
-        fail_conn, fail_cursor = _mock_connection()
+        fail_conn, fail_cursor = _mock_connection(row=("RUNNING",))
         fail_cursor.execute.side_effect = RuntimeError("DB down")
 
-        ok_conn, _ok_cursor = _mock_connection()
+        ok_conn, _ok_cursor = _mock_connection(row=("RUNNING",))
 
         mock_get_conn.side_effect = [fail_conn, ok_conn]
 
@@ -804,6 +803,26 @@ class TestFinalize:
         fail_conn.rollback.assert_called_once()
         ok_conn.commit.assert_called_once()
         mock_sleep.assert_called_once_with(1)
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_finalize_skips_when_job_no_longer_running(
+        self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config,
+    ):
+        """If the job was paused during execution, finalize must NOT overwrite PAUSED status."""
+        mock_conn, mock_cursor = _mock_connection(row=("PAUSED",))
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        job = _make_job(attempt=1)
+        job_result = _JobResult(summary="ok")
+
+        consumer._finalize_job(job, error=None, job_result=job_result, elapsed_ms=100)
+
+        # Only the SELECT should have run — no UPDATE to SUCCESS/DEAD/TODO
+        assert mock_cursor.execute.call_count == 1
+        sql = mock_cursor.execute.call_args_list[0][0][0]
+        assert "SELECT status" in sql
+        mock_conn.commit.assert_not_called()
 
 
 # ---- Section 8: Lifecycle ----

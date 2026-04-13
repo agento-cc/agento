@@ -69,7 +69,9 @@ class TestFinalizeJobEvents:
 
     @patch("agento.framework.consumer.get_connection")
     def test_success_dispatches_job_succeeded(self, mock_conn):
-        mock_conn.return_value = MagicMock()
+        _conn = MagicMock()
+        _conn.cursor.return_value.__enter__.return_value.fetchone.return_value = ("RUNNING",)
+        mock_conn.return_value = _conn
         em = get_event_manager()
         em.register("job_succeed_after", ObserverEntry(name="col", observer_class=_EventCollector))
 
@@ -88,7 +90,9 @@ class TestFinalizeJobEvents:
 
     @patch("agento.framework.consumer.get_connection")
     def test_retryable_failure_dispatches_failed_and_retrying(self, mock_conn):
-        mock_conn.return_value = MagicMock()
+        _conn = MagicMock()
+        _conn.cursor.return_value.__enter__.return_value.fetchone.return_value = ("RUNNING",)
+        mock_conn.return_value = _conn
         em = get_event_manager()
         em.register("job_fail_after", ObserverEntry(name="f", observer_class=_EventCollector))
         em.register("job_retry_after", ObserverEntry(name="r", observer_class=_EventCollector))
@@ -105,7 +109,9 @@ class TestFinalizeJobEvents:
 
     @patch("agento.framework.consumer.get_connection")
     def test_non_retryable_failure_dispatches_failed_and_dead(self, mock_conn):
-        mock_conn.return_value = MagicMock()
+        _conn = MagicMock()
+        _conn.cursor.return_value.__enter__.return_value.fetchone.return_value = ("RUNNING",)
+        mock_conn.return_value = _conn
         em = get_event_manager()
         em.register("job_fail_after", ObserverEntry(name="f", observer_class=_EventCollector))
         em.register("job_dead_after", ObserverEntry(name="d", observer_class=_EventCollector))
