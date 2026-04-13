@@ -104,7 +104,7 @@ const BROWSER_TOOLS = {
     description: [
       'Take a screenshot of the current page.',
       'Returns a PNG image. Navigate to a page first.',
-      'The screenshot is also saved to the runtime directory under screenshots/{job_id}/{filename}.',
+      'The screenshot is also saved to the artifacts directory under screenshots/{job_id}/{filename}.',
       'Pass job_id from your execution context (SOUL.md) to organise the file correctly.',
     ].join('\n'),
     schema: {
@@ -151,7 +151,7 @@ const BROWSER_TOOLS = {
   browser_stop_video: {
     description: [
       'Stop recording and save the video.',
-      'The video file is saved to the runtime directory under videos/{job_id}/{filename}.',
+      'The video file is saved to the artifacts directory under videos/{job_id}/{filename}.',
       'Pass job_id from your execution context (SOUL.md) to organise the file correctly.',
     ].join('\n'),
     schema: {
@@ -185,7 +185,7 @@ export function getRegisteredBrowserToolNames() {
 
 let _toolWhitelist = [];
 
-export function register(server, { log, playwright, moduleConfigs, isToolEnabled, runtimeDir }) {
+export function register(server, { log, playwright, moduleConfigs, isToolEnabled, artifactsDir }) {
   if (isToolEnabled && !isToolEnabled('browser')) return;
   const cfg = moduleConfigs?.core || {};
   const toolWhitelist = [...new Set(parseList(cfg.playwright_tool_whitelist))];
@@ -341,8 +341,8 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
                 ? filename.replace(/\.webm$/i, '') + suffix + '.webm'
                 : `${Date.now()}${suffix}.webm`;
               const folder = job_id
-                ? `${runtimeDir}/videos/${job_id}`
-                : `${runtimeDir}/videos`;
+                ? `${artifactsDir}/videos/${job_id}`
+                : `${artifactsDir}/videos`;
               const destPath = `${folder}/${fname}`;
 
               try {
@@ -380,8 +380,8 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
             if (imageItem) {
               const fname = filename || `${Date.now()}.png`;
               const folder = job_id
-                ? `${runtimeDir}/screenshots/${job_id}`
-                : `${runtimeDir}/screenshots`;
+                ? `${artifactsDir}/screenshots/${job_id}`
+                : `${artifactsDir}/screenshots`;
               const filePath = `${folder}/${fname}`;
               try {
                 await mkdir(folder, { recursive: true });

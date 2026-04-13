@@ -328,8 +328,8 @@ class TestConsumerUsesPreBuiltWorkspace:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
-             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()
@@ -367,8 +367,8 @@ class TestConsumerUsesPreBuiltWorkspace:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
-             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)), \
              patch("agento.modules.agent_view.src.observers.DatabaseConfig.from_env", return_value=int_db_config):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
@@ -430,8 +430,8 @@ class TestConsumerUsesPreBuiltWorkspace:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
-             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()

@@ -32,11 +32,9 @@ class ConfigWriter(Protocol):
 
     def inject_runtime_params(
         self,
-        run_dir: Path,
+        artifacts_dir: Path,
         *,
         job_id: int,
-        workspace_code: str,
-        agent_view_code: str,
     ) -> None: ...
 
     def owned_paths(self) -> tuple[set[str], set[str]]:

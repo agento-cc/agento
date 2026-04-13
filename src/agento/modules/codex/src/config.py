@@ -72,13 +72,11 @@ class CodexConfigWriter:
 
     def inject_runtime_params(
         self,
-        run_dir: Path,
+        artifacts_dir: Path,
         *,
         job_id: int,
-        workspace_code: str,
-        agent_view_code: str,
     ) -> None:
-        config_path = run_dir / ".codex" / "config.toml"
+        config_path = artifacts_dir / ".codex" / "config.toml"
         if not config_path.is_file():
             return
         try:
@@ -89,12 +87,11 @@ class CodexConfigWriter:
         if not mcp_servers:
             return
 
-        extra = f"job_id={job_id}&ws={workspace_code}&av={agent_view_code}"
         for server_cfg in mcp_servers.values():
             url = server_cfg.get("url", "")
             if "/sse" in url or "/mcp" in url:
                 sep = "&" if "?" in url else "?"
-                server_cfg["url"] = f"{url}{sep}{extra}"
+                server_cfg["url"] = f"{url}{sep}job_id={job_id}"
 
         # Re-write the TOML (hand-written, simple structure)
         lines: list[str] = []

@@ -70,7 +70,7 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
         "app/code",
         "app/etc",
         "workspace/systems",
-        "workspace/runtime",
+        "workspace/artifacts",
         "workspace/build",
         "workspace/theme",
         "logs",

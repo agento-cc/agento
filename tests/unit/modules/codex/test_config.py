@@ -88,19 +88,15 @@ class TestInjectRuntimeParams:
             'url = "http://toolbox:3001/sse?agent_view_id=2"\n'
         )
 
-        writer.inject_runtime_params(
-            work_dir, job_id=10, workspace_code="acme", agent_view_code="dev",
-        )
+        writer.inject_runtime_params(work_dir, job_id=10)
 
         data = tomllib.loads((codex_dir / "config.toml").read_text())
         assert data["mcp_servers"]["toolbox"]["url"] == (
-            "http://toolbox:3001/sse?agent_view_id=2&job_id=10&ws=acme&av=dev"
+            "http://toolbox:3001/sse?agent_view_id=2&job_id=10"
         )
 
     def test_noop_when_no_config_toml(self, writer, work_dir):
-        writer.inject_runtime_params(
-            work_dir, job_id=10, workspace_code="acme", agent_view_code="dev",
-        )
+        writer.inject_runtime_params(work_dir, job_id=10)
         assert not (work_dir / ".codex" / "config.toml").exists()
 
     def test_preserves_model_and_approval_mode(self, writer, work_dir):
@@ -114,9 +110,7 @@ class TestInjectRuntimeParams:
             'url = "http://toolbox:3001/sse?agent_view_id=1"\n'
         )
 
-        writer.inject_runtime_params(
-            work_dir, job_id=5, workspace_code="ws", agent_view_code="av",
-        )
+        writer.inject_runtime_params(work_dir, job_id=5)
 
         data = tomllib.loads((codex_dir / "config.toml").read_text())
         assert data["model"] == "gpt-5"

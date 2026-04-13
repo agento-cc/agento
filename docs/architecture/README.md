@@ -27,6 +27,7 @@ Agento runs as Docker containers with strict security separation between the AI 
 ## Further Reading
 
 - [Containers](containers.md) — what runs where, volume mounts, networking
+- [Workspace](workspace.md) — theme / build / runtime layers, what lives where, agent's view
 - [Zero-Trust Security](zero-trust.md) — credential isolation model
 - [Publisher-Consumer](publisher-consumer.md) — job queue architecture
 - [Event-Observer System](events.md) — cross-module communication via events

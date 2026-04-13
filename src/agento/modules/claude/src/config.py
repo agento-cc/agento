@@ -29,13 +29,11 @@ class ClaudeConfigWriter:
 
     def inject_runtime_params(
         self,
-        run_dir: Path,
+        artifacts_dir: Path,
         *,
         job_id: int,
-        workspace_code: str,
-        agent_view_code: str,
     ) -> None:
-        mcp_path = run_dir / ".mcp.json"
+        mcp_path = artifacts_dir / ".mcp.json"
         if not mcp_path.is_file():
             return
         try:
@@ -43,12 +41,11 @@ class ClaudeConfigWriter:
         except (json.JSONDecodeError, OSError):
             return
         servers = data.get("mcpServers", {})
-        extra = f"job_id={job_id}&ws={workspace_code}&av={agent_view_code}"
         for server_cfg in servers.values():
             url = server_cfg.get("url", "")
             if "/sse" in url or "/mcp" in url:
                 sep = "&" if "?" in url else "?"
-                server_cfg["url"] = f"{url}{sep}{extra}"
+                server_cfg["url"] = f"{url}{sep}job_id={job_id}"
         mcp_path.write_text(json.dumps(data, indent=2))
 
     @staticmethod

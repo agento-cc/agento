@@ -41,6 +41,6 @@ secrets.env
 
 LESSONS.md
 
-# Composable workspace: build output and runtime artifacts
+# Composable workspace: build output and per-job artifacts
 build/
-runtime/
+artifacts/

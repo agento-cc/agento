@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agento.framework.run_dir import get_current_build_dir
+from agento.framework.artifacts_dir import get_current_build_dir
 from agento.framework.workspace import AgentView
 from agento.modules.workspace_build.src.builder import (
     BuildResult,
@@ -144,10 +144,10 @@ class TestCopyTheme:
 
 
 class TestGetCurrentBuildDir:
-    _RUN_DIR = "agento.framework.run_dir"
+    _ARTIFACTS_DIR = "agento.framework.artifacts_dir"
 
     def test_returns_none_when_no_symlink(self, tmp_path):
-        with patch(f"{self._RUN_DIR}.BUILD_DIR", str(tmp_path)):
+        with patch(f"{self._ARTIFACTS_DIR}.BUILD_DIR", str(tmp_path)):
             assert get_current_build_dir("ws", "av") is None
 
     def test_returns_path_when_symlink_exists(self, tmp_path):
@@ -155,7 +155,7 @@ class TestGetCurrentBuildDir:
         build_dir.mkdir(parents=True)
         (tmp_path / "ws" / "av" / "current").symlink_to(build_dir)
 
-        with patch(f"{self._RUN_DIR}.BUILD_DIR", str(tmp_path)):
+        with patch(f"{self._ARTIFACTS_DIR}.BUILD_DIR", str(tmp_path)):
             result = get_current_build_dir("ws", "av")
             assert result is not None
             assert result.is_dir()
@@ -165,7 +165,7 @@ class TestGetCurrentBuildDir:
         link_parent.mkdir(parents=True)
         (link_parent / "current").symlink_to(link_parent / "builds" / "999")
 
-        with patch(f"{self._RUN_DIR}.BUILD_DIR", str(tmp_path)):
+        with patch(f"{self._ARTIFACTS_DIR}.BUILD_DIR", str(tmp_path)):
             assert get_current_build_dir("ws", "av") is None
 
 

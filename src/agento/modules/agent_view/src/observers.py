@@ -14,19 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class PopulateInstructionsObserver:
-    """Write AGENTS.md and SOUL.md into the run directory before CLI execution.
+    """Write AGENTS.md and SOUL.md into the artifacts directory before CLI execution.
 
     Observes ``agento_agent_view_run_started`` — fires after config files are
     generated but before the CLI subprocess starts.
     """
 
     def execute(self, event) -> None:
-        if not event.run_dir or event.agent_view_id is None:
+        if not event.artifacts_dir or event.agent_view_id is None:
             return
 
         # Skip if pre-built workspace already has instruction files
         from pathlib import Path
-        if Path(event.run_dir, "AGENTS.md").exists():
+        if Path(event.artifacts_dir, "AGENTS.md").exists():
             return
 
         try:
@@ -45,7 +45,7 @@ class PopulateInstructionsObserver:
             finally:
                 conn.close()
 
-            write_instruction_files(event.run_dir, overrides)
+            write_instruction_files(event.artifacts_dir, overrides)
 
         except Exception:
             logger.exception("Failed to populate instruction files (non-fatal)")

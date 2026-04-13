@@ -117,8 +117,8 @@ class TestRunJobWithAgentView:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.consumer.prepare_run_dir")
-    @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.consumer.prepare_artifacts_dir")
+    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_calls_config_writer_with_agent_view_id(
         self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
@@ -153,10 +153,10 @@ class TestRunJobWithAgentView:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.consumer.prepare_run_dir")
-    @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.consumer.prepare_artifacts_dir")
+    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
-    def test_runner_receives_run_dir(
+    def test_runner_receives_artifacts_dir(
         self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
         mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_db_config, sample_consumer_config,
@@ -186,7 +186,7 @@ class TestRunJobWithAgentView:
         self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         mock_primary, sample_db_config, sample_consumer_config,
     ):
-        """Job with agent_view_id=None uses global config, no run_dir."""
+        """Job with agent_view_id=None uses global config, no artifacts_dir."""
         mock_resolve.return_value = AgentViewRuntime()  # defaults: no agent_view
         mock_conn.return_value = MagicMock()
         primary = MagicMock()
@@ -247,8 +247,8 @@ class TestRunJobProviderFallback:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.consumer.prepare_run_dir")
-    @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/dev/runs/1")
+    @patch("agento.framework.consumer.prepare_artifacts_dir")
+    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/dev/runs/1")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_uses_agent_view_provider_over_primary_token(
         self, mock_resolve, mock_build, mock_prepare, mock_get_writer,

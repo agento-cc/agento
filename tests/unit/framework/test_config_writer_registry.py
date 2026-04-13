@@ -17,7 +17,7 @@ class _DummyWriter:
     def prepare_workspace(self, working_dir, agent_config, *, agent_view_id=None):
         pass
 
-    def inject_runtime_params(self, run_dir, *, job_id, workspace_code, agent_view_code):
+    def inject_runtime_params(self, artifacts_dir, *, job_id):
         pass
 
     def owned_paths(self):
@@ -72,7 +72,7 @@ class _WriterWithPaths:
     def prepare_workspace(self, working_dir, agent_config, *, agent_view_id=None):
         pass
 
-    def inject_runtime_params(self, run_dir, *, job_id, workspace_code, agent_view_code):
+    def inject_runtime_params(self, artifacts_dir, *, job_id):
         pass
 
     def owned_paths(self):

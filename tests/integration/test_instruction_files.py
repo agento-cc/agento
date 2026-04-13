@@ -1,7 +1,7 @@
 """Integration tests: agent_view module writes instruction files into run directories.
 
 Uses real MySQL + mocked Claude runner. Tests the full observer chain:
-  event dispatch → PopulateInstructionsObserver → instruction_writer → files in run_dir
+  event dispatch → PopulateInstructionsObserver → instruction_writer → files in artifacts_dir
 """
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ class TestInstructionFilesFromScopedConfig:
 
         job_id = _insert_job_with_agent_view(av_id)
 
-        # Capture files from run_dir DURING execution (before cleanup)
+        # Capture files from artifacts_dir DURING execution (before cleanup)
         captured_files = {}
 
         def capturing_run(self_runner, prompt, *, model=None):
@@ -129,8 +129,8 @@ class TestInstructionFilesFromScopedConfig:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
-             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()
@@ -172,8 +172,8 @@ class TestInstructionFilesFromScopedConfig:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
-             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()
@@ -214,8 +214,8 @@ class TestInstructionFilesFromScopedConfig:
             )
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
-             patch("agento.framework.run_dir.RUNTIME_DIR", str(tmp_path)), \
-             patch("agento.framework.run_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()

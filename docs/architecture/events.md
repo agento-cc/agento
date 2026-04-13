@@ -119,10 +119,10 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 |-------|-----------|--------|------|
 | `worker_start_after` | `WorkerStartedEvent` | `worker_slot, job_id` | Worker slot begins processing a job |
 | `worker_stop_after` | `WorkerStoppedEvent` | `worker_slot, job_id, elapsed_ms` | Worker slot finishes processing |
-| `agent_view_run_start_before` | `AgentViewRunStartedEvent` | `job, agent_view_id, provider, model, priority, run_dir` | Before CLI execution (after config files generated) |
+| `agent_view_run_start_before` | `AgentViewRunStartedEvent` | `job, agent_view_id, provider, model, priority, artifacts_dir` | Before CLI execution (after config files generated) |
 | `agent_view_run_finish_after` | `AgentViewRunFinishedEvent` | `job, agent_view_id, provider, model, elapsed_ms, success` | After CLI execution completes |
 
-`agent_view_run_start_before` fires after per-run config files are generated but before the CLI subprocess starts. The `agent_view` module observes this event to write `AGENTS.md` and `SOUL.md` into the run directory.
+`agent_view_run_start_before` fires after per-job config files are generated but before the CLI subprocess starts. The `agent_view` module observes this event to write `AGENTS.md` and `SOUL.md` into the artifacts directory.
 
 ### Routing
 

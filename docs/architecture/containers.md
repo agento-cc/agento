@@ -34,7 +34,7 @@ Four containers on the `agento-net` bridge network.
 |-------|---------|
 | `modules/core/` | Core module toolbox JS (`src/agento/modules/`) |
 | `modules/user/` | User module toolbox JS (`app/code/`) |
-| `workspace/runtime/` | Per-job writable directory (agent artifacts, screenshots, etc.) |
+| `workspace/artifacts/` | Per-job writable directory (agent scratch, screenshots, videos, attachments) |
 
 ## Key Environment Variables
 

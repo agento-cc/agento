@@ -111,7 +111,7 @@ class AgentViewRunStartedEvent:
     provider: str | None = None
     model: str | None = None
     priority: int = 50
-    run_dir: str = ""
+    artifacts_dir: str = ""
 
 
 @dataclass

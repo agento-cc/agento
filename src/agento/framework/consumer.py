@@ -13,6 +13,12 @@ from .agent_manager.models import AgentProvider
 from .agent_manager.token_resolver import TokenResolver
 from .agent_manager.token_store import get_primary_token
 from .agent_view_runtime import resolve_agent_view_runtime
+from .artifacts_dir import (
+    build_artifacts_dir,
+    copy_build_to_artifacts_dir,
+    get_current_build_dir,
+    prepare_artifacts_dir,
+)
 from .bootstrap import dispatch_shutdown, get_module_config
 from .channels.registry import get_channel
 from .consumer_config import ConsumerConfig
@@ -34,7 +40,6 @@ from .events import (
 )
 from .job_models import Job, JobStatus
 from .retry_policy import evaluate as evaluate_retry
-from .run_dir import build_run_dir, copy_build_to_run_dir, get_current_build_dir, prepare_run_dir
 from .runner import RunResult
 from .runner_factory import create_runner
 from .workflows import get_workflow_class
@@ -359,7 +364,7 @@ class Consumer:
         """Dispatch to the appropriate workflow with agent_view routing."""
         channel = get_channel(job.source)
         em = get_event_manager()
-        run_dir = None
+        artifacts_dir = None
 
         # Resolve agent_view runtime profile (provider, model, scoped config)
         conn = get_connection(self._db_config)
@@ -386,22 +391,20 @@ class Consumer:
         finally:
             conn.close()
 
-        # Per-run isolated directory (only when agent_view is set)
+        # Per-job artifacts directory (only when agent_view is set)
         if runtime.agent_view is not None and runtime.workspace is not None:
-            run_dir = build_run_dir(
+            artifacts_dir = build_artifacts_dir(
                 runtime.workspace.code, runtime.agent_view.code, job.id,
             )
-            prepare_run_dir(run_dir)
+            prepare_artifacts_dir(artifacts_dir)
 
             current_build = get_current_build_dir(
                 runtime.workspace.code, runtime.agent_view.code,
             )
             if current_build is not None:
-                copy_build_to_run_dir(
-                    current_build, run_dir,
+                copy_build_to_artifacts_dir(
+                    current_build, artifacts_dir,
                     job_id=job.id,
-                    workspace_code=runtime.workspace.code,
-                    agent_view_code=runtime.agent_view.code,
                     provider=runtime.provider,
                 )
             elif runtime.provider:
@@ -410,7 +413,7 @@ class Consumer:
                 if agent_config:
                     writer = get_config_writer(runtime.provider)
                     writer.prepare_workspace(
-                        run_dir, agent_config,
+                        artifacts_dir, agent_config,
                         agent_view_id=job.agent_view_id,
                     )
 
@@ -420,7 +423,7 @@ class Consumer:
             provider=agent_type.value,
             model=model_override,
             priority=job.priority,
-            run_dir=str(run_dir) if run_dir else "",
+            artifacts_dir=str(artifacts_dir) if artifacts_dir else "",
         ))
 
         success = True
@@ -431,7 +434,7 @@ class Consumer:
                 dry_run=self._consumer_config.disable_llm,
                 timeout_seconds=self._consumer_config.job_timeout_seconds,
                 model_override=model_override,
-                working_dir=str(run_dir) if run_dir else None,
+                working_dir=str(artifacts_dir) if artifacts_dir else None,
                 credentials_path=token.credentials_path,
             )
             runner.pid_callback = lambda pid: self._save_pid(job.id, pid)

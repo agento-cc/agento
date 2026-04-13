@@ -1,4 +1,4 @@
-"""Write per-run instruction files (AGENTS.md, SOUL.md, CLAUDE.md) from scoped config.
+"""Write per-job instruction files (AGENTS.md, SOUL.md, CLAUDE.md) from scoped config.
 
 Fallback chain: DB (agent_view → workspace → global) → workspace file on disk.
 """
@@ -21,16 +21,16 @@ _FILES = {
 
 
 def write_instruction_files(
-    run_dir: str | Path,
+    artifacts_dir: str | Path,
     scoped_overrides: dict[str, tuple[str, bool]],
     workspace_dir: str | Path | None = None,
 ) -> None:
-    """Write AGENTS.md, SOUL.md, and CLAUDE.md into a run directory.
+    """Write AGENTS.md, SOUL.md, and CLAUDE.md into an artifacts directory.
 
     For each file: use DB config value if present, otherwise copy from workspace_dir.
     CLAUDE.md is always written (points Claude Code to AGENTS.md).
     """
-    rd = Path(run_dir)
+    rd = Path(artifacts_dir)
     wd = Path(workspace_dir) if workspace_dir else Path(THEME_DIR)
 
     for config_path, filename in _FILES.items():
