@@ -514,6 +514,21 @@ class Consumer:
         for db_attempt in range(1, max_db_retries + 1):
             conn = get_connection(self._db_config)
             try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT status FROM job WHERE id = %s", (job.id,))
+                    row = cur.fetchone()
+                current_status = row[0] if row else None
+                if current_status != "RUNNING":
+                    self.logger.info(
+                        "Job finalize skipped (status changed during run)",
+                        extra={
+                            "job_id": job.id,
+                            "reference_id": job.reference_id,
+                            "current_status": current_status,
+                        },
+                    )
+                    return
+
                 if error is None:
                     with conn.cursor() as cur:
                         cur.execute(
@@ -524,7 +539,7 @@ class Consumer:
                                 input_tokens = %s, output_tokens = %s,
                                 prompt = %s, output = %s,
                                 updated_at = NOW()
-                            WHERE id = %s
+                            WHERE id = %s AND status = 'RUNNING'
                             """,
                             (
                                 job_result.summary if job_result else None,
@@ -583,7 +598,7 @@ class Consumer:
                                     error_message = %s, error_class = %s,
                                     session_id = COALESCE(%s, session_id),
                                     scheduled_after = %s, updated_at = NOW()
-                                WHERE id = %s
+                                WHERE id = %s AND status = 'RUNNING'
                                 """,
                                 (error_msg, error_class, session_id, scheduled_after, job.id),
                             )
@@ -615,7 +630,7 @@ class Consumer:
                                     error_message = %s, error_class = %s,
                                     session_id = COALESCE(%s, session_id),
                                     updated_at = NOW()
-                                WHERE id = %s
+                                WHERE id = %s AND status = 'RUNNING'
                                 """,
                                 (error_msg, error_class, session_id, job.id),
                             )
