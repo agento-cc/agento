@@ -72,6 +72,7 @@ describe('FileManager', () => {
       converterRegistry: registry,
       allowedExtensions: opts.allowedExtensions || new Set(['.pdf', '.png', '.jpg', '.xlsx', '.csv', '.txt']),
       maxFileSize: opts.maxFileSize || 10_000_000,
+      log: opts.log,
     });
   }
 
@@ -160,6 +161,7 @@ describe('FileManager', () => {
     expect(result.skipped).toBe(false);
     expect(result.localPath).toContain('.pdf');
     expect(result.convertedPath).toBeNull();
+    expect(result.conversionError).toBe('pdftotext not found');
   });
 
   it('handles download failure', async () => {
@@ -190,5 +192,55 @@ describe('FileManager', () => {
   it('exposes converterRegistry via getter', () => {
     const fm = createFileManager();
     expect(fm.converterRegistry).toBe(registry);
+  });
+
+  it('logs and returns skipReason on fetch error', async () => {
+    const logSpy = vi.fn();
+    const fm = createFileManager({ log: logSpy });
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+
+    const result = await fm.download('http://example.com/file.txt', 'file.txt', { dir: tmpDir });
+    expect(result.skipped).toBe(true);
+    expect(result.skipReason).toMatch(/Write failed/);
+    expect(logSpy).toHaveBeenCalledWith('file_manager', 'ERROR', expect.stringContaining('Write failed'));
+    expect(logSpy).toHaveBeenCalledWith('file_manager', 'ERROR', expect.stringContaining('ECONNREFUSED'));
+  });
+
+  it('returns conversionError when converter throws', async () => {
+    registry.register({
+      fromExt: '.xlsx',
+      toExt: '.csv',
+      convert: vi.fn().mockRejectedValue(new Error('Bad archive')),
+    });
+    const fm = createFileManager();
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(Buffer.from('xlsx data').buffer),
+    });
+
+    const result = await fm.download('http://example.com/data.xlsx', 'data.xlsx', { dir: tmpDir });
+    expect(result.skipped).toBe(false);
+    expect(result.convertedPath).toBeNull();
+    expect(result.conversionError).toBe('Bad archive');
+  });
+
+  it('logs converter errors via injected log function', async () => {
+    const logSpy = vi.fn();
+    registry.register({
+      fromExt: '.xlsx',
+      toExt: '.csv',
+      convert: vi.fn().mockRejectedValue(new Error('Parse error')),
+    });
+    const fm = createFileManager({ log: logSpy });
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(Buffer.from('xlsx').buffer),
+    });
+
+    await fm.download('http://example.com/sheet.xlsx', 'sheet.xlsx', { dir: tmpDir });
+    expect(logSpy).toHaveBeenCalledWith('file_manager', 'ERROR', expect.stringContaining('Parse error'));
   });
 });
