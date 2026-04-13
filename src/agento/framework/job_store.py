@@ -21,8 +21,14 @@ def fetch_job(conn, job_id: int) -> Job | None:
 def pause_job(conn, job_id: int) -> Job:
     """Transition a RUNNING job to PAUSED. Sends SIGTERM to the subprocess if alive.
 
+    Flips the DB status FIRST (atomically), then signals the subprocess.
+    This order closes the race where the agent finishes during the SIGTERM
+    wait and the consumer's _finalize_job commits SUCCESS before pause's
+    UPDATE fires.
+
     Returns the updated Job.
-    Raises ValueError if job is not found or not in RUNNING status.
+    Raises ValueError if job is not found or no longer in RUNNING status
+    at the moment the UPDATE executes.
     """
     job = fetch_job(conn, job_id)
     if job is None:
@@ -30,21 +36,8 @@ def pause_job(conn, job_id: int) -> Job:
     if job.status != JobStatus.RUNNING:
         raise ValueError(f"Cannot pause job in status {job.status.value}")
 
-    # SIGTERM the subprocess if PID is set and alive
-    if job.pid is not None:
-        try:
-            os.kill(job.pid, 0)
-            os.kill(job.pid, signal.SIGTERM)
-            # Wait briefly for the process to exit
-            for _ in range(6):
-                time.sleep(0.5)
-                try:
-                    os.kill(job.pid, 0)
-                except OSError:
-                    break
-        except OSError:
-            pass  # PID already dead — just flip the status
-
+    # Step 1: atomically claim the pause. If the job raced to a terminal
+    # state between our fetch and this UPDATE, rowcount will be 0.
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -54,7 +47,33 @@ def pause_job(conn, job_id: int) -> Job:
             """,
             (job_id,),
         )
+        rows = cur.rowcount
     conn.commit()
+
+    if rows == 0:
+        # Re-read to report the actual status
+        current = fetch_job(conn, job_id)
+        actual = current.status.value if current else "UNKNOWN"
+        raise ValueError(
+            f"Cannot pause job {job_id}: status changed to {actual} "
+            "before pause could be applied."
+        )
+
+    # Step 2: now that DB reflects PAUSED, signal the subprocess. If the
+    # subprocess exits cleanly, consumer's _finalize_job sees PAUSED and
+    # skips the SUCCESS/DEAD write.
+    if job.pid is not None:
+        try:
+            os.kill(job.pid, 0)
+            os.kill(job.pid, signal.SIGTERM)
+            for _ in range(6):
+                time.sleep(0.5)
+                try:
+                    os.kill(job.pid, 0)
+                except OSError:
+                    break
+        except OSError:
+            pass  # PID already dead — status is already PAUSED
 
     job.status = JobStatus.PAUSED
     return job
