@@ -107,7 +107,9 @@ class TestCopyBuildToRunDir:
         assert (run_dir / ".claude.json").read_text() == '{"model": "test"}'
 
     def test_injects_runtime_params_into_mcp_json(self, tmp_path):
-        """job_id, ws, av are injected into .mcp.json toolbox URLs."""
+        """job_id, ws, av are injected into .mcp.json toolbox URLs via ConfigWriter."""
+        from agento.modules.claude.src.config import ClaudeConfigWriter
+
         build_dir = tmp_path / "build"
         build_dir.mkdir()
         mcp = {"mcpServers": {"toolbox": {"url": "http://toolbox:3001/sse?agent_view_id=1"}}}
@@ -116,7 +118,13 @@ class TestCopyBuildToRunDir:
         run_dir = tmp_path / "run"
         run_dir.mkdir()
 
-        copy_build_to_run_dir(build_dir, run_dir, job_id=42, workspace_code="acme", agent_view_code="dev")
+        writer = ClaudeConfigWriter()
+        with patch("agento.framework.config_writer.get_config_writer", return_value=writer):
+            copy_build_to_run_dir(
+                build_dir, run_dir,
+                job_id=42, workspace_code="acme", agent_view_code="dev",
+                provider="claude",
+            )
 
         result = json.loads((run_dir / ".mcp.json").read_text())
         url = result["mcpServers"]["toolbox"]["url"]

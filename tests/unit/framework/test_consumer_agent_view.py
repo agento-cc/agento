@@ -116,18 +116,21 @@ class TestRunJobWithAgentView:
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.populate_agent_configs")
+    @patch("agento.framework.config_writer.get_config_writer")
     @patch("agento.framework.consumer.prepare_run_dir")
     @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
-    def test_calls_populate_agent_configs_with_agent_view_id(
-        self, mock_resolve, mock_build, mock_prepare, mock_populate,
+    def test_calls_config_writer_with_agent_view_id(
+        self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
         mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_db_config, sample_consumer_config,
     ):
         runtime = _make_runtime_with_agent_view(agent_view_id=2)
         mock_resolve.return_value = runtime
         mock_conn.return_value = MagicMock()
+
+        mock_writer = MagicMock()
+        mock_get_writer.return_value = mock_writer
 
         mock_result = _make_claude_result()
         mock_workflow = MagicMock()
@@ -140,22 +143,21 @@ class TestRunJobWithAgentView:
 
         consumer._run_job(job)
 
-        mock_populate.assert_called_once_with(
-            "/workspace/acme/developer/runs/42",
-            runtime.scoped_overrides,
-            agent_view_id=2,
-        )
+        mock_get_writer.assert_called_once_with("claude")
+        mock_writer.prepare_workspace.assert_called_once()
+        call_kwargs = mock_writer.prepare_workspace.call_args
+        assert call_kwargs.kwargs["agent_view_id"] == 2
 
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.populate_agent_configs")
+    @patch("agento.framework.config_writer.get_config_writer")
     @patch("agento.framework.consumer.prepare_run_dir")
     @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_runner_receives_run_dir(
-        self, mock_resolve, mock_build, mock_prepare, mock_populate,
+        self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
         mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_db_config, sample_consumer_config,
     ):
@@ -203,35 +205,20 @@ class TestRunJobWithAgentView:
         MockRunner.assert_called_once()
         assert MockRunner.call_args.kwargs["working_dir"] is None
 
-    @patch("agento.framework.consumer.get_workflow_class")
-    @patch("agento.framework.consumer.get_channel")
-    @patch("agento.framework.consumer.create_runner")
-    @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.populate_agent_configs")
-    @patch("agento.framework.consumer.prepare_run_dir")
-    @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/developer/runs/42")
-    @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_scoped_overrides_generate_mcp_config_with_agent_view_id(
-        self, mock_resolve, mock_build, mock_prepare, mock_populate,
-        mock_conn, MockRunner, mock_get_ch, mock_get_wf,
-        sample_db_config, sample_consumer_config, tmp_path,
+        self, tmp_path,
     ):
-        """End-to-end: populate_agent_configs writes .mcp.json with agent_view_id in URL."""
-        from agento.framework.agent_config_writer import populate_agent_configs as real_populate
+        """End-to-end: ClaudeConfigWriter writes .mcp.json with agent_view_id in URL."""
+        from agento.framework.config_writer import get_agent_config
+        from agento.modules.claude.src.config import ClaudeConfigWriter
 
         runtime = _make_runtime_with_agent_view(agent_view_id=5)
-        mock_resolve.return_value = runtime
-        mock_conn.return_value = MagicMock()
 
-        mock_result = _make_claude_result()
-        mock_workflow = MagicMock()
-        mock_workflow.execute_job.return_value = mock_result
-        mock_get_wf.return_value.return_value = mock_workflow
-        mock_get_ch.return_value = MagicMock(name="jira")
-
-        # Actually call populate to verify .mcp.json content
         wd = tmp_path / "run"
-        real_populate(wd, runtime.scoped_overrides, agent_view_id=5)
+        wd.mkdir(parents=True)
+        agent_config = get_agent_config(runtime.scoped_overrides)
+        writer = ClaudeConfigWriter()
+        writer.prepare_workspace(wd, agent_config, agent_view_id=5)
 
         mcp_config = json.loads((wd / ".mcp.json").read_text())
         url = mcp_config["mcpServers"]["toolbox"]["url"]
@@ -259,12 +246,12 @@ class TestRunJobProviderFallback:
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.populate_agent_configs")
+    @patch("agento.framework.config_writer.get_config_writer")
     @patch("agento.framework.consumer.prepare_run_dir")
     @patch("agento.framework.consumer.build_run_dir", return_value="/workspace/acme/dev/runs/1")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_uses_agent_view_provider_over_primary_token(
-        self, mock_resolve, mock_build, mock_prepare, mock_populate,
+        self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
         mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_db_config, sample_consumer_config,
     ):

@@ -191,12 +191,19 @@ class TestExecuteBuild:
         cursor.lastrowid = 42
         return conn, cursor
 
-    @patch("agento.framework.agent_config_writer.populate_agent_configs")
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
     @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.workspace.get_agent_view")
-    def test_full_build_flow(self, mock_get_av, mock_overrides, mock_populate, tmp_path):
+    def test_full_build_flow(self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer, tmp_path):
         mock_get_av.return_value = _make_agent_view()
         mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
+
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        mock_resolve.return_value = AgentViewRuntime(provider="claude")
+        mock_writer = MagicMock()
+        mock_get_writer.return_value = mock_writer
+
         conn, _ = self._mock_conn()
 
         with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
@@ -206,7 +213,7 @@ class TestExecuteBuild:
         assert result.build_id == 42
         assert result.skipped is False
         assert len(result.checksum) == 64
-        mock_populate.assert_called_once()
+        mock_get_writer.assert_called_once_with("claude")
         conn.commit.assert_called()
 
     @patch("agento.framework.scoped_config.build_scoped_overrides")
