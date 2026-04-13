@@ -122,3 +122,10 @@ class TestInjectRuntimeParams:
         assert data["model"] == "gpt-5"
         assert data["approval_mode"] == "full-auto"
         assert "job_id=5" in data["mcp_servers"]["toolbox"]["url"]
+
+
+class TestOwnedPaths:
+    def test_returns_codex_dir(self, writer):
+        files, dirs = writer.owned_paths()
+        assert files == set()
+        assert dirs == {".codex"}

@@ -128,3 +128,10 @@ class TestInjectRuntimeParams:
 
         data = json.loads((work_dir / ".mcp.json").read_text())
         assert "job_id=5&ws=ws&av=av" in data["mcpServers"]["toolbox"]["url"]
+
+
+class TestOwnedPaths:
+    def test_returns_claude_files_and_dir(self, writer):
+        files, dirs = writer.owned_paths()
+        assert files == {".claude.json", ".mcp.json"}
+        assert dirs == {".claude"}

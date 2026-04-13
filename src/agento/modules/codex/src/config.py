@@ -22,6 +22,9 @@ def _derive_mcp_type(url: str) -> str:
 class CodexConfigWriter:
     """Writes Codex CLI config: .codex/config.toml with MCP servers block."""
 
+    def owned_paths(self) -> tuple[set[str], set[str]]:
+        return set(), {".codex"}
+
     def prepare_workspace(
         self,
         working_dir: Path,
