@@ -18,6 +18,7 @@ class JobStatus(Enum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     DEAD = "DEAD"
+    PAUSED = "PAUSED"
 
 
 @dataclass

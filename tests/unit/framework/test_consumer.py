@@ -226,6 +226,22 @@ class TestRecoverStaleJobs:
         # Should not raise
         consumer._recover_stale_jobs()
 
+    @patch("agento.framework.consumer.get_connection")
+    def test_recover_skips_paused_jobs(self, mock_get_conn, sample_config, sample_db_config, sample_consumer_config):
+        """PAUSED jobs are not returned by the recovery query (status = 'RUNNING' filter)."""
+        mock_conn, mock_cursor = _mock_connection()
+        # Recovery query returns only RUNNING jobs — PAUSED jobs won't appear
+        mock_cursor.fetchall.return_value = []
+        mock_get_conn.return_value = mock_conn
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        consumer._recover_stale_jobs()
+
+        # Only the SELECT, no UPDATEs
+        assert mock_cursor.execute.call_count == 1
+        sql = mock_cursor.execute.call_args_list[0][0][0]
+        assert "status = 'RUNNING'" in sql
+
 
 # ---- Section 5: Dequeue ----
 
