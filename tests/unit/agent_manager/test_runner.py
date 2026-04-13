@@ -226,9 +226,10 @@ class TestTokenCodexRunner:
         runner = TokenCodexRunner(dry_run=True)
         cmd = runner._build_resume_command("sess-456")
         assert cmd == [
-            "codex", "resume", "sess-456",
+            "codex", "exec", "resume", "sess-456",
             "Continue working from where you left off.",
             "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
         ]
 
     def test_build_resume_command_with_model(self):

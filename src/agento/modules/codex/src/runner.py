@@ -29,10 +29,12 @@ class TokenCodexRunner(TokenRunner):
         return cmd
 
     def _build_resume_command(self, session_id: str, model: str | None = None) -> list[str]:
+        # Non-interactive resume: `codex exec resume <id> <prompt>` (not `codex resume`, which needs a TTY).
         cmd = [
-            "codex", "resume", session_id,
+            "codex", "exec", "resume", session_id,
             "Continue working from where you left off.",
             "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
         ]
         if model:
             cmd.extend(["--model", model])
