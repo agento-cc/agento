@@ -288,6 +288,91 @@ class RotateCommand:
             conn.close()
 
 
+class PauseCommand:
+    @property
+    def name(self) -> str:
+        return "job:pause"
+
+    @property
+    def shortcut(self) -> str:
+        return "jo:pa"
+
+    @property
+    def help(self) -> str:
+        return "Pause a running job (SIGTERM + keep session)"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("job_id", type=int, help="Job ID to pause")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        import sys
+
+        from ..event_manager import get_event_manager
+        from ..events import JobPausedEvent
+        from ..job_store import pause_job
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            job = pause_job(conn, args.job_id)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        finally:
+            conn.close()
+
+        get_event_manager().dispatch("job_pause_after", JobPausedEvent(job=job))
+
+        print(f"Job #{job.id} paused.")
+        if job.session_id:
+            print(f"  session_id: {job.session_id}")
+        print(f"  pid: {job.pid or 'N/A'}")
+        print()
+        print("Resume with: agento job:resume", job.id)
+
+
+class ResumeCommand:
+    @property
+    def name(self) -> str:
+        return "job:resume"
+
+    @property
+    def shortcut(self) -> str:
+        return "jo:re"
+
+    @property
+    def help(self) -> str:
+        return "Resume a paused job (re-queue for consumer pickup)"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("job_id", type=int, help="Job ID to resume")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        import sys
+
+        from ..event_manager import get_event_manager
+        from ..events import JobResumedEvent
+        from ..job_store import resume_job
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            job = resume_job(conn, args.job_id)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        finally:
+            conn.close()
+
+        get_event_manager().dispatch("job_resume_after", JobResumedEvent(job=job))
+
+        print(f"Job #{job.id} re-queued.")
+        print(f"  session_id: {job.session_id}")
+        print()
+        print("Job will be picked up by the next consumer poll;")
+        print(f"it will resume via session_id={job.session_id}")
+
+
 class E2eCommand:
     @property
     def name(self) -> str:

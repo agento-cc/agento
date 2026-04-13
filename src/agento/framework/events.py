@@ -71,6 +71,20 @@ class JobDeadEvent:
 
 
 @dataclass
+class JobPausedEvent:
+    """Dispatched after a job is paused (status → PAUSED)."""
+
+    job: Job
+
+
+@dataclass
+class JobResumedEvent:
+    """Dispatched after a paused job is re-queued (status → TODO)."""
+
+    job: Job
+
+
+@dataclass
 class JobPublishedEvent:
     """Dispatched after a new job is inserted into the queue."""
 

@@ -76,6 +76,10 @@ agento module:disable <name>                           # Disable a module (skips
 agento module:validate [name]                          # Validate module structure and sequence deps
 agento reindex
 
+# Jobs
+agento job:pause <job_id>                              # Stop a running job, keep session
+agento job:resume <job_id>                             # Re-queue paused job; auto-resumes via session_id
+
 # Config
 agento config:set <path> <value> [--scope=<scope>] [--scope-id=<id>]
 agento config:get <path>                               # exact path: per-scope values

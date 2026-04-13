@@ -134,3 +134,4 @@ def test_job_status_enum():
     assert JobStatus("SUCCESS") == JobStatus.SUCCESS
     assert JobStatus("FAILED") == JobStatus.FAILED
     assert JobStatus("DEAD") == JobStatus.DEAD
+    assert JobStatus("PAUSED") == JobStatus.PAUSED

@@ -99,7 +99,15 @@ def _register_framework_commands() -> None:
         ModuleListCommand,
         ModuleValidateCommand,
     )
-    from .runtime import ConsumerCommand, E2eCommand, ReplayCommand, RotateCommand, SetupUpgradeCommand
+    from .runtime import (
+        ConsumerCommand,
+        E2eCommand,
+        PauseCommand,
+        ReplayCommand,
+        ResumeCommand,
+        RotateCommand,
+        SetupUpgradeCommand,
+    )
     from .token import (
         TokenDeregisterCommand,
         TokenListCommand,
@@ -116,7 +124,7 @@ def _register_framework_commands() -> None:
         DoctorCommand, InstallCommand, UpgradeCommand,
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
         ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSchemaCommand, ConfigResolveCommand,
-        ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, E2eCommand,
+        ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, PauseCommand, ResumeCommand, E2eCommand,
         TokenRegisterCommand, TokenRefreshCommand, TokenListCommand, TokenDeregisterCommand, TokenSetCommand, TokenUsageCommand,
     ]:
         register_command(cmd_cls())
