@@ -109,6 +109,9 @@ Registers capabilities your module provides — channels, workflows, runtimes, C
   "runtimes": [
     {"provider": "claude", "class": "src.runner.TokenClaudeRunner"}
   ],
+  "config_writers": [
+    {"provider": "claude", "class": "src.config.ClaudeConfigWriter"}
+  ],
   "commands": [
     {"name": "sync", "class": "src.commands.sync.SyncCommand"},
     {"name": "publish", "class": "src.commands.publish.PublishCommand"}
@@ -123,8 +126,26 @@ Each section is optional — include only what your module provides. The `onboar
 | `channels` | `name`, `class` | Channel registry — `get_channel(name)` |
 | `workflows` | `type`, `class` | Workflow registry — `get_workflow_class(AgentType)` |
 | `runtimes` | `provider`, `class` | Runner factory — `create_runner(AgentProvider)` |
+| `config_writers` | `provider`, `class` | Config writer registry — `get_config_writer(AgentProvider)` |
 | `commands` | `name`, `class` | CLI command registry — adds `bin/agento <name>` subcommand |
 | `onboarding` | (single class path string) | Onboarding registry — interactive setup during `setup:upgrade` |
+
+#### `config_writers`
+
+Each agent provider materializes its own CLI config files (`.claude.json`, `.codex/config.toml`, etc.) before a job runs. The framework dispatches to the provider's `ConfigWriter` — it does **not** know about specific file formats. To add a new agent (OpenCode, Hermes, etc.), implement `ConfigWriter` and register it here.
+
+The protocol (`src/agento/framework/config_writer.py`):
+
+```python
+class ConfigWriter(Protocol):
+    def prepare_workspace(self, working_dir, agent_config, *, agent_view_id=None) -> None: ...
+    def inject_runtime_params(self, run_dir, *, job_id, workspace_code, agent_view_code) -> None: ...
+    def owned_paths(self) -> tuple[set[str], set[str]]: ...
+```
+
+- `prepare_workspace` — write provider config files into the build directory (model, MCP servers, permissions, etc.)
+- `inject_runtime_params` — append per-job query params (`job_id`, `ws`, `av`) to URLs in the runtime copy of the config
+- `owned_paths` — return `(files, dirs)` this writer manages so framework copies (not symlinks) them into per-job run dirs
 
 Class paths are dotted relative to the module directory: `src.channel.JiraChannel` resolves to `<module>/src/channel.py` → `JiraChannel`.
 

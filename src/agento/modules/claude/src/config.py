@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 class ClaudeConfigWriter:
     """Writes Claude Code CLI config files: .claude.json, .claude/settings.json, .mcp.json."""
 
+    def owned_paths(self) -> tuple[set[str], set[str]]:
+        return {".claude.json", ".mcp.json"}, {".claude"}
+
     def prepare_workspace(
         self,
         working_dir: Path,

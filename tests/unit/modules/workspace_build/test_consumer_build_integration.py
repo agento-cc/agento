@@ -4,7 +4,23 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
+from agento.framework.agent_manager.models import AgentProvider
+from agento.framework.config_writer import clear, register_config_writer
 from agento.framework.run_dir import copy_build_to_run_dir, get_current_build_dir
+from agento.modules.claude.src.config import ClaudeConfigWriter
+from agento.modules.codex.src.config import CodexConfigWriter
+
+
+@pytest.fixture
+def with_writers():
+    """Register Claude + Codex writers so framework knows which paths to copy."""
+    clear()
+    register_config_writer(AgentProvider.CLAUDE, ClaudeConfigWriter())
+    register_config_writer(AgentProvider.CODEX, CodexConfigWriter())
+    yield
+    clear()
 
 
 class TestGetCurrentBuildDir:
@@ -46,7 +62,7 @@ class TestCopyBuildToRunDir:
         assert (run_dir / "CLAUDE.md").read_text() == "# Test"
         assert (run_dir / "AGENTS.md").read_text() == "# Agents"
 
-    def test_copies_directories(self, tmp_path):
+    def test_copies_directories(self, tmp_path, with_writers):
         build_dir = tmp_path / "build"
         build_dir.mkdir()
         subdir = build_dir / ".claude" / "skills"
@@ -90,7 +106,7 @@ class TestCopyBuildToRunDir:
         assert (run_dir / "modules" / "jira" / "data.md").read_text() == "# Jira data"
         assert (run_dir / "KnowledgeBase" / "info.md").read_text() == "# Info"
 
-    def test_config_files_are_real_copies(self, tmp_path):
+    def test_config_files_are_real_copies(self, tmp_path, with_writers):
         """Config files (.claude.json etc) are real copies, not symlinks."""
         build_dir = tmp_path / "build"
         build_dir.mkdir()

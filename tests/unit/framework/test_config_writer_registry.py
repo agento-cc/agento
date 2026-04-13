@@ -1,11 +1,13 @@
-"""Tests for ConfigWriter protocol, registry, and bootstrap discovery."""
+"""Tests for ConfigWriter protocol, registry, bootstrap discovery, and helpers."""
 from __future__ import annotations
 
 import pytest
 
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.config_writer import (
+    all_owned_paths,
     clear,
+    get_agent_config,
     get_config_writer,
     register_config_writer,
 )
@@ -17,6 +19,9 @@ class _DummyWriter:
 
     def inject_runtime_params(self, run_dir, *, job_id, workspace_code, agent_view_code):
         pass
+
+    def owned_paths(self):
+        return set(), set()
 
 
 @pytest.fixture(autouse=True)
@@ -57,3 +62,57 @@ class TestRegistry:
         register_config_writer(AgentProvider.CLAUDE, writer1)
         register_config_writer(AgentProvider.CLAUDE, writer2)
         assert get_config_writer(AgentProvider.CLAUDE) is writer2
+
+
+class _WriterWithPaths:
+    def __init__(self, files, dirs):
+        self._files = files
+        self._dirs = dirs
+
+    def prepare_workspace(self, working_dir, agent_config, *, agent_view_id=None):
+        pass
+
+    def inject_runtime_params(self, run_dir, *, job_id, workspace_code, agent_view_code):
+        pass
+
+    def owned_paths(self):
+        return self._files, self._dirs
+
+
+class TestAllOwnedPaths:
+    def test_aggregates_across_writers(self):
+        register_config_writer(
+            AgentProvider.CLAUDE, _WriterWithPaths({".claude.json", ".mcp.json"}, {".claude"}),
+        )
+        register_config_writer(
+            AgentProvider.CODEX, _WriterWithPaths(set(), {".codex"}),
+        )
+        files, dirs = all_owned_paths()
+        assert files == {".claude.json", ".mcp.json"}
+        assert dirs == {".claude", ".codex"}
+
+    def test_empty_when_no_writers(self):
+        files, dirs = all_owned_paths()
+        assert files == set()
+        assert dirs == set()
+
+
+class TestGetAgentConfig:
+    def test_extracts_agent_prefix(self):
+        overrides = {
+            "agent_view/model": ("opus-4", False),
+            "agent_view/mcp/servers": ('{"toolbox": {}}', False),
+            "jira/token": ("abc", False),
+        }
+        result = get_agent_config(overrides)
+        assert result == {
+            "model": "opus-4",
+            "mcp/servers": '{"toolbox": {}}',
+        }
+
+    def test_skips_none_values(self):
+        overrides = {"agent_view/model": (None, False)}
+        assert get_agent_config(overrides) == {}
+
+    def test_empty_overrides(self):
+        assert get_agent_config({}) == {}

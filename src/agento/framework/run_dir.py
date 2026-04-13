@@ -46,9 +46,8 @@ def get_current_build_dir(workspace_code: str, agent_view_code: str) -> Path | N
     return None
 
 
-# Config files/dirs that the agent CLI needs at cwd root — small, may be modified.
-_COPY_FILES = {".claude.json", ".mcp.json", "CLAUDE.md", "AGENTS.md", "SOUL.md"}
-_COPY_DIRS = {".claude", ".codex"}
+# Universal instruction files (agent-agnostic) — always copied so per-job edits are isolated.
+_UNIVERSAL_COPY_FILES = {"CLAUDE.md", "AGENTS.md", "SOUL.md"}
 
 
 def copy_build_to_run_dir(
@@ -62,13 +61,19 @@ def copy_build_to_run_dir(
 ) -> None:
     """Thin bootstrap: copy small config files, symlink large readonly content.
 
+    Files/dirs owned by registered ConfigWriters are copied (so per-job
+    runtime params can be injected). Everything else is symlinked.
     Dispatches runtime param injection to the provider's ConfigWriter.
     """
+    from agento.framework.config_writer import all_owned_paths
+    owned_files, owned_dirs = all_owned_paths()
+    copy_files = owned_files | _UNIVERSAL_COPY_FILES
+
     for item in build_dir.iterdir():
         dest = run_dir / item.name
-        if item.name in _COPY_FILES and item.is_file():
+        if item.name in copy_files and item.is_file():
             shutil.copy2(item, dest)
-        elif item.name in _COPY_DIRS and item.is_dir():
+        elif item.name in owned_dirs and item.is_dir():
             shutil.copytree(item, dest)
         elif item.is_dir():
             dest.symlink_to(item.resolve())

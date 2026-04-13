@@ -39,6 +39,14 @@ class ConfigWriter(Protocol):
         agent_view_code: str,
     ) -> None: ...
 
+    def owned_paths(self) -> tuple[set[str], set[str]]:
+        """Return (files, dirs) owned by this writer.
+
+        When copying a build into a per-job run dir, framework copies these
+        items (instead of symlinking) so they can be modified per-job.
+        """
+        ...
+
 
 # Registry: provider -> ConfigWriter instance
 _CONFIG_WRITERS: dict[AgentProvider, ConfigWriter] = {}
@@ -65,6 +73,17 @@ def get_config_writer(provider: AgentProvider | str) -> ConfigWriter:
             f"Registered: {list(_CONFIG_WRITERS.keys())}. Has bootstrap() been called?"
         )
     return writer
+
+
+def all_owned_paths() -> tuple[set[str], set[str]]:
+    """Aggregate owned (files, dirs) across every registered ConfigWriter."""
+    files: set[str] = set()
+    dirs: set[str] = set()
+    for writer in _CONFIG_WRITERS.values():
+        f, d = writer.owned_paths()
+        files |= f
+        dirs |= d
+    return files, dirs
 
 
 def get_agent_config(resolved_config: dict[str, tuple[str, bool]]) -> dict[str, str]:
