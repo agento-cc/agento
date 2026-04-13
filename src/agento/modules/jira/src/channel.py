@@ -143,15 +143,19 @@ class JiraPublisher:
     ) -> str:
         now = datetime.now(UTC)
         if agent_type == AgentType.CRON and reference_id:
+            # CRON jobs still use a minute bucket — these are fire-and-forget scheduled runs.
             return f"jira:cron:{reference_id}:{now.strftime('%Y%m%d_%H%M')}"
         elif agent_type == AgentType.TODO and reference_id:
-            base = f"jira:todo:{reference_id}:{now.strftime('%Y%m%d_%H')}"
+            # TODO jobs dedup purely by the issue's `updated` timestamp — one job per distinct Jira change.
+            # When `updated` is missing (e.g. manual re-publish by key), fall back to a per-minute bucket
+            # so the same CLI invocation twice-in-a-row doesn't dedup against a long-lived earlier job.
             if updated:
                 upd = updated[:16].replace("-", "").replace("T", "_").replace(":", "")
-                return f"{base}:u{upd}"
-            return base
+                return f"jira:todo:{reference_id}:u{upd}"
+            return f"jira:todo:{reference_id}:{now.strftime('%Y%m%d_%H%M')}"
         else:
-            return f"jira:todo:dispatch:{now.strftime('%Y%m%d_%H')}"
+            # Dispatch key — minute bucket for consistency with the CRON path.
+            return f"jira:todo:dispatch:{now.strftime('%Y%m%d_%H%M')}"
 
     def publish_cron(
         self,

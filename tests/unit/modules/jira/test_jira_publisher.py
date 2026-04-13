@@ -18,13 +18,13 @@ class TestIdempotencyKey:
     def test_idempotency_key_todo_with_issue(self, mock_dt):
         mock_dt.now.return_value = datetime(2026, 2, 20, 8, 0)
         key = build_idempotency_key(AgentType.TODO, "AI-456")
-        assert key == "jira:todo:AI-456:20260220_08"
+        assert key == "jira:todo:AI-456:20260220_0800"
 
     @patch("agento.modules.jira.src.channel.datetime")
     def test_idempotency_key_todo_dispatch(self, mock_dt):
         mock_dt.now.return_value = datetime(2026, 2, 20, 8, 0)
         key = build_idempotency_key(AgentType.TODO, None)
-        assert key == "jira:todo:dispatch:20260220_08"
+        assert key == "jira:todo:dispatch:20260220_0800"
 
     @patch("agento.modules.jira.src.channel.datetime")
     def test_idempotency_key_same_minute_is_stable(self, mock_dt):
@@ -49,7 +49,7 @@ class TestIdempotencyKeyWithUpdated:
     def test_todo_with_updated_includes_update_minute_in_key(self, mock_dt):
         mock_dt.now.return_value = datetime(2026, 2, 24, 16, 47)
         key = build_idempotency_key(AgentType.TODO, "AI-6", updated="2026-02-24T16:45:00.000+0000")
-        assert key == "jira:todo:AI-6:20260224_16:u20260224_1645"
+        assert key == "jira:todo:AI-6:u20260224_1645"
 
     @patch("agento.modules.jira.src.channel.datetime")
     def test_todo_same_hour_different_updated_yields_different_keys(self, mock_dt):
@@ -59,11 +59,11 @@ class TestIdempotencyKeyWithUpdated:
         assert key_before != key_after
 
     @patch("agento.modules.jira.src.channel.datetime")
-    def test_todo_without_updated_keeps_old_format(self, mock_dt):
-        """Backwards compat: publish_todo without updated behaves as before."""
+    def test_todo_without_updated_uses_minute_bucket(self, mock_dt):
+        """Fallback: publish_todo without updated uses per-minute bucket."""
         mock_dt.now.return_value = datetime(2026, 2, 24, 16, 47)
         key = build_idempotency_key(AgentType.TODO, "AI-6")
-        assert key == "jira:todo:AI-6:20260224_16"
+        assert key == "jira:todo:AI-6:20260224_1647"
 
     @patch("agento.modules.jira.src.channel.datetime")
     def test_todo_updated_none_equals_no_updated(self, mock_dt):
@@ -135,7 +135,7 @@ class TestPublishTodo:
 
         call_args = mock_publish.call_args
         idempotency_key = call_args[0][3]
-        assert idempotency_key == "jira:todo:AI-6:20260224_16:u20260224_1645"
+        assert idempotency_key == "jira:todo:AI-6:u20260224_1645"
 
     @patch("agento.modules.jira.src.channel.publish")
     @patch("agento.modules.jira.src.channel.datetime")
