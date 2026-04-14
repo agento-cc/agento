@@ -291,7 +291,7 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
                     allow_blank=False,
                     id="editor-input",
                 )
-            elif field.field_type == "json":
+            elif field.field_type in ("json", "textarea"):
                 yield TextArea(current, id="editor-textarea")
             elif field.field_type == "obscure":
                 yield Input(value=current, password=True, id="editor-input")
@@ -312,7 +312,7 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
         self.dismiss(False)
 
     def _get_value(self) -> str:
-        if self._field.field_type == "json":
+        if self._field.field_type in ("json", "textarea"):
             return self.query_one("#editor-textarea", TextArea).text
         if self._field.field_type == "boolean":
             val = self.query_one("#editor-input", Select).value
