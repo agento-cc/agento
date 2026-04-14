@@ -2,7 +2,6 @@ import { z } from 'zod';
 import mysql from 'mysql2/promise';
 import { logToolbox as log } from '../log.js';
 import { getSqlTimeoutMs, setSqlTimeoutSeconds } from './sql-timeout.js';
-import { maybeOffloadRows } from './large-result.js';
 
 const ALLOWED_KEYWORDS = ['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN', 'WITH'];
 
@@ -12,7 +11,7 @@ function isReadOnly(query) {
   return ALLOWED_KEYWORDS.includes(firstWord);
 }
 
-function createMysqlTool(server, toolName, description, config, offload) {
+function createMysqlTool(server, toolName, description, config) {
   let pool = null;
 
   function getPool() {
@@ -62,14 +61,9 @@ function createMysqlTool(server, toolName, description, config, offload) {
         const elapsed = Date.now() - start;
         const rowCount = Array.isArray(rows) ? rows.length : '?';
 
-        const offloaded = Array.isArray(rows) && rows.length > 0
-          ? await maybeOffloadRows(rows, toolName, offload)
-          : null;
+        log(toolName, 'OK', `user=${user} time=${elapsed}ms rows=${rowCount}`);
 
-        const offloadInfo = offloaded ? `offload=${offloaded.filePath}` : 'offload=none';
-        log(toolName, 'OK', `user=${user} time=${elapsed}ms rows=${rowCount} ${offloadInfo}`);
-
-        const text = offloaded ? offloaded.summary : JSON.stringify(rows, null, 2);
+        const text = JSON.stringify(rows, null, 2);
         return { content: [{ type: 'text', text }] };
       } catch (err) {
         log(toolName, 'ERROR', `user=${user} ${err.message}`);
@@ -78,7 +72,8 @@ function createMysqlTool(server, toolName, description, config, offload) {
           isError: true,
         };
       }
-    }
+    },
+    { resultStrategy: 'rows' }
   );
 
   return getPool;
@@ -98,7 +93,7 @@ export function registerMysqlTools(server, tools, options = {}) {
   const poolRefs = [];
 
   for (const tool of tools) {
-    const getPool = createMysqlTool(server, tool.name, tool.description, tool.config, options.offload || {});
+    const getPool = createMysqlTool(server, tool.name, tool.description, tool.config);
     registered.push(tool.name);
     poolRefs.push({ name: tool.name, getPool, config: tool.config });
   }

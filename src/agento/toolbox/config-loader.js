@@ -3,6 +3,7 @@ import path from 'path';
 import { getCronPool } from './db.js';
 import { decrypt, hasEncryptionKey } from './crypto.js';
 import { registerAdapterTools } from './adapters/index.js';
+import { wrapHandler } from './adapters/large-result.js';
 import { FileManager, ConverterRegistry } from './file-manager.js';
 
 const CORE_MODULES_DIR = process.env.CORE_MODULES_DIR || '/app/modules/core';
@@ -399,19 +400,29 @@ export async function registerTools(server, context, agentViewId = null, preload
   const fileManager = createFileManager(moduleConfigs, context.log);
   const enrichedContext = { ...context, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
 
+  // Build offload config for the result offload middleware
+  const offloadConfig = {
+    artifactsDir: context.artifactsDir,
+    threshold: parseInt(moduleConfigs?.core?.['toolbox/result_offload/threshold'] || '20000', 10),
+    sampleRows: parseInt(moduleConfigs?.core?.['toolbox/result_offload/sample_rows'] || '5', 10),
+    textPreviewChars: parseInt(moduleConfigs?.core?.['toolbox/result_offload/text_preview_chars'] || '200', 10),
+  };
+
   // Track all tool names registered on the server (adapter + JS module tools)
   const allToolNames = [];
   const originalTool = server.tool.bind(server);
-  server.tool = (...args) => {
-    allToolNames.push(args[0]);
-    return originalTool(...args);
+  server.tool = (name, desc, schema, handler, options = {}) => {
+    allToolNames.push(name);
+    const strategy = options.resultStrategy !== undefined ? options.resultStrategy : 'text';
+    const wrapped = wrapHandler(handler, name, strategy, offloadConfig);
+    return originalTool(name, desc, schema, wrapped);
   };
 
   // 1. Register config-driven adapter tools (filtered by is_enabled)
   const allTools = await loadTools(dbOverrides);
   const enabledTools = allTools.filter(t => enabledCheck(t.name));
   const moduleToolTypes = getModuleToolTypes();
-  const { healthchecks: adapterHealthchecks } = registerAdapterTools(server, enabledTools, moduleToolTypes, moduleConfigs, enrichedContext);
+  const { healthchecks: adapterHealthchecks } = registerAdapterTools(server, enabledTools, moduleToolTypes, moduleConfigs);
 
   const healthchecks = [...adapterHealthchecks];
 

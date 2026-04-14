@@ -249,6 +249,156 @@ describe('maybeOffloadText', () => {
   });
 });
 
+// ─── wrapHandler ────────────────────────────────────────────────────
+describe('wrapHandler', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  const defaultOffloadConfig = {
+    artifactsDir: ARTIFACTS_DIR,
+    threshold: 50,
+    sampleRows: 5,
+    textPreviewChars: 200,
+  };
+
+  async function loadWrapHandler() {
+    mockFs();
+    mockLog();
+    const mod = await import('../adapters/large-result.js');
+    return mod.wrapHandler;
+  }
+
+  it('text strategy: offloads large text to .txt', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const largeText = 'x'.repeat(200);
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: largeText }],
+    });
+
+    const wrapped = wrapHandler(handler, 'my_tool', 'text', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    expect(result.content[0].text).toContain('.txt');
+    expect(result.content[0].text).toContain('200 chars');
+  });
+
+  it('text strategy: passes through small text', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'small' }],
+    });
+
+    const wrapped = wrapHandler(handler, 'my_tool', 'text', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    expect(result.content[0].text).toBe('small');
+  });
+
+  it('rows strategy: offloads large JSON array to .csv', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: i, name: `item${i}` }));
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: JSON.stringify(rows, null, 2) }],
+    });
+
+    const wrapped = wrapHandler(handler, 'db_tool', 'rows', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    expect(result.content[0].text).toContain('.csv');
+    expect(result.content[0].text).toContain('20 rows');
+  });
+
+  it('rows strategy: falls back to .txt for non-JSON text', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const largeText = 'not json at all '.repeat(20);
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: largeText }],
+    });
+
+    const wrapped = wrapHandler(handler, 'db_tool', 'rows', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    expect(result.content[0].text).toContain('.txt');
+  });
+
+  it('rows strategy: preserves metadata items, offloads only the rows item', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: i, sku: `SKU${i}` }));
+    const handler = vi.fn().mockResolvedValue({
+      content: [
+        { type: 'text', text: 'OpenSearch: total=20, took=5ms' },
+        { type: 'text', text: JSON.stringify(rows, null, 2) },
+      ],
+    });
+
+    const wrapped = wrapHandler(handler, 'os_tool', 'rows', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0].text).toBe('OpenSearch: total=20, took=5ms');
+    expect(result.content[1].text).toContain('.csv');
+    expect(result.content[1].text).toContain('20 rows');
+  });
+
+  it('false strategy: returns handler unchanged', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'x'.repeat(200) }],
+    });
+
+    const wrapped = wrapHandler(handler, 'special_tool', false, defaultOffloadConfig);
+    expect(wrapped).toBe(handler);
+  });
+
+  it('does not offload when isError is true', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'x'.repeat(200) }],
+      isError: true,
+    });
+
+    const wrapped = wrapHandler(handler, 'my_tool', 'text', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    expect(result.content[0].text).toBe('x'.repeat(200));
+    expect(result.isError).toBe(true);
+  });
+
+  it('preserves non-text items (images) through offloading', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const handler = vi.fn().mockResolvedValue({
+      content: [
+        { type: 'image', data: 'base64data', mimeType: 'image/png' },
+        { type: 'text', text: 'x'.repeat(200) },
+      ],
+    });
+
+    const wrapped = wrapHandler(handler, 'my_tool', 'text', defaultOffloadConfig);
+    const result = await wrapped({});
+
+    const imageItem = result.content.find(c => c.type === 'image');
+    expect(imageItem).toBeDefined();
+    expect(imageItem.data).toBe('base64data');
+
+    const textItem = result.content.find(c => c.type === 'text');
+    expect(textItem.text).toContain('.txt');
+  });
+
+  it('does not offload when artifactsDir is missing', async () => {
+    const wrapHandler = await loadWrapHandler();
+    const handler = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'x'.repeat(200) }],
+    });
+
+    const wrapped = wrapHandler(handler, 'my_tool', 'text', { ...defaultOffloadConfig, artifactsDir: null });
+    const result = await wrapped({});
+
+    expect(result.content[0].text).toBe('x'.repeat(200));
+  });
+});
+
 // ─── Integration: MySQL tool with large result ──────────────────────
 describe('MySQL tool large result integration', () => {
   afterEach(() => {
@@ -256,7 +406,7 @@ describe('MySQL tool large result integration', () => {
     vi.resetModules();
   });
 
-  async function buildMysqlTool(rowCount, threshold) {
+  async function buildMysqlTool(rowCount) {
     const rows = Array.from({ length: rowCount }, (_, i) => ({ id: i, name: `row${i}` }));
     const mockQuery = vi.fn().mockResolvedValue([rows]);
     const mockPool = { query: mockQuery };
@@ -268,28 +418,20 @@ describe('MySQL tool large result integration', () => {
     const logCalls = mockLog();
 
     let handler;
+    let capturedOptions;
     const fakeServer = {
-      tool: (_name, _desc, _schema, fn) => { handler = fn; },
+      tool: (_name, _desc, _schema, fn, opts) => { handler = fn; capturedOptions = opts; },
     };
 
     const { registerMysqlTools } = await import('../adapters/mysql.js');
-    const offload = { artifactsDir: ARTIFACTS_DIR, threshold, sampleRows: 5 };
     const tools = [{ name: 'mysql_test', description: 'test', config: { host: 'localhost', pass: 'pass', user: 'root', database: 'db' } }];
-    registerMysqlTools(fakeServer, tools, { sqlTimeoutSeconds: 300, offload });
+    registerMysqlTools(fakeServer, tools, { sqlTimeoutSeconds: 300 });
 
-    return { handler, mockQuery, logCalls };
+    return { handler, mockQuery, logCalls, capturedOptions };
   }
 
-  it('returns summary when result size exceeds threshold', async () => {
-    const { handler } = await buildMysqlTool(100, 100);
-    const result = await handler({ user: 'test@kazar.com', query: 'SELECT id, name FROM t' });
-
-    expect(result.content[0].text).toContain('100 rows');
-    expect(result.content[0].text).toContain('.csv');
-  });
-
-  it('returns JSON when result size below threshold', async () => {
-    const { handler } = await buildMysqlTool(3, 99999);
+  it('returns raw JSON (wrapper handles offload)', async () => {
+    const { handler } = await buildMysqlTool(3);
     const result = await handler({ user: 'test@kazar.com', query: 'SELECT id, name FROM t' });
 
     const parsed = JSON.parse(result.content[0].text);
@@ -297,9 +439,14 @@ describe('MySQL tool large result integration', () => {
     expect(parsed[0]).toEqual({ id: 0, name: 'row0' });
   });
 
+  it('passes resultStrategy: rows to server.tool', async () => {
+    const { capturedOptions } = await buildMysqlTool(3);
+    expect(capturedOptions).toEqual({ resultStrategy: 'rows' });
+  });
+
   it('logs QUERY with full SQL before execution', async () => {
     const fullQuery = 'SELECT id, name FROM very_long_table WHERE status = "active" ORDER BY created_at DESC LIMIT 1000';
-    const { handler, logCalls } = await buildMysqlTool(3, 99999);
+    const { handler, logCalls } = await buildMysqlTool(3);
     await handler({ user: 'test@kazar.com', query: fullQuery });
 
     const queryLog = logCalls.find(c => c.status === 'QUERY');
@@ -309,7 +456,7 @@ describe('MySQL tool large result integration', () => {
   });
 
   it('logs OK with execution time after query', async () => {
-    const { handler, logCalls } = await buildMysqlTool(3, 99999);
+    const { handler, logCalls } = await buildMysqlTool(3);
     await handler({ user: 'test@kazar.com', query: 'SELECT 1' });
 
     const okLog = logCalls.find(c => c.status === 'OK');
@@ -318,24 +465,16 @@ describe('MySQL tool large result integration', () => {
     expect(okLog.details).toContain('rows=3');
   });
 
-  it('logs OK with offload=none when below threshold', async () => {
-    const { handler, logCalls } = await buildMysqlTool(3, 99999);
+  it('OK log does not contain offload info (moved to wrapper)', async () => {
+    const { handler, logCalls } = await buildMysqlTool(3);
     await handler({ user: 'test@kazar.com', query: 'SELECT 1' });
 
     const okLog = logCalls.find(c => c.status === 'OK');
-    expect(okLog.details).toContain('offload=none');
-  });
-
-  it('logs OK with offload file path when above threshold', async () => {
-    const { handler, logCalls } = await buildMysqlTool(100, 100);
-    await handler({ user: 'test@kazar.com', query: 'SELECT 1' });
-
-    const okLog = logCalls.find(c => c.status === 'OK');
-    expect(okLog.details).toMatch(new RegExp(`offload=${ARTIFACTS_DIR}/mcp-results/.*\\.csv`));
+    expect(okLog.details).not.toContain('offload=');
   });
 
   it('QUERY log comes before OK log', async () => {
-    const { handler, logCalls } = await buildMysqlTool(3, 99999);
+    const { handler, logCalls } = await buildMysqlTool(3);
     await handler({ user: 'test@kazar.com', query: 'SELECT 1' });
 
     const queryIdx = logCalls.findIndex(c => c.status === 'QUERY');
@@ -351,7 +490,7 @@ describe('MSSQL tool large result integration', () => {
     vi.resetModules();
   });
 
-  async function buildMssqlTool(rowCount, threshold) {
+  async function buildMssqlTool(rowCount) {
     const rows = Array.from({ length: rowCount }, (_, i) => ({ id: i }));
     const mockRequest = {
       timeout: undefined,
@@ -367,36 +506,33 @@ describe('MSSQL tool large result integration', () => {
     const logCalls = mockLog();
 
     let handler;
+    let capturedOptions;
     const fakeServer = {
-      tool: (_name, _desc, _schema, fn) => { handler = fn; },
+      tool: (_name, _desc, _schema, fn, opts) => { handler = fn; capturedOptions = opts; },
     };
 
     const { registerMssqlTools } = await import('../adapters/mssql.js');
-    const offload = { artifactsDir: ARTIFACTS_DIR, threshold, sampleRows: 5 };
     const tools = [{ name: 'mssql_test', description: 'test', config: { host: 'localhost', pass: 'pass', user: 'sa', database: 'db' } }];
-    registerMssqlTools(fakeServer, tools, { offload });
+    registerMssqlTools(fakeServer, tools, {});
 
-    return { handler, logCalls };
+    return { handler, logCalls, capturedOptions };
   }
 
-  it('returns summary when result size exceeds threshold', async () => {
-    const { handler } = await buildMssqlTool(50, 50);
-    const result = await handler({ user: 'test@kazar.com', query: 'SELECT 1' });
-
-    expect(result.content[0].text).toContain('50 rows');
-    expect(result.content[0].text).toContain('.csv');
-  });
-
-  it('returns JSON when result size below threshold', async () => {
-    const { handler } = await buildMssqlTool(3, 99999);
+  it('returns raw JSON (wrapper handles offload)', async () => {
+    const { handler } = await buildMssqlTool(3);
     const result = await handler({ user: 'test@kazar.com', query: 'SELECT 1' });
 
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed).toHaveLength(3);
   });
 
-  it('logs QUERY before and OK with time+offload after', async () => {
-    const { handler, logCalls } = await buildMssqlTool(50, 50);
+  it('passes resultStrategy: rows to server.tool', async () => {
+    const { capturedOptions } = await buildMssqlTool(3);
+    expect(capturedOptions).toEqual({ resultStrategy: 'rows' });
+  });
+
+  it('logs QUERY before and OK with time after', async () => {
+    const { handler, logCalls } = await buildMssqlTool(50);
     await handler({ user: 'test@kazar.com', query: 'SELECT TOP 50 * FROM Items' });
 
     const queryLog = logCalls.find(c => c.status === 'QUERY');
@@ -406,7 +542,7 @@ describe('MSSQL tool large result integration', () => {
     const okLog = logCalls.find(c => c.status === 'OK');
     expect(okLog.details).toMatch(/time=\d+ms/);
     expect(okLog.details).toContain('rows=50');
-    expect(okLog.details).toMatch(new RegExp(`offload=${ARTIFACTS_DIR}/.*\\.csv`));
+    expect(okLog.details).not.toContain('offload=');
   });
 });
 
@@ -417,7 +553,7 @@ describe('OpenSearch tool large result integration', () => {
     vi.resetModules();
   });
 
-  async function buildOpenSearchTool(hitCount, threshold) {
+  async function buildOpenSearchTool(hitCount) {
     const hits = Array.from({ length: hitCount }, (_, i) => ({
       _id: `doc${i}`,
       _source: { sku: `SKU${i}`, price: i * 10 },
@@ -439,39 +575,62 @@ describe('OpenSearch tool large result integration', () => {
     const logCalls = mockLog();
 
     let handler;
+    let capturedOptions;
     const fakeServer = {
-      tool: (_name, _desc, _schema, fn) => { handler = fn; },
+      tool: (_name, _desc, _schema, fn, opts) => { handler = fn; capturedOptions = opts; },
     };
 
     const { registerOpensearchTools } = await import('../adapters/opensearch.js');
-    const offload = { artifactsDir: ARTIFACTS_DIR, threshold, sampleRows: 5 };
     const tools = [{ name: 'os_test', description: 'test', config: { host: 'https://localhost:9200', pass: 'pass', user: 'admin' } }];
-    registerOpensearchTools(fakeServer, tools, { offload });
+    registerOpensearchTools(fakeServer, tools, {});
 
-    return { handler, logCalls };
+    return { handler, logCalls, capturedOptions };
   }
 
-  it('returns summary with metadata when hits exceed threshold', async () => {
-    const { handler } = await buildOpenSearchTool(50, 50);
+  it('returns metadata and rows as separate content items', async () => {
+    const { handler } = await buildOpenSearchTool(50);
     const result = await handler({ user: 'test@kazar.com', index: 'test_index', query: '{"query":{"match_all":{}}}' });
 
+    expect(result.content).toHaveLength(2);
     expect(result.content[0].text).toContain('OpenSearch: total=50');
     expect(result.content[0].text).toContain('took=42ms');
-    expect(result.content[0].text).toContain('50 rows');
-    expect(result.content[0].text).toContain('.csv');
+
+    const rows = JSON.parse(result.content[1].text);
+    expect(rows).toHaveLength(50);
+    expect(rows[0]).toHaveProperty('_id', 'doc0');
+    expect(rows[0]).toHaveProperty('sku', 'SKU0');
   });
 
-  it('returns JSON when hits below threshold', async () => {
-    const { handler } = await buildOpenSearchTool(3, 99999);
-    const result = await handler({ user: 'test@kazar.com', index: 'test_index', query: '{"query":{"match_all":{}}}' });
+  it('returns JSON when no search query', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: async () => ({ test_index: { mappings: {} } }),
+    }));
 
+    mockFs();
+    mockLog();
+
+    let handler;
+    const fakeServer = {
+      tool: (_name, _desc, _schema, fn, _opts) => { handler = fn; },
+    };
+
+    const { registerOpensearchTools } = await import('../adapters/opensearch.js');
+    const tools = [{ name: 'os_test', description: 'test', config: { host: 'https://localhost:9200', pass: 'pass', user: 'admin' } }];
+    registerOpensearchTools(fakeServer, tools, {});
+
+    const result = await handler({ user: 'test@kazar.com', index: 'test_index' });
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.hits.hits).toHaveLength(3);
+    expect(parsed).toHaveProperty('test_index');
   });
 
-  it('logs QUERY before and OK with time+offload after', async () => {
+  it('passes resultStrategy: rows to server.tool', async () => {
+    const { capturedOptions } = await buildOpenSearchTool(3);
+    expect(capturedOptions).toEqual({ resultStrategy: 'rows' });
+  });
+
+  it('logs QUERY before and OK with time after', async () => {
     const queryBody = '{"query":{"match_all":{}},"size":100}';
-    const { handler, logCalls } = await buildOpenSearchTool(50, 50);
+    const { handler, logCalls } = await buildOpenSearchTool(50);
     await handler({ user: 'test@kazar.com', index: 'k3-prod_product_1_v*', query: queryBody });
 
     const queryLog = logCalls.find(c => c.status === 'QUERY');
@@ -482,6 +641,6 @@ describe('OpenSearch tool large result integration', () => {
     const okLog = logCalls.find(c => c.status === 'OK');
     expect(okLog.details).toMatch(/time=\d+ms/);
     expect(okLog.details).toContain('hits=50');
-    expect(okLog.details).toMatch(new RegExp(`offload=${ARTIFACTS_DIR}/.*\\.csv`));
+    expect(okLog.details).not.toContain('offload=');
   });
 });
