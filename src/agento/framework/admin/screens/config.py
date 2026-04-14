@@ -121,15 +121,8 @@ class ConfigScreen(Screen):
         fields = get_resolved_fields(conn, self._current_module, self._current_scope, self._current_scope_id)
 
         if tool_filter:
-            from ..data import get_module_schemas
-
-            schemas = get_module_schemas()
-            tool_fields_set: set[str] = set()
-            for s in schemas:
-                if s.name == self._current_module and tool_filter in s.tools:
-                    tool_fields_set = set(s.tools[tool_filter].keys())
-                    break
-            fields = [f for f in fields if f.field_name in tool_fields_set]
+            prefix = f"{self._current_module}/tools/{tool_filter}/"
+            fields = [f for f in fields if f.path.startswith(prefix)]
 
         self.app.call_from_thread(self._update_fields, fields)
 

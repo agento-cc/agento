@@ -321,7 +321,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
     if target is None:
         return []
 
-    from ..config_resolver import _db_path, _env_key, read_config_defaults
+    from ..config_resolver import _db_path, _db_path_tool, _env_key, _env_key_tool, read_config_defaults
     from ..scoped_config import build_scoped_overrides, load_scoped_db_overrides
 
     if conn is not None:
@@ -391,6 +391,48 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             obscure=obscure,
             options=options,
         ))
+
+    # Tool fields
+    tool_defaults = config_defaults.get("tools", {})
+    for tool_name, tool_fields in target.tools.items():
+        tool_json = tool_defaults.get(tool_name, {})
+        for field_name, field_schema in tool_fields.items():
+            field_type = field_schema.get("type", "string")
+            label = field_schema.get("label", field_name)
+            obscure = field_type == "obscure"
+            db_path = _db_path_tool(module, tool_name, field_name)
+            env_key = _env_key_tool(module, tool_name, field_name)
+
+            env_val = os.environ.get(env_key)
+            if env_val is not None:
+                source = "env"
+                value = env_val
+            elif db_path in scope_overrides:
+                source = "db"
+                value = scope_overrides[db_path][0]
+            elif db_path in merged_overrides:
+                source = "db:inherited"
+                value = merged_overrides[db_path][0]
+            elif field_name in tool_json:
+                source = "json"
+                value = str(tool_json[field_name])
+            else:
+                source = "none"
+                value = None
+
+            display_value = "****" if obscure and value else (value if value is not None else "")
+            options = field_schema.get("options") if field_type in ("select", "multiselect") else None
+            results.append(ResolvedField(
+                path=f"{module}/tools/{tool_name}/{field_name}",
+                field_name=field_name,
+                value=value,
+                display_value=display_value,
+                source=source,
+                field_type=field_type,
+                label=label,
+                obscure=obscure,
+                options=options,
+            ))
 
     return results
 
