@@ -200,18 +200,20 @@ def main() -> None:
     if _should_proxy(sys.argv[1:]):
         _proxy_to_docker(sys.argv[1:])
 
-    # Phase 1: Bootstrap module commands (may fail without DB)
-    from ..bootstrap import bootstrap
-    from ..dependency_resolver import DisabledDependencyError
+    # Phase 1: Bootstrap module commands (skip for local commands that don't need modules)
+    cmd = _get_command(sys.argv[1:])
+    if cmd not in _LOCAL_COMMANDS:
+        from ..bootstrap import bootstrap
+        from ..dependency_resolver import DisabledDependencyError
 
-    try:
-        bootstrap()
-    except DisabledDependencyError as e:
-        print(f"Warning: {e}", file=sys.stderr)
-    except Exception:
-        pass  # DB unavailable etc. -- framework commands still work
+        try:
+            bootstrap()
+        except DisabledDependencyError as e:
+            print(f"Warning: {e}", file=sys.stderr)
+        except Exception:
+            pass  # DB unavailable etc. -- framework commands still work
 
-    # Phase 2: Register framework commands (after bootstrap, which clears registries)
+    # Phase 2: Register framework commands
     _register_framework_commands()
 
     # Phase 3: Resolve shortcuts before argparse sees them
