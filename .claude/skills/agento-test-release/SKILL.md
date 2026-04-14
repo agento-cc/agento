@@ -70,7 +70,7 @@ rm -rf <TEST_DIR>
 mkdir -p <TEST_DIR>
 ```
 
-Default test directory: `/Users/mklauza/Projects/Kazar/test-agento1`
+Default test directory: `/Users/mklauza/Projects/test-agento1`
 (or whatever the user specifies).
 
 ## Step 6: Notify user
@@ -84,3 +84,27 @@ cd <TEST_DIR> && agento install
 
 Do NOT run `agento install` from Claude — it requires interactive TTY input
 (project path, install mode, etc.) that cannot be provided via Bash tool.
+
+## Step 7: Refresh an existing project (optional)
+
+Use AskUserQuestion to ask: "Want to refresh an existing project with the test build? Provide the full path, or skip."
+
+If the user provides a path:
+
+1. Update `AGENTO_VERSION` in `<path>/docker/.env`:
+```bash
+sed -i '' 's/^AGENTO_VERSION=.*/AGENTO_VERSION=<VERSION>/' <path>/docker/.env
+```
+
+2. Copy refreshed `docker-compose.yml` from the agento source template:
+```bash
+cp src/agento/framework/cli/templates/docker-compose.yml <path>/docker/docker-compose.yml
+```
+
+3. Recreate containers using local images (no pull):
+```bash
+cd <path>/docker && docker compose up -d --force-recreate
+```
+
+**WARNING:** Do NOT use `agento upgrade` in the sibling project — it fetches from
+PyPI/GHCR and will overwrite the locally built CLI and Docker images.
