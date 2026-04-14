@@ -7,6 +7,8 @@
       {"value": "codex", "label": "OpenAI Codex"}
     ]
   },
-  "model":               {"type": "string",  "label": "Agent model"},
-  "scheduling/priority": {"type": "integer", "label": "Job priority (0-100)"}
+  "model":                        {"type": "string",   "label": "Agent model"},
+  "scheduling/priority":          {"type": "integer",  "label": "Job priority (0-100)"},
+  "instructions/agents_md":       {"type": "textarea", "label": "AGENTS.md content (overrides theme)"},
+  "instructions/soul_md":         {"type": "textarea", "label": "SOUL.md content (overrides theme)"}
 }
