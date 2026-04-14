@@ -148,8 +148,7 @@ class ConfigScreen(Screen):
             filtered = [f for f in filtered if self._search_text in f.field_name.lower()]
 
         for field in filtered:
-            source_tag = f"[{field.source}]"
-            table.add_row(field.field_name, field.display_value, source_tag, key=field.path)
+            table.add_row(field.field_name, field.display_value, field.source, key=field.path)
 
         # Clear detail panel
         self.query_one(FieldDetailPanel).update_field(None)
