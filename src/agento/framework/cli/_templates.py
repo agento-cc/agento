@@ -28,7 +28,23 @@ def get_template(name: str) -> str:
 
 
 def get_package_version() -> str:
-    """Get installed agento-core version. Falls back to 'latest' for dev."""
+    """Get agento-core version.
+
+    Tries pyproject.toml first (accurate in dev-compose where source is
+    bind-mounted but the package metadata is baked into the image), then
+    falls back to installed package metadata (accurate in customer images).
+    """
+    # Try pyproject.toml relative to source tree
+    pyproject = Path(__file__).resolve().parents[4] / "pyproject.toml"
+    if pyproject.is_file():
+        import tomllib
+
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+        ver = data.get("project", {}).get("version")
+        if ver:
+            return ver
+
     from importlib.metadata import PackageNotFoundError, version
 
     try:
