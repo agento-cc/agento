@@ -43,6 +43,47 @@ def _validate_config_path(path: str) -> bool:
     return True
 
 
+def _validate_config_value(path: str, value: str) -> bool:
+    """Validate config value against system.json options for select fields. Returns False if invalid."""
+    from ..core_config import _find_module_dir
+
+    parts = path.split("/")
+    if len(parts) != 2:
+        return True
+
+    module_name, field_name = parts
+    module_dir = _find_module_dir(module_name)
+    if module_dir is None:
+        return True
+
+    system_path = module_dir / "system.json"
+    if not system_path.exists():
+        return True
+
+    import json as _json
+    try:
+        system = _json.loads(system_path.read_text())
+    except (ValueError, OSError):
+        return True
+
+    field_def = system.get(field_name)
+    if not isinstance(field_def, dict):
+        return True
+
+    field_type = field_def.get("type")
+    if field_type not in ("select", "multiselect"):
+        return True
+
+    options = field_def.get("options", [])
+    allowed = [opt["value"] for opt in options if isinstance(opt, dict) and "value" in opt]
+    if value not in allowed:
+        print(f"Error: Invalid value '{value}' for {field_type} field '{field_name}'")
+        print(f"  Allowed values: {', '.join(allowed)}")
+        return False
+
+    return True
+
+
 def _config_get_exact(conn, path: str) -> None:
     """Display config value for exact path, deduplicated across scopes."""
     from ..core_config import config_get
@@ -204,6 +245,9 @@ class ConfigSetCommand:
             return
 
         if not _validate_config_path(args.path):
+            return
+
+        if args.value is not None and not _validate_config_value(args.path, args.value):
             return
 
         if args.value is None:
@@ -395,6 +439,10 @@ class ConfigSchemaCommand:
                 ftype = field_schema.get("type", "string")
                 label = field_schema.get("label", "")
                 print(f"  {field_name:<20s}{ftype:<10s}{label}")
+                options = field_schema.get("options")
+                if options and isinstance(options, list):
+                    vals = ", ".join(o["value"] for o in options if isinstance(o, dict) and "value" in o)
+                    print(f"  {'':20s}{'':10s}options: {vals}")
             for tool in m.tools:
                 for field_name, field_schema in tool.get("fields", {}).items():
                     ftype = field_schema.get("type", "string")

@@ -290,6 +290,15 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
                     allow_blank=False,
                     id="editor-input",
                 )
+            elif field.field_type == "select" and field.options:
+                select_options = [(opt["label"], opt["value"]) for opt in field.options]
+                allowed_values = [opt["value"] for opt in field.options]
+                yield Select(
+                    select_options,
+                    value=current if current in allowed_values else Select.BLANK,
+                    allow_blank=False,
+                    id="editor-input",
+                )
             elif field.field_type == "json":
                 yield TextArea(current, id="editor-textarea")
             elif field.field_type == "obscure":
@@ -313,9 +322,9 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
     def _get_value(self) -> str:
         if self._field.field_type == "json":
             return self.query_one("#editor-textarea", TextArea).text
-        if self._field.field_type == "boolean":
+        if self._field.field_type in ("boolean", "select"):
             val = self.query_one("#editor-input", Select).value
-            return str(val) if val is not Select.BLANK else "true"
+            return str(val) if val is not Select.BLANK else ""
         return self.query_one("#editor-input", Input).value
 
     def _validate(self, value: str) -> str | None:
@@ -331,6 +340,10 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
                 return "Value must be valid JSON"
         elif self._field.field_type == "boolean" and value not in ("true", "false"):
             return "Value must be 'true' or 'false'"
+        elif self._field.field_type == "select" and self._field.options:
+            allowed = [opt["value"] for opt in self._field.options]
+            if value not in allowed:
+                return f"Value must be one of: {', '.join(allowed)}"
         return None
 
     def _save(self) -> None:

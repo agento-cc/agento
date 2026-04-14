@@ -138,10 +138,40 @@ def _validate_module(module_dir: Path) -> tuple[list[str], dict | None]:
 
         if system is not None and isinstance(system, dict):
             for field_name, field_def in system.items():
-                if isinstance(field_def, dict) and "type" in field_def and field_def["type"] not in VALID_FIELD_TYPES:
+                if not isinstance(field_def, dict):
+                    continue
+                field_type = field_def.get("type")
+                if field_type and field_type not in VALID_FIELD_TYPES:
                     errors.append(
-                        f"system.json: field '{field_name}' has invalid type '{field_def['type']}'"
+                        f"system.json: field '{field_name}' has invalid type '{field_type}'"
                     )
+                # Validate options for select/multiselect fields
+                is_select = field_type in ("select", "multiselect")
+                has_options = "options" in field_def
+                if is_select and not has_options:
+                    errors.append(
+                        f"system.json: field '{field_name}' (type '{field_type}') requires 'options'"
+                    )
+                if has_options and not is_select:
+                    errors.append(
+                        f"system.json: field '{field_name}' has 'options' but type is '{field_type}' (only select/multiselect support options)"
+                    )
+                if has_options:
+                    options = field_def["options"]
+                    if not isinstance(options, list):
+                        errors.append(
+                            f"system.json: field '{field_name}' options must be an array"
+                        )
+                    else:
+                        for i, opt in enumerate(options):
+                            if not isinstance(opt, dict):
+                                errors.append(
+                                    f"system.json: field '{field_name}' options[{i}] must be an object"
+                                )
+                            elif "value" not in opt or "label" not in opt:
+                                errors.append(
+                                    f"system.json: field '{field_name}' options[{i}] must have 'value' and 'label'"
+                                )
 
     return errors, manifest
 
