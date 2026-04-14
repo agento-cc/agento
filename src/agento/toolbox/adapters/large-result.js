@@ -84,3 +84,52 @@ export async function maybeOffloadText(text, toolName, { artifactsDir, threshold
     return null;
   }
 }
+
+export function wrapHandler(handler, toolName, strategy, offloadConfig) {
+  if (strategy === false) return handler;
+
+  return async (args) => {
+    const result = await handler(args);
+    if (result.isError || !offloadConfig.artifactsDir) return result;
+
+    const textItems = result.content?.filter(c => c.type === 'text') || [];
+    const textContent = textItems.map(c => c.text).join('\n');
+    if (textContent.length <= offloadConfig.threshold) return result;
+
+    let offloaded = null;
+
+    if (strategy === 'rows') {
+      for (const item of textItems) {
+        try {
+          const parsed = JSON.parse(item.text);
+          if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object') {
+            if (JSON.stringify(parsed).length > offloadConfig.threshold) {
+              offloaded = await maybeOffloadRows(parsed, toolName, offloadConfig);
+              if (offloaded) {
+                log('large-result', 'OFFLOAD', `tool=${toolName} strategy=${strategy} path=${offloaded.filePath}`);
+                return {
+                  ...result,
+                  content: result.content.map(c =>
+                    c === item ? { type: 'text', text: offloaded.summary } : c
+                  ),
+                };
+              }
+            }
+          }
+        } catch { /* not JSON, skip */ }
+      }
+    }
+
+    // Fallback: text offload
+    offloaded = await maybeOffloadText(textContent, toolName, offloadConfig);
+
+    if (!offloaded) return result;
+
+    log('large-result', 'OFFLOAD', `tool=${toolName} strategy=${strategy} path=${offloaded.filePath}`);
+    const nonTextItems = result.content.filter(c => c.type !== 'text');
+    return {
+      ...result,
+      content: [...nonTextItems, { type: 'text', text: offloaded.summary }],
+    };
+  };
+}

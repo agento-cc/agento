@@ -2,7 +2,6 @@ import { z } from 'zod';
 import sql from 'mssql';
 import { logToolbox as log } from '../log.js';
 import { getSqlTimeoutMs } from './sql-timeout.js';
-import { maybeOffloadRows } from './large-result.js';
 
 const ALLOWED_KEYWORDS = ['SELECT', 'WITH', 'SHOW', 'EXEC SP_HELP'];
 
@@ -12,7 +11,7 @@ function isReadOnly(query) {
   return ALLOWED_KEYWORDS.includes(firstWord);
 }
 
-function createMssqlTool(server, toolName, description, config, offload) {
+function createMssqlTool(server, toolName, description, config) {
   const mssqlConfig = {
     server: config.host,
     port: parseInt(config.port || '1433'),
@@ -67,14 +66,9 @@ function createMssqlTool(server, toolName, description, config, offload) {
         const elapsed = Date.now() - start;
         const rows = result.recordset;
 
-        const offloaded = rows.length > 0
-          ? await maybeOffloadRows(rows, toolName, offload)
-          : null;
+        log(toolName, 'OK', `user=${user} time=${elapsed}ms rows=${rows.length}`);
 
-        const offloadInfo = offloaded ? `offload=${offloaded.filePath}` : 'offload=none';
-        log(toolName, 'OK', `user=${user} time=${elapsed}ms rows=${rows.length} ${offloadInfo}`);
-
-        const text = offloaded ? offloaded.summary : JSON.stringify(rows, null, 2);
+        const text = JSON.stringify(rows, null, 2);
         return { content: [{ type: 'text', text }] };
       } catch (err) {
         log(toolName, 'ERROR', `user=${user} ${err.message}`);
@@ -86,7 +80,8 @@ function createMssqlTool(server, toolName, description, config, offload) {
           isError: true,
         };
       }
-    }
+    },
+    { resultStrategy: 'rows' }
   );
 
   return getPool;
@@ -96,12 +91,12 @@ function createMssqlTool(server, toolName, description, config, offload) {
  * Register MSSQL tools from pre-resolved tool configs.
  * @returns {{ names: string[], healthcheck: () => Promise<Array> }}
  */
-export function registerMssqlTools(server, tools, options = {}) {
+export function registerMssqlTools(server, tools, _options = {}) {
   const registered = [];
   const poolRefs = [];
 
   for (const tool of tools) {
-    const getPool = createMssqlTool(server, tool.name, tool.description, tool.config, options.offload || {});
+    const getPool = createMssqlTool(server, tool.name, tool.description, tool.config);
     registered.push(tool.name);
     poolRefs.push({ name: tool.name, getPool, config: tool.config });
   }
