@@ -1,1 +1,10 @@
-{}
+{
+  "building_strategy": {
+    "type": "select",
+    "label": "Module workspace building strategy (copy or symlink)",
+    "options": [
+      {"value": "copy", "label": "Copy files (default)"},
+      {"value": "symlink", "label": "Symlink to module sources"}
+    ]
+  }
+}

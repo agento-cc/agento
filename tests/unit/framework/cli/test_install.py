@@ -103,7 +103,6 @@ class TestScaffold:
 
         assert (tmp_path / ".agento" / "project.json").is_file()
         assert (tmp_path / "app" / "code").is_dir()
-        assert (tmp_path / "workspace" / "systems").is_dir()
         assert (tmp_path / "workspace" / "artifacts").is_dir()
         assert (tmp_path / "workspace" / "build").is_dir()
         assert (tmp_path / "workspace" / "theme").is_dir()

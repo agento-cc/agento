@@ -23,7 +23,7 @@ class FieldDetailPanel(Static):
             f"Value:  {value_display}",
         ]
 
-        if getattr(field, "options", None):
+        if field.options:
             opts = ", ".join(f"{o['value']} ({o['label']})" for o in field.options)
             lines.append(f"Options: {opts}")
 

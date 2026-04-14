@@ -45,7 +45,7 @@ modules/
 
 Toolbox reads `module.json` + `config.json` directly from `/modules/` (mounted read-only in Docker).
 
-Agent reads `knowledge/` + `prompts/` from `workspace/systems/` (created by `bin/agento reindex` as symlinks to `modules/`).
+Agent reads module content from per-agent_view workspace builds (`workspace/build/`), materialized by `workspace:build`. Each module's `workspace/` directory is compiled into `build/{ws}/{av}/modules/{name}/`.
 
 ## Quick Start
 
