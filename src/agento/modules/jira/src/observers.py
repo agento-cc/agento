@@ -73,7 +73,7 @@ class ResolveAccountIdObserver:
         except httpx.ConnectError as exc:
             logger.info("jira: toolbox not reachable yet, skipping account ID resolve (%s)", exc)
         except Exception:
-            logger.warning("jira: failed to auto-resolve default account ID (non-fatal)", exc_info=True)
+            logger.warning("jira: failed to auto-resolve default account ID (non-fatal)")
 
     def _resolve_agent_views(self, toolbox_url):
         try:
@@ -91,7 +91,7 @@ class ResolveAccountIdObserver:
         except httpx.ConnectError as exc:
             logger.info("jira: toolbox not reachable yet, skipping agent_view account IDs (%s)", exc)
         except Exception:
-            logger.warning("jira: failed to resolve agent_view account IDs (non-fatal)", exc_info=True)
+            logger.warning("jira: failed to resolve agent_view account IDs (non-fatal)")
 
     def _resolve_single_agent_view(self, conn, av, toolbox_url):
         from agento.framework.scoped_config import (

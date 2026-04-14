@@ -43,13 +43,17 @@ def _upgrade_cli(version: str | None) -> str | None:
         return None
 
     # Extract installed version from uv output
+    installed_version = None
     for line in (result.stdout + result.stderr).splitlines():
         if "agento-core" in line and "==" in line:
-            # e.g. " + agento-core==0.3.1"  or "~ agento-core==0.3.1"
             for part in line.split():
                 if part.startswith("agento-core=="):
-                    return part.split("==")[1]
-    return version or get_package_version()
+                    ver = part.split("==")[1]
+                    # Prefer '+' lines (newly installed) over '-' lines (removed)
+                    if line.lstrip().startswith("+"):
+                        return ver
+                    installed_version = ver
+    return installed_version or version or get_package_version()
 
 
 class UpgradeCommand:
