@@ -99,8 +99,6 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
     except TemplateNotFoundError:
         (project_dir / ".gitignore").write_text(
             "# Agento project\n"
-            "app/code/*/\n"
-            "!app/code/_example/\n"
             "logs/\n"
             "tokens/\n"
             "storage/\n"
@@ -108,6 +106,12 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             "docker/.env\n"
             "docker/.cron.env\n"
             "docker/.toolbox.env\n"
+            ".env\n"
+            "__pycache__/\n"
+            "*.pyc\n"
+            "node_modules/\n"
+            "workspace/artifacts/\n"
+            "workspace/build/\n"
         )
 
     # Docker Compose — managed base + user-owned override
