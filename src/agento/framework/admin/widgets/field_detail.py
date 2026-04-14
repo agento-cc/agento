@@ -23,6 +23,10 @@ class FieldDetailPanel(Static):
             f"Value:  {value_display}",
         ]
 
+        if getattr(field, "options", None):
+            opts = ", ".join(f"{o['value']} ({o['label']})" for o in field.options)
+            lines.append(f"Options: {opts}")
+
         if field.source == "env":
             lines.append("")
             lines.append("This value is set via environment variable")

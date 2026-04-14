@@ -159,11 +159,23 @@ Declares config fields your module needs, with types and labels. The framework r
   "user": {"type": "string", "label": "AI User"},
   "api_token": {"type": "obscure", "label": "API Token"},
   "max_results": {"type": "integer", "label": "Max results"},
-  "project_list": {"type": "json", "label": "Projects (JSON array)"}
+  "project_list": {"type": "json", "label": "Projects (JSON array)"},
+  "log_level": {
+    "type": "select",
+    "label": "Logging level",
+    "options": [
+      {"value": "debug", "label": "Debug"},
+      {"value": "info", "label": "Info (default)"},
+      {"value": "warning", "label": "Warning"},
+      {"value": "error", "label": "Error"}
+    ]
+  }
 }
 ```
 
-Field types: `string`, `integer`, `boolean`, `json`, `obscure` (encrypted in DB).
+Field types: `string`, `integer`, `boolean`, `json`, `obscure` (encrypted in DB), `select` (dropdown with predefined options), `multiselect`.
+
+Fields of type `select` or `multiselect` require an `options` array — each entry has `value` (stored in DB) and `label` (shown in admin UI). The `config:set` CLI and admin editor validate values against the allowed options.
 
 Resolved config is available at runtime via `get_module_config("module_name")` — returns a `dict[str, Any]`.
 

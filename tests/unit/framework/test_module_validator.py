@@ -114,6 +114,86 @@ class TestValidateModule:
         assert any("config.json" in e for e in errors)
 
 
+class TestSelectFieldValidation:
+    """Validation of select/multiselect fields with options."""
+
+    def _make_module(self, tmp_path: Path, system: dict) -> Path:
+        mod = tmp_path / "sel"
+        mod.mkdir(exist_ok=True)
+        (mod / "module.json").write_text(json.dumps({
+            "name": "sel", "version": "1.0.0", "description": "Select test",
+        }))
+        (mod / "system.json").write_text(json.dumps(system))
+        return mod
+
+    def test_select_field_requires_options(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "strategy": {"type": "select", "label": "Strategy"},
+        })
+        errors = validate_module(mod)
+        assert any("requires 'options'" in e for e in errors)
+
+    def test_multiselect_field_requires_options(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "tags": {"type": "multiselect", "label": "Tags"},
+        })
+        errors = validate_module(mod)
+        assert any("requires 'options'" in e for e in errors)
+
+    def test_select_field_with_valid_options_passes(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "strategy": {
+                "type": "select", "label": "Strategy",
+                "options": [
+                    {"value": "copy", "label": "Copy"},
+                    {"value": "symlink", "label": "Symlink"},
+                ],
+            },
+        })
+        errors = validate_module(mod)
+        assert errors == []
+
+    def test_select_option_missing_value_or_label(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "strategy": {
+                "type": "select", "label": "Strategy",
+                "options": [{"value": "copy"}],
+            },
+        })
+        errors = validate_module(mod)
+        assert any("must have 'value' and 'label'" in e for e in errors)
+
+    def test_select_option_not_an_object(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "strategy": {
+                "type": "select", "label": "Strategy",
+                "options": ["copy", "symlink"],
+            },
+        })
+        errors = validate_module(mod)
+        assert any("must be an object" in e for e in errors)
+
+    def test_options_on_non_select_type_errors(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "name": {
+                "type": "string", "label": "Name",
+                "options": [{"value": "a", "label": "A"}],
+            },
+        })
+        errors = validate_module(mod)
+        assert any("only select/multiselect support options" in e for e in errors)
+
+    def test_options_not_a_list_errors(self, tmp_path: Path):
+        mod = self._make_module(tmp_path, {
+            "strategy": {
+                "type": "select", "label": "Strategy",
+                "options": "invalid",
+            },
+        })
+        errors = validate_module(mod)
+        assert any("options must be an array" in e for e in errors)
+
+
 class TestValidateAllSequenceCross:
     """Cross-module sequence validation: deps must exist on disk."""
 

@@ -39,6 +39,7 @@ class ResolvedField:
     field_type: str
     label: str
     obscure: bool
+    options: list[dict] | None = None  # For select/multiselect: [{"value": ..., "label": ...}]
 
 
 def _count_modules() -> int:
@@ -378,6 +379,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             value = None
 
         display_value = "****" if obscure and value else (value if value is not None else "")
+        options = field_schema.get("options") if field_type in ("select", "multiselect") else None
         results.append(ResolvedField(
             path=f"{module}/{field_name}",
             field_name=field_name,
@@ -387,6 +389,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             field_type=field_type,
             label=label,
             obscure=obscure,
+            options=options,
         ))
 
     return results
