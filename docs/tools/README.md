@@ -69,5 +69,6 @@ Source: [src/agento/toolbox/config-loader.js](../../src/agento/toolbox/config-lo
 
 ## Further Reading
 
+- [Adding a Tool](adding-a-tool.md) — end-to-end tutorial (MySQL example)
 - [Built-in Adapters](built-in-adapters.md) — mysql, mssql, opensearch
 - [Creating an Adapter](creating-an-adapter.md) — add a new adapter type
