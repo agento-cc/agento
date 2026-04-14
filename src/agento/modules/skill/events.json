@@ -1,1 +1,5 @@
-{}
+{
+  "setup_upgrade_after": [
+    {"name": "skill_sync_on_setup", "class": "src.observers.SkillSyncOnSetupObserver", "order": 100}
+  ]
+}
