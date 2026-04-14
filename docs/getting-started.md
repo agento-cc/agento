@@ -60,8 +60,8 @@ Place documentation in `app/code/my-ecommerce/knowledge/`:
 # Add system documentation
 echo "# My E-commerce\n\nArchitecture overview..." > app/code/my-ecommerce/knowledge/README.md
 
-# Reindex to make it visible to the agent
-agento reindex
+# Build workspace to make it visible to the agent
+agento workspace:build --all
 ```
 
 ## Register Agent Token

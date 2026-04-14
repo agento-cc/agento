@@ -12,7 +12,7 @@ bin/agento module:add my-crm \
   --tool mysql:mysql_crm_staging:"CRM Staging MySQL"
 ```
 
-This creates `modules/my-crm/` and runs reindex.
+This creates `app/code/my-crm/` with module.json, config.json, and knowledge/ directory.
 
 ## 2. Edit config.json (Non-Secret Defaults)
 
@@ -81,13 +81,13 @@ cat > modules/my-crm/prompts/diagnose-sync-issue.md << 'EOF'
 EOF
 ```
 
-## 6. Reindex
+## 6. Build Workspace
 
 ```bash
-bin/agento reindex
+agento workspace:build --all
 ```
 
-This symlinks knowledge/prompts to workspace/systems/ and regenerates AGENTS.md.
+This compiles module content into per-agent_view workspace builds. The agent reads knowledge/ and prompts/ from the materialized build directory.
 
 ## 7. Verify
 
@@ -186,7 +186,7 @@ class CrmSyncCommand:
         print("Syncing CRM tickets...")
 ```
 
-After `bin/agento reindex`, your channel is available via `get_channel("crm")` and your command as `bin/agento crm-sync`.
+After bootstrap, your channel is available via `get_channel("crm")` and your command as `agento crm-sync`.
 
 See [di.json format](module-json.md#dijson) for all capability types.
 

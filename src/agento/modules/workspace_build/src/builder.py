@@ -49,14 +49,17 @@ class BuildResult:
 def compute_build_checksum(
     scoped_overrides: dict,
     skill_checksums: list[str] | None = None,
+    *,
+    building_strategy: str = "copy",
 ) -> str:
-    """Deterministic SHA-256 over sorted config values + skill checksums."""
+    """Deterministic SHA-256 over sorted config values + skill checksums + strategy."""
     parts = []
     for path in sorted(scoped_overrides.keys()):
         value, _encrypted = scoped_overrides[path]
         parts.append(f"{path}={value}")
     if skill_checksums:
         parts.extend(sorted(skill_checksums))
+    parts.append(f"__building_strategy={building_strategy}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
@@ -118,8 +121,8 @@ def _copy_theme(build_dir: Path) -> None:
             shutil.copy2(item, dest)
 
 
-def _copy_module_workspaces(build_dir: Path) -> None:
-    """Copy workspace/ directories from enabled modules into build (namespaced)."""
+def _copy_module_workspaces(build_dir: Path, *, strategy: str = "copy") -> None:
+    """Copy or symlink workspace/ directories from enabled modules into build (namespaced)."""
     try:
         from agento.framework.bootstrap import get_manifests
         manifests = get_manifests()
@@ -129,7 +132,11 @@ def _copy_module_workspaces(build_dir: Path) -> None:
         mod_workspace = Path(manifest.path) / "workspace"
         if mod_workspace.is_dir():
             dest = build_dir / "modules" / manifest.name
-            shutil.copytree(mod_workspace, dest, dirs_exist_ok=True)
+            if strategy == "symlink":
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.symlink_to(mod_workspace.resolve())
+            else:
+                shutil.copytree(mod_workspace, dest, dirs_exist_ok=True)
 
 
 def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) -> None:
@@ -172,7 +179,22 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
     )
     skill_checksums = [s.checksum for s in enabled_skills]
 
-    checksum = compute_build_checksum(overrides, skill_checksums)
+    # Resolve building strategy (copy or symlink) — scoped via overrides
+    building_strategy = "copy"
+    bs_entry = overrides.get("workspace_build/building_strategy")
+    if bs_entry is not None:
+        building_strategy = bs_entry[0]
+    else:
+        try:
+            from agento.framework.bootstrap import get_module_config
+            cfg = get_module_config("workspace_build")
+            building_strategy = cfg.get("building_strategy", "copy")
+        except Exception:
+            pass
+
+    checksum = compute_build_checksum(
+        overrides, skill_checksums, building_strategy=building_strategy,
+    )
 
     # Skip if identical build already exists
     with conn.cursor() as cur:
@@ -241,7 +263,7 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
         _write_instruction_files(build_dir, overrides)
 
         # 4. Module workspace assets (namespaced under modules/{name}/)
-        _copy_module_workspaces(build_dir)
+        _copy_module_workspaces(build_dir, strategy=building_strategy)
 
         # 5. Skills (soft dependency)
         skills_dir = _resolve_skills_dir()

@@ -15,7 +15,6 @@
 | `logs [service]` | Show container logs |
 | **Setup** | |
 | `setup:upgrade [--dry-run] [--skip-onboarding]` | Apply migrations, data patches, install crontab, run onboarding ([onboarding details](onboarding.md)) |
-| `reindex` | Reindex modules → workspace/systems/ + AGENTS.md |
 | **Modules** | |
 | `module:add <name>` | Add a module ([details](modules.md)) |
 | `module:list` | List installed modules |

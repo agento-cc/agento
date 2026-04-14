@@ -25,7 +25,6 @@ Creates a project ready for `agento up`:
 my-project/
     .agento/project.json
     app/code/
-    workspace/systems/
     workspace/artifacts/
     workspace/build/
     workspace/theme/

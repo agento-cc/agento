@@ -35,7 +35,7 @@ modules/my-ecommerce/
   skills/
 ```
 
-After creating, the command automatically runs `reindex`.
+After creating, run `workspace:build --all` to update workspace builds.
 
 ## module:list
 
@@ -89,19 +89,14 @@ Validate module structure and manifests. Checks:
 bin/agento module:remove my-ecommerce
 ```
 
-Deletes `modules/my-ecommerce/` and runs reindex to clean up workspace/systems/.
+Deletes `modules/my-ecommerce/`. Run `workspace:build --all` to update workspace builds.
 
-## reindex
+## Workspace Integration
+
+Module content (`knowledge/`, `prompts/`, `skills/`, `workspace/`) is compiled into per-agent_view workspace builds by `workspace:build`. After adding, removing, or modifying modules, run:
 
 ```bash
-bin/agento reindex
+agento workspace:build --all
 ```
 
-Compiles modules into the runtime workspace (like `bin/magento setup:upgrade`):
-
-1. Scans `modules/*/module.json`
-2. Creates symlinks: `modules/{name}/knowledge/` → `workspace/systems/{name}/knowledge/`
-3. Copies module.json as system.json (for AGENTS.md template compatibility)
-4. Regenerates `workspace/AGENTS.md` from template + all module data
-
-Run reindex after editing module.json, adding knowledge files, or changing module structure.
+See [workspace:build](workspace-build.md) for details.

@@ -74,7 +74,6 @@ agento module:list                                     # List all modules with e
 agento module:enable <name>                            # Enable a module (stored in app/etc/modules.json)
 agento module:disable <name>                           # Disable a module (skips loading, cron, config, CLI)
 agento module:validate [name]                          # Validate module structure and sequence deps
-agento reindex
 
 # Jobs
 agento job:pause <job_id>                              # Stop a running job, keep session

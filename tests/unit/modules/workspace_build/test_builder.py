@@ -10,6 +10,7 @@ from agento.framework.artifacts_dir import get_current_build_dir
 from agento.framework.workspace import AgentView
 from agento.modules.workspace_build.src.builder import (
     BuildResult,
+    _copy_module_workspaces,
     _copy_theme,
     _write_instruction_files,
     compute_build_checksum,
@@ -50,6 +51,10 @@ class TestComputeBuildChecksum:
             == compute_build_checksum(o, skill_checksums=["bbb", "aaa"])
         )
 
+    def test_changes_with_different_strategy(self):
+        o = {"a/b": ("val", False)}
+        assert compute_build_checksum(o, building_strategy="copy") != compute_build_checksum(o, building_strategy="symlink")
+
     def test_empty_overrides(self):
         assert len(compute_build_checksum({})) == 64
 
@@ -57,6 +62,158 @@ class TestComputeBuildChecksum:
         checksum = compute_build_checksum({"x": ("y", False)})
         assert len(checksum) == 64
         assert all(c in "0123456789abcdef" for c in checksum)
+
+
+class TestCopyModuleWorkspaces:
+    """Tests for _copy_module_workspaces with copy and symlink strategies."""
+
+    def _make_manifest(self, tmp_path, name="testmod"):
+        mod_dir = tmp_path / "modules" / name
+        ws_dir = mod_dir / "workspace"
+        ws_dir.mkdir(parents=True)
+        (ws_dir / "README.md").write_text("# Test knowledge")
+        (ws_dir / "subdir").mkdir()
+        (ws_dir / "subdir" / "deep.md").write_text("deep file")
+        manifest = MagicMock()
+        manifest.name = name
+        manifest.path = str(mod_dir)
+        return manifest
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_copy_strategy_copies_files(self, mock_get_manifests, tmp_path):
+        manifest = self._make_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, strategy="copy")
+
+        dest = build_dir / "modules" / "testmod"
+        assert dest.is_dir()
+        assert not dest.is_symlink()
+        assert (dest / "README.md").read_text() == "# Test knowledge"
+        assert (dest / "subdir" / "deep.md").read_text() == "deep file"
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_symlink_strategy_creates_symlinks(self, mock_get_manifests, tmp_path):
+        manifest = self._make_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, strategy="symlink")
+
+        dest = build_dir / "modules" / "testmod"
+        assert dest.is_symlink()
+        assert (dest / "README.md").read_text() == "# Test knowledge"
+        assert (dest / "subdir" / "deep.md").read_text() == "deep file"
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_default_strategy_is_copy(self, mock_get_manifests, tmp_path):
+        manifest = self._make_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir)
+
+        dest = build_dir / "modules" / "testmod"
+        assert dest.is_dir()
+        assert not dest.is_symlink()
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_symlink_resolves_to_real_path(self, mock_get_manifests, tmp_path):
+        manifest = self._make_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, strategy="symlink")
+
+        dest = build_dir / "modules" / "testmod"
+        # Symlink target should be an absolute resolved path
+        target = dest.resolve()
+        assert target.is_dir()
+        assert not target.is_symlink()
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_multiple_modules_symlinked(self, mock_get_manifests, tmp_path):
+        m1 = self._make_manifest(tmp_path, "mod_a")
+        m2 = self._make_manifest(tmp_path, "mod_b")
+        mock_get_manifests.return_value = [m1, m2]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, strategy="symlink")
+
+        assert (build_dir / "modules" / "mod_a").is_symlink()
+        assert (build_dir / "modules" / "mod_b").is_symlink()
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_skips_module_without_workspace_dir(self, mock_get_manifests, tmp_path):
+        mod_dir = tmp_path / "modules" / "empty_mod"
+        mod_dir.mkdir(parents=True)
+        manifest = MagicMock()
+        manifest.name = "empty_mod"
+        manifest.path = str(mod_dir)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, strategy="symlink")
+
+        assert not (build_dir / "modules" / "empty_mod").exists()
+
+
+class TestBuildingStrategyFromOverrides:
+    """Verify execute_build reads building_strategy from scoped overrides, not global config."""
+
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.workspace.get_agent_view")
+    def test_reads_strategy_from_scoped_overrides(
+        self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer, tmp_path,
+    ):
+        """When building_strategy is in scoped overrides, it should be used."""
+        mock_get_av.return_value = _make_agent_view()
+        mock_overrides.return_value = {
+            "agent_view/provider": ("claude", False),
+            "workspace_build/building_strategy": ("symlink", False),
+        }
+
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        mock_resolve.return_value = AgentViewRuntime(provider="claude")
+        mock_get_writer.return_value = MagicMock()
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        call_count = 0
+        def fetchone_side_effect():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"code": "testws"}
+            if call_count == 2:
+                return None  # No existing build
+            return None
+        cursor.fetchone.side_effect = fetchone_side_effect
+        cursor.lastrowid = 99
+
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
+            result = execute_build(conn, 1)
+
+        assert result.build_id == 99
+        assert result.skipped is False
+        # Verify a different checksum than without the strategy override
+        checksum_copy = compute_build_checksum(
+            {"agent_view/provider": ("claude", False), "workspace_build/building_strategy": ("symlink", False)},
+            building_strategy="symlink",
+        )
+        assert result.checksum == checksum_copy
 
 
 class TestWriteInstructionFiles:

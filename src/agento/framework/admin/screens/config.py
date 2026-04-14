@@ -322,7 +322,10 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
     def _get_value(self) -> str:
         if self._field.field_type == "json":
             return self.query_one("#editor-textarea", TextArea).text
-        if self._field.field_type in ("boolean", "select"):
+        if self._field.field_type == "boolean":
+            val = self.query_one("#editor-input", Select).value
+            return str(val) if val is not Select.BLANK else "true"
+        if self._field.field_type == "select":
             val = self.query_one("#editor-input", Select).value
             return str(val) if val is not Select.BLANK else ""
         return self.query_one("#editor-input", Input).value
