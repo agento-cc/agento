@@ -36,10 +36,26 @@ class TestGetPackageVersion:
         assert isinstance(version, str)
         assert len(version) > 0
 
+    def test_prefers_pyproject_toml(self):
+        """In test env, pyproject.toml is reachable and takes priority."""
+        version = get_package_version()
+        assert version != "latest"
+        assert "." in version
+
+    def test_fallback_to_metadata_when_no_pyproject(self):
+        """When pyproject.toml doesn't exist, falls back to importlib.metadata."""
+        with patch("agento.framework.cli._templates.Path.is_file", return_value=False):
+            version = get_package_version()
+            assert isinstance(version, str)
+            assert version != "latest"  # metadata still available in test env
+
     def test_fallback_to_latest(self):
         from importlib.metadata import PackageNotFoundError
 
-        with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+        with (
+            patch("agento.framework.cli._templates.Path.is_file", return_value=False),
+            patch("importlib.metadata.version", side_effect=PackageNotFoundError),
+        ):
             assert get_package_version() == "latest"
 
 

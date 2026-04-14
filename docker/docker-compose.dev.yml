@@ -90,6 +90,7 @@ services:
       - ../../id_rsa:/run/secrets/id_rsa:ro
       - ../logs:/app/logs
       - ../src/agento:/opt/cron-agent/src/agento
+      - ../pyproject.toml:/opt/cron-agent/pyproject.toml:ro
       - ../tokens:/etc/tokens
     networks:
       - agento-net
