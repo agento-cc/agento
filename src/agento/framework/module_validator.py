@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 REQUIRED_MANIFEST_FIELDS = {"name", "version", "description"}
-VALID_FIELD_TYPES = {"string", "integer", "boolean", "obscure", "select", "multiselect", "json"}
+VALID_FIELD_TYPES = {"string", "integer", "boolean", "obscure", "select", "multiselect", "json", "textarea"}
 
 
 def _resolve_class_path(module_dir: Path, class_path: str) -> bool:
