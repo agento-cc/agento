@@ -127,14 +127,14 @@ class TestCopyLayer:
 
 
 class TestCopyTheme:
-    """Tests for the layered _copy_theme with _root/ convention."""
+    """Tests for the flat _copy_theme cascade (THEME_DIR \u2192 _{ws} \u2192 _{ws}/_{av})."""
 
-    def test_base_layer_from_root(self, tmp_path):
+    def test_base_layer_from_theme_dir(self, tmp_path):
         theme = tmp_path / "theme"
-        (theme / "_root").mkdir(parents=True)
-        (theme / "_root" / "SOUL.md").write_text("# Base soul")
-        (theme / "_root" / "app").mkdir()
-        (theme / "_root" / "app" / "data.txt").write_text("base data")
+        theme.mkdir()
+        (theme / "SOUL.md").write_text("# Base soul")
+        (theme / "app").mkdir()
+        (theme / "app" / "data.txt").write_text("base data")
 
         build = tmp_path / "build"
         build.mkdir()
@@ -145,10 +145,9 @@ class TestCopyTheme:
 
     def test_workspace_layer_overrides_base(self, tmp_path):
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        root.mkdir(parents=True)
-        (root / "SOUL.md").write_text("# Base soul")
-        ws = root / "_myws"
+        theme.mkdir()
+        (theme / "SOUL.md").write_text("# Base soul")
+        ws = theme / "_myws"
         ws.mkdir()
         (ws / "SOUL.md").write_text("# Workspace soul")
 
@@ -160,10 +159,9 @@ class TestCopyTheme:
 
     def test_agent_view_layer_overrides_workspace(self, tmp_path):
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        root.mkdir(parents=True)
-        (root / "SOUL.md").write_text("# Base")
-        ws = root / "_myws"
+        theme.mkdir()
+        (theme / "SOUL.md").write_text("# Base")
+        ws = theme / "_myws"
         ws.mkdir()
         (ws / "SOUL.md").write_text("# Workspace")
         av = ws / "_dev01"
@@ -178,11 +176,10 @@ class TestCopyTheme:
 
     def test_scope_dirs_not_copied_as_content(self, tmp_path):
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        root.mkdir(parents=True)
-        (root / "visible.md").write_text("yes")
-        (root / "_ws1").mkdir()
-        (root / "_ws1" / "scoped.md").write_text("scoped")
+        theme.mkdir()
+        (theme / "visible.md").write_text("yes")
+        (theme / "_ws1").mkdir()
+        (theme / "_ws1" / "scoped.md").write_text("scoped")
 
         build = tmp_path / "build"
         build.mkdir()
@@ -193,10 +190,9 @@ class TestCopyTheme:
 
     def test_base_plus_workspace_no_agent_view(self, tmp_path):
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        root.mkdir(parents=True)
-        (root / "base.md").write_text("base")
-        ws = root / "_myws"
+        theme.mkdir()
+        (theme / "base.md").write_text("base")
+        ws = theme / "_myws"
         ws.mkdir()
         (ws / "ws.md").write_text("ws extra")
 
@@ -210,10 +206,9 @@ class TestCopyTheme:
     def test_directory_merge_across_layers(self, tmp_path):
         """Subdirectories merge rather than replace across layers."""
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        (root / "docs").mkdir(parents=True)
-        (root / "docs" / "base.md").write_text("base doc")
-        ws = root / "_myws"
+        (theme / "docs").mkdir(parents=True)
+        (theme / "docs" / "base.md").write_text("base doc")
+        ws = theme / "_myws"
         (ws / "docs").mkdir(parents=True)
         (ws / "docs" / "ws.md").write_text("ws doc")
 
@@ -224,30 +219,20 @@ class TestCopyTheme:
         assert (build / "docs" / "base.md").read_text() == "base doc"
         assert (build / "docs" / "ws.md").read_text() == "ws doc"
 
-    def test_files_outside_root_not_copied(self, tmp_path):
-        theme = tmp_path / "theme"
-        (theme / "_root").mkdir(parents=True)
-        (theme / "_root" / "inside.md").write_text("inside")
-        (theme / "outside.md").write_text("outside")
-
-        build = tmp_path / "build"
-        build.mkdir()
-        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
-            _copy_theme(build, "default", "agent01")
-        assert (build / "inside.md").exists()
-        assert not (build / "outside.md").exists()
-
-    def test_noop_when_root_missing(self, tmp_path):
-        """When _root/ doesn't exist, build_dir stays empty (no legacy fallback)."""
+    def test_dot_prefixed_items_skipped(self, tmp_path):
+        """Dot-prefixed items at theme root aren't copied to builds."""
         theme = tmp_path / "theme"
         theme.mkdir()
-        (theme / "SOUL.md").write_text("# flat layout, unused")
+        (theme / "included.md").write_text("in")
+        (theme / ".hidden").mkdir()
+        (theme / ".hidden" / "secret.md").write_text("should not leak")
 
         build = tmp_path / "build"
         build.mkdir()
         with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
             _copy_theme(build, "default", "agent01")
-        assert list(build.iterdir()) == []
+        assert (build / "included.md").exists()
+        assert not (build / ".hidden").exists()
 
     def test_noop_when_theme_missing(self, tmp_path):
         build = tmp_path / "build"
@@ -437,6 +422,39 @@ class TestCopyModuleWorkspaces:
         assert not (dest / "ws.md").exists()
         assert not (dest / "av.md").exists()
 
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_user_module_overlay_merges_via_app_code_path(self, mock_get_manifests, tmp_path):
+        """User modules (app/code/*) apply the layered cascade exactly like core modules."""
+        # Simulate a manifest whose path lives outside src/agento/modules — i.e. app/code/*.
+        mod_dir = tmp_path / "app" / "code" / "mymod"
+        ws_dir = mod_dir / "workspace"
+        ws_dir.mkdir(parents=True)
+        (ws_dir / "README.md").write_text("# base readme")
+        scope = ws_dir / "_myws"
+        scope.mkdir()
+        (scope / "only_in_ws.md").write_text("ws only")
+        (scope / "README.md").write_text("# ws readme override")
+        av = scope / "_myav"
+        av.mkdir()
+        (av / "only_av.md").write_text("av only")
+
+        manifest = MagicMock()
+        manifest.name = "mymod"
+        manifest.path = str(mod_dir)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, "myws", "myav", strategy="copy")
+
+        dest = build_dir / "modules" / "mymod"
+        assert dest.is_dir()
+        assert (dest / "README.md").read_text() == "# ws readme override"
+        assert (dest / "only_in_ws.md").read_text() == "ws only"
+        assert (dest / "only_av.md").read_text() == "av only"
+        # Scope dirs must not appear as content.
+        assert not (dest / "_myws").exists()
+
 
 class TestBuildingStrategyFromOverrides:
     """Verify execute_build reads building_strategy from scoped overrides, not global config."""
@@ -598,15 +616,84 @@ class TestExecuteBuild:
 
     @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.workspace.get_agent_view")
-    def test_skips_existing_build(self, mock_get_av, mock_overrides):
+    def test_skips_existing_build(self, mock_get_av, mock_overrides, tmp_path):
         mock_get_av.return_value = _make_agent_view()
         mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
-        existing = {"id": 99, "build_dir": "/workspace/ws/dev/builds/99"}
+        existing_dir = tmp_path / "existing_build"
+        existing_dir.mkdir()
+        existing = {"id": 99, "build_dir": str(existing_dir)}
         conn, _ = self._mock_conn(existing_build=existing)
 
         result = execute_build(conn, 1)
         assert result.skipped is True
         assert result.build_id == 99
+
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.workspace.get_agent_view")
+    def test_rebuilds_when_existing_build_dir_missing_on_disk(
+        self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer, tmp_path,
+    ):
+        """If DB says ready but build_dir was deleted manually, rebuild instead of lying."""
+        mock_get_av.return_value = _make_agent_view()
+        mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        mock_resolve.return_value = AgentViewRuntime(provider="claude")
+        mock_get_writer.return_value = MagicMock()
+
+        missing_dir = tmp_path / "deleted_by_user"
+        assert not missing_dir.exists()
+        existing = {"id": 99, "build_dir": str(missing_dir)}
+        conn, cursor = self._mock_conn(existing_build=existing)
+
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
+            result = execute_build(conn, 1)
+
+        assert result.skipped is False
+        assert result.build_id == 42
+        # Stale DB record was invalidated to 'failed'
+        update_calls = [
+            c for c in cursor.execute.call_args_list
+            if "UPDATE workspace_build SET status = 'failed'" in c.args[0]
+            and c.args[1] == (99,)
+        ]
+        assert update_calls, "Expected stale build 99 to be marked failed"
+
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.workspace.get_agent_view")
+    def test_force_bypasses_skip_and_cleans_prior_build(
+        self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer, tmp_path,
+    ):
+        """force=True: rebuild even when checksum matches and prior dir is intact."""
+        mock_get_av.return_value = _make_agent_view()
+        mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        mock_resolve.return_value = AgentViewRuntime(provider="claude")
+        mock_get_writer.return_value = MagicMock()
+
+        existing_dir = tmp_path / "prior_build"
+        existing_dir.mkdir()
+        (existing_dir / "sentinel.txt").write_text("should be wiped")
+        existing = {"id": 99, "build_dir": str(existing_dir)}
+        conn, cursor = self._mock_conn(existing_build=existing)
+
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
+            result = execute_build(conn, 1, force=True)
+
+        assert result.skipped is False
+        assert result.build_id == 42  # new lastrowid, not the stale 99
+        # Prior on-disk dir was cleaned up before the rebuild.
+        assert not existing_dir.exists()
+        # Stale DB record was retired.
+        update_calls = [
+            c for c in cursor.execute.call_args_list
+            if "UPDATE workspace_build SET status = 'failed'" in c.args[0]
+            and c.args[1] == (99,)
+        ]
+        assert update_calls, "Expected prior build 99 to be marked failed under --force"
 
     @patch("agento.framework.workspace.get_agent_view")
     def test_raises_on_missing_agent_view(self, mock_get_av):

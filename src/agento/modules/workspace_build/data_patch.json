@@ -1,0 +1,5 @@
+{
+    "patches": [
+        {"name": "FlattenThemeRoot", "class": "src.patches.flatten_theme_root.FlattenThemeRoot"}
+    ]
+}

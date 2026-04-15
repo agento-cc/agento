@@ -114,8 +114,14 @@ def _copy_layer(source_dir: Path, dest_dir: Path) -> None:
 
 
 def _copy_theme(build_dir: Path, workspace_code: str, agent_view_code: str) -> None:
-    """Copy theme layers: base → workspace → agent_view (each overrides the previous)."""
-    root = Path(THEME_DIR) / "_root"
+    """Copy theme layers: base → workspace → agent_view (each overrides the previous).
+
+    Layout (symmetrical with module workspaces):
+        workspace/theme/                    # base layer
+        workspace/theme/_{workspace}/       # workspace overlay
+        workspace/theme/_{workspace}/_{av}/ # agent_view overlay
+    """
+    root = Path(THEME_DIR)
     if not root.is_dir():
         return
     _copy_layer(root, build_dir)
@@ -175,8 +181,14 @@ def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) 
             (output_dir / f"{skill.name}.md").write_text(content)
 
 
-def execute_build(conn, agent_view_id: int) -> BuildResult:
-    """Build a materialized workspace for an agent_view."""
+def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResult:
+    """Build a materialized workspace for an agent_view.
+
+    When ``force=True``, bypass the "identical build already exists" skip check,
+    delete any prior same-checksum build directory from disk, retire its DB row,
+    and always produce a fresh ``build_id``. Useful when something outside the
+    checksum inputs has changed (manual theme edits, external template updates).
+    """
     from agento.framework.agent_view_runtime import resolve_agent_view_runtime
     from agento.framework.config_writer import get_agent_config, get_config_writer
     from agento.framework.scoped_config import build_scoped_overrides
@@ -220,7 +232,8 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
         overrides, skill_checksums, building_strategy=building_strategy,
     )
 
-    # Skip if identical build already exists
+    # Skip if identical build already exists AND its build_dir is intact on disk.
+    # When force=True, look up the prior build to clean it up, then always rebuild.
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, build_dir FROM workspace_build "
@@ -228,7 +241,7 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
             (agent_view_id, checksum),
         )
         existing = cur.fetchone()
-    if existing:
+    if not force and existing and existing["build_dir"] and Path(existing["build_dir"]).is_dir():
         logger.info(
             "Build %d already exists with checksum %s, skipping",
             existing["id"], checksum[:12],
@@ -244,6 +257,27 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
             build_dir=existing["build_dir"], checksum=checksum, skipped=True,
         ))
         return result
+    if existing:
+        # Either disk is gone (stale record) or force=True. Retire the old record
+        # and clean up any on-disk remnants so the new build owns the checksum.
+        if force:
+            logger.info(
+                "Force rebuild: retiring prior build %d (checksum %s) and cleaning %s",
+                existing["id"], checksum[:12], existing["build_dir"],
+            )
+        else:
+            logger.warning(
+                "Build %d marked ready but build_dir %s is missing — rebuilding",
+                existing["id"], existing["build_dir"],
+            )
+        if existing["build_dir"]:
+            shutil.rmtree(existing["build_dir"], ignore_errors=True)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE workspace_build SET status = 'failed' WHERE id = %s",
+                (existing["id"],),
+            )
+        conn.commit()
 
     # Insert new build record
     base = Path(BUILD_DIR) / workspace_code / agent_view.code / "builds"
@@ -270,6 +304,9 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
     conn.commit()
 
     try:
+        if build_dir.exists():
+            # lastrowid collisions shouldn't happen, but guarantee a clean dest dir.
+            shutil.rmtree(build_dir)
         build_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Theme as base layer (scaffolding, KnowledgeBase, etc.)

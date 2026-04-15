@@ -110,8 +110,8 @@ agento skill:enable <name> [--agent-view <code>]       # Enable a skill (also: -
 agento skill:disable <name> [--agent-view <code>]      # Disable a skill (also: --scope/--scope-id)
 
 # Workspace builds (materialized config per agent_view)
-agento workspace:build --agent-view <code>             # Build workspace for one agent_view
-agento workspace:build --all                           # Build for all active agent_views
+agento workspace:build --agent-view <code> [--force]   # Build workspace for one agent_view (--force rebuilds even if unchanged)
+agento workspace:build --all [--force]                 # Build for all active agent_views
 agento workspace:build-status [--agent-view <code>]    # Show build status
 ```
 
