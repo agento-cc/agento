@@ -33,8 +33,18 @@ class TestWorkspaceBuildCommand:
         cmd.configure(parser)
         args = parser.parse_args(["--agent-view", "dev"])
         assert args.agent_view == "dev"
+        assert args.force is False
         args = parser.parse_args(["--all"])
         assert args.all is True
+        assert args.force is False
+
+    def test_configure_accepts_force_flag(self):
+        cmd = WorkspaceBuildCommand()
+        parser = argparse.ArgumentParser()
+        cmd.configure(parser)
+        args = parser.parse_args(["--all", "--force"])
+        assert args.all is True
+        assert args.force is True
 
     @patch("agento.framework.cli.runtime._load_framework_config")
     @patch("agento.framework.db.get_connection")
@@ -47,11 +57,33 @@ class TestWorkspaceBuildCommand:
         mock_build.return_value = BuildResult(build_id=1, build_dir="/ws/dev/builds/1", checksum="a" * 64)
 
         cmd = WorkspaceBuildCommand()
-        cmd.execute(argparse.Namespace(agent_view="dev", all=False))
+        cmd.execute(argparse.Namespace(agent_view="dev", all=False, force=False))
 
         output = capsys.readouterr().out
         assert "Built" in output
         assert "build 1" in output
+        mock_build.assert_called_once_with(mock_conn.return_value, 1, force=False)
+
+    @patch("agento.framework.cli.runtime._load_framework_config")
+    @patch("agento.framework.db.get_connection")
+    @patch("agento.framework.workspace.get_agent_view_by_code")
+    @patch("agento.modules.workspace_build.src.builder.execute_build")
+    def test_execute_force_shows_forced_verb_and_passes_force(
+        self, mock_build, mock_get_av, mock_conn, mock_config, capsys,
+    ):
+        mock_config.return_value = (MagicMock(), MagicMock(), MagicMock())
+        mock_conn.return_value = MagicMock()
+        mock_get_av.return_value = _make_agent_view()
+        mock_build.return_value = BuildResult(
+            build_id=7, build_dir="/ws/dev/builds/7", checksum="b" * 64, skipped=False,
+        )
+
+        cmd = WorkspaceBuildCommand()
+        cmd.execute(argparse.Namespace(agent_view="dev", all=False, force=True))
+
+        output = capsys.readouterr().out
+        assert "Built (forced)" in output
+        mock_build.assert_called_once_with(mock_conn.return_value, 1, force=True)
 
     @patch("agento.framework.cli.runtime._load_framework_config")
     @patch("agento.framework.db.get_connection")
@@ -62,7 +94,7 @@ class TestWorkspaceBuildCommand:
         mock_get_av.return_value = None
 
         cmd = WorkspaceBuildCommand()
-        cmd.execute(argparse.Namespace(agent_view="missing", all=False))
+        cmd.execute(argparse.Namespace(agent_view="missing", all=False, force=False))
 
         output = capsys.readouterr().out
         assert "Error" in output

@@ -12,6 +12,9 @@ agento workspace:build --agent-view developer
 
 # Build for all active agent_views
 agento workspace:build --all
+
+# Force rebuild even if the existing build's checksum matches
+agento workspace:build --all --force
 ```
 
 Shortcut: `ws:b`
@@ -22,17 +25,18 @@ Shortcut: `ws:b`
 |------|----------|-------------|
 | `--agent-view <code>` | One of these | Agent view code to build for |
 | `--all` | is required | Build for all active agent_views |
+| `--force` | No | Rebuild even if a matching build already exists. Retires the prior same-checksum build (deletes its on-disk directory, marks the DB row `failed`) and produces a fresh `build_id`. Use when something outside the checksum inputs has changed (manual theme edits, external template updates, a file accidentally removed from disk). |
 
-The two flags are mutually exclusive.
+The `--agent-view` and `--all` flags are mutually exclusive; `--force` can be combined with either.
 
 ### What It Does
 
 1. Resolves the agent_view and its scoped config overrides (agent_view → workspace → global fallback)
 2. Fetches enabled skills for this agent_view (soft dependency on `skill` module)
 3. Computes a SHA-256 checksum over sorted config values + skill checksums
-4. **Skip check** — if a `ready` build with the same agent_view + checksum exists, skips the rebuild
+4. **Skip check** — if a `ready` build with the same agent_view + checksum exists **and its `build_dir` is intact on disk**, skips the rebuild. `--force` bypasses this check; a missing on-disk directory also forces a rebuild (the stale DB row is retired first).
 5. Creates a build directory and applies layers in order:
-   - **Theme layering** — copies files from `workspace/theme/_root/`, then overlays workspace-scoped (`_root/_{ws_code}/`) and agent_view-scoped (`_root/_{ws_code}/_{av_code}/`) content
+   - **Theme layering** — copies files from `workspace/theme/`, then overlays workspace-scoped (`workspace/theme/_{ws_code}/`) and agent_view-scoped (`workspace/theme/_{ws_code}/_{av_code}/`) content
    - **Agent CLI configs** — `.claude.json`, `.mcp.json`, `.codex/config.toml` (via provider-specific ConfigWriter)
    - **Instruction files** — `AGENTS.md`, `SOUL.md` from DB if set (otherwise keeps theme files), `CLAUDE.md` always written
    - **Module workspace layering** — copies each enabled module's `workspace/` with the same `_` prefix scoping convention

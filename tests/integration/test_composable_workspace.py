@@ -445,7 +445,7 @@ class TestConsumerUsesPreBuiltWorkspace:
 
 
 class TestThemeLayeringIntegration:
-    """Theme _root/ layering: base → workspace → agent_view, with DB override on top."""
+    """Theme layering: base \u2192 workspace \u2192 agent_view, with DB override on top."""
 
     @pytest.fixture(autouse=True)
     def _patch_observer_db(self, int_db_config):
@@ -462,28 +462,28 @@ class TestThemeLayeringIntegration:
         _cleanup()
 
     def test_theme_layers_in_build(self, tmp_path):
-        """Build picks up files from _root/, _root/_ws/, _root/_ws/_av/ layers."""
+        """Build picks up files from theme/, theme/_ws/, theme/_ws/_av/ layers."""
         from agento.modules.workspace_build.src.builder import execute_build
 
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        # Create layered theme
+        # Create layered theme (flat layout — no _root wrapper)
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        ws = root / "_acme"
+        ws = theme / "_acme"
         av = ws / "_developer"
         av.mkdir(parents=True)
 
-        (root / "base.md").write_text("# Base file")
-        (root / "SOUL.md").write_text("# Base Soul")
+        (theme / "base.md").write_text("# Base file")
+        (theme / "SOUL.md").write_text("# Base Soul")
         (ws / "ws-rules.md").write_text("# WS rules")
         (ws / "SOUL.md").write_text("# Acme Soul")
         (av / "SOUL.md").write_text("# Developer Soul")
         (av / "dev-config.md").write_text("# Dev config")
 
-        # File outside _root should NOT appear
-        (theme / "README.md").write_text("should not appear")
+        # Dot-prefixed items at theme root are excluded from builds.
+        (theme / ".hidden").mkdir()
+        (theme / ".hidden" / "old.md").write_text("should not appear")
 
         build_base = tmp_path / "builds"
         conn = _test_connection(autocommit=False)
@@ -502,8 +502,8 @@ class TestThemeLayeringIntegration:
         assert (build_dir / "SOUL.md").read_text() == "# Developer Soul"
         # Scope dirs not in output
         assert not (build_dir / "_acme").exists()
-        # Files outside _root not copied
-        assert not (build_dir / "README.md").exists()
+        # Dot-prefixed dirs not copied
+        assert not (build_dir / ".hidden").exists()
 
     def test_db_overrides_theme_layered_file(self, tmp_path):
         """DB agents_md/soul_md override even the most specific theme layer."""
@@ -512,15 +512,14 @@ class TestThemeLayeringIntegration:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        # Theme puts SOUL.md at agent_view level
+        # Theme puts SOUL.md at agent_view level (flat layout)
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        av = root / "_acme" / "_developer"
+        av = theme / "_acme" / "_developer"
         av.mkdir(parents=True)
-        (root / "SOUL.md").write_text("# Base Soul")
+        (theme / "SOUL.md").write_text("# Base Soul")
         (av / "SOUL.md").write_text("# AV Soul from theme")
 
-        # DB override — highest precedence
+        # DB override \u2014 highest precedence
         _set_config("agent_view", av_id, "agent_view/instructions/soul_md", "# DB Soul Override")
         _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# DB AGENTS")
 
@@ -544,10 +543,9 @@ class TestThemeLayeringIntegration:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        # Theme puts SOUL.md at workspace level
+        # Theme puts SOUL.md at workspace level (flat layout)
         theme = tmp_path / "theme"
-        root = theme / "_root"
-        ws = root / "_acme"
+        ws = theme / "_acme"
         ws.mkdir(parents=True)
         (ws / "SOUL.md").write_text("# Acme Soul from theme")
 
