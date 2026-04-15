@@ -254,8 +254,8 @@ class TestWorkspaceBuildIntegration:
         # Build workspace — patch get_skill_content to use our tmp skills_dir
         from agento.modules.skill.src.registry import get_skill_content as _orig_get_skill_content
 
-        def _get_skill_content(name, _skills_dir):
-            return _orig_get_skill_content(name, skills_dir)
+        def _get_skill_content(name, _skills_dir, path=None):
+            return _orig_get_skill_content(name, skills_dir, path=path)
 
         ws_base = tmp_path / "workspace"
         conn = _test_connection(autocommit=False)
