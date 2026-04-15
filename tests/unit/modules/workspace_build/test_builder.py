@@ -10,6 +10,7 @@ from agento.framework.artifacts_dir import get_current_build_dir
 from agento.framework.workspace import AgentView
 from agento.modules.workspace_build.src.builder import (
     BuildResult,
+    _copy_layer,
     _copy_module_workspaces,
     _copy_theme,
     _write_instruction_files,
@@ -64,8 +65,200 @@ class TestComputeBuildChecksum:
         assert all(c in "0123456789abcdef" for c in checksum)
 
 
+class TestCopyLayer:
+    """Tests for the shared _copy_layer helper."""
+
+    def test_copies_files(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "file.md").write_text("hello")
+        dest = tmp_path / "dest"
+        _copy_layer(src, dest)
+        assert (dest / "file.md").read_text() == "hello"
+
+    def test_copies_directories(self, tmp_path):
+        src = tmp_path / "src"
+        (src / "subdir").mkdir(parents=True)
+        (src / "subdir" / "deep.md").write_text("deep")
+        dest = tmp_path / "dest"
+        _copy_layer(src, dest)
+        assert (dest / "subdir" / "deep.md").read_text() == "deep"
+
+    def test_skips_underscore_dirs(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "_scope").mkdir()
+        (src / "_scope" / "hidden.md").write_text("nope")
+        (src / "visible.md").write_text("yes")
+        dest = tmp_path / "dest"
+        _copy_layer(src, dest)
+        assert (dest / "visible.md").exists()
+        assert not (dest / "_scope").exists()
+
+    def test_skips_dotfiles(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / ".hidden").write_text("nope")
+        (src / "visible.md").write_text("yes")
+        dest = tmp_path / "dest"
+        _copy_layer(src, dest)
+        assert not (dest / ".hidden").exists()
+        assert (dest / "visible.md").exists()
+
+    def test_merges_directories(self, tmp_path):
+        """dirs_exist_ok=True allows merging into existing dirs."""
+        src = tmp_path / "src"
+        (src / "subdir").mkdir(parents=True)
+        (src / "subdir" / "new.md").write_text("new")
+        dest = tmp_path / "dest"
+        (dest / "subdir").mkdir(parents=True)
+        (dest / "subdir" / "existing.md").write_text("existing")
+        _copy_layer(src, dest)
+        assert (dest / "subdir" / "existing.md").read_text() == "existing"
+        assert (dest / "subdir" / "new.md").read_text() == "new"
+
+    def test_creates_dest_dir(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "file.md").write_text("hello")
+        dest = tmp_path / "nonexistent" / "dest"
+        _copy_layer(src, dest)
+        assert (dest / "file.md").read_text() == "hello"
+
+
+class TestCopyTheme:
+    """Tests for the layered _copy_theme with _root/ convention."""
+
+    def test_base_layer_from_root(self, tmp_path):
+        theme = tmp_path / "theme"
+        (theme / "_root").mkdir(parents=True)
+        (theme / "_root" / "SOUL.md").write_text("# Base soul")
+        (theme / "_root" / "app").mkdir()
+        (theme / "_root" / "app" / "data.txt").write_text("base data")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "default", "agent01")
+        assert (build / "SOUL.md").read_text() == "# Base soul"
+        assert (build / "app" / "data.txt").read_text() == "base data"
+
+    def test_workspace_layer_overrides_base(self, tmp_path):
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        root.mkdir(parents=True)
+        (root / "SOUL.md").write_text("# Base soul")
+        ws = root / "_myws"
+        ws.mkdir()
+        (ws / "SOUL.md").write_text("# Workspace soul")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "myws", "dev01")
+        assert (build / "SOUL.md").read_text() == "# Workspace soul"
+
+    def test_agent_view_layer_overrides_workspace(self, tmp_path):
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        root.mkdir(parents=True)
+        (root / "SOUL.md").write_text("# Base")
+        ws = root / "_myws"
+        ws.mkdir()
+        (ws / "SOUL.md").write_text("# Workspace")
+        av = ws / "_dev01"
+        av.mkdir()
+        (av / "SOUL.md").write_text("# Agent view")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "myws", "dev01")
+        assert (build / "SOUL.md").read_text() == "# Agent view"
+
+    def test_scope_dirs_not_copied_as_content(self, tmp_path):
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        root.mkdir(parents=True)
+        (root / "visible.md").write_text("yes")
+        (root / "_ws1").mkdir()
+        (root / "_ws1" / "scoped.md").write_text("scoped")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "other", "dev")
+        assert (build / "visible.md").exists()
+        assert not (build / "_ws1").exists()
+
+    def test_base_plus_workspace_no_agent_view(self, tmp_path):
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        root.mkdir(parents=True)
+        (root / "base.md").write_text("base")
+        ws = root / "_myws"
+        ws.mkdir()
+        (ws / "ws.md").write_text("ws extra")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "myws", "nonexistent_av")
+        assert (build / "base.md").read_text() == "base"
+        assert (build / "ws.md").read_text() == "ws extra"
+
+    def test_directory_merge_across_layers(self, tmp_path):
+        """Subdirectories merge rather than replace across layers."""
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        (root / "docs").mkdir(parents=True)
+        (root / "docs" / "base.md").write_text("base doc")
+        ws = root / "_myws"
+        (ws / "docs").mkdir(parents=True)
+        (ws / "docs" / "ws.md").write_text("ws doc")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "myws", "dev")
+        assert (build / "docs" / "base.md").read_text() == "base doc"
+        assert (build / "docs" / "ws.md").read_text() == "ws doc"
+
+    def test_files_outside_root_not_copied(self, tmp_path):
+        theme = tmp_path / "theme"
+        (theme / "_root").mkdir(parents=True)
+        (theme / "_root" / "inside.md").write_text("inside")
+        (theme / "outside.md").write_text("outside")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "default", "agent01")
+        assert (build / "inside.md").exists()
+        assert not (build / "outside.md").exists()
+
+    def test_noop_when_root_missing(self, tmp_path):
+        """When _root/ doesn't exist, build_dir stays empty (no legacy fallback)."""
+        theme = tmp_path / "theme"
+        theme.mkdir()
+        (theme / "SOUL.md").write_text("# flat layout, unused")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "default", "agent01")
+        assert list(build.iterdir()) == []
+
+    def test_noop_when_theme_missing(self, tmp_path):
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(tmp_path / "nonexistent")):
+            _copy_theme(build, "default", "agent01")
+        assert list(build.iterdir()) == []
+
+
 class TestCopyModuleWorkspaces:
-    """Tests for _copy_module_workspaces with copy and symlink strategies."""
+    """Tests for _copy_module_workspaces with copy, symlink, and layered strategies."""
 
     def _make_manifest(self, tmp_path, name="testmod"):
         mod_dir = tmp_path / "modules" / name
@@ -79,6 +272,22 @@ class TestCopyModuleWorkspaces:
         manifest.path = str(mod_dir)
         return manifest
 
+    def _make_layered_manifest(self, tmp_path, name="layered_mod"):
+        mod_dir = tmp_path / "modules" / name
+        ws_dir = mod_dir / "workspace"
+        ws_dir.mkdir(parents=True)
+        (ws_dir / "base.md").write_text("# Base")
+        scope = ws_dir / "_myws"
+        scope.mkdir()
+        (scope / "ws.md").write_text("# WS scoped")
+        av = scope / "_dev01"
+        av.mkdir()
+        (av / "av.md").write_text("# AV scoped")
+        manifest = MagicMock()
+        manifest.name = name
+        manifest.path = str(mod_dir)
+        return manifest
+
     @patch("agento.framework.bootstrap.get_manifests")
     def test_copy_strategy_copies_files(self, mock_get_manifests, tmp_path):
         manifest = self._make_manifest(tmp_path)
@@ -86,7 +295,7 @@ class TestCopyModuleWorkspaces:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _copy_module_workspaces(build_dir, strategy="copy")
+        _copy_module_workspaces(build_dir, "default", "agent01", strategy="copy")
 
         dest = build_dir / "modules" / "testmod"
         assert dest.is_dir()
@@ -101,7 +310,7 @@ class TestCopyModuleWorkspaces:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _copy_module_workspaces(build_dir, strategy="symlink")
+        _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
 
         dest = build_dir / "modules" / "testmod"
         assert dest.is_symlink()
@@ -115,7 +324,7 @@ class TestCopyModuleWorkspaces:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _copy_module_workspaces(build_dir)
+        _copy_module_workspaces(build_dir, "default", "agent01")
 
         dest = build_dir / "modules" / "testmod"
         assert dest.is_dir()
@@ -128,7 +337,7 @@ class TestCopyModuleWorkspaces:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _copy_module_workspaces(build_dir, strategy="symlink")
+        _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
 
         dest = build_dir / "modules" / "testmod"
         # Symlink target should be an absolute resolved path
@@ -144,7 +353,7 @@ class TestCopyModuleWorkspaces:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _copy_module_workspaces(build_dir, strategy="symlink")
+        _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
 
         assert (build_dir / "modules" / "mod_a").is_symlink()
         assert (build_dir / "modules" / "mod_b").is_symlink()
@@ -160,9 +369,73 @@ class TestCopyModuleWorkspaces:
 
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        _copy_module_workspaces(build_dir, strategy="symlink")
+        _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
 
         assert not (build_dir / "modules" / "empty_mod").exists()
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_layered_copy_with_scope_dirs(self, mock_get_manifests, tmp_path):
+        """Module with _* dirs applies layered copy: base + workspace + agent_view."""
+        manifest = self._make_layered_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, "myws", "dev01", strategy="copy")
+
+        dest = build_dir / "modules" / "layered_mod"
+        assert (dest / "base.md").read_text() == "# Base"
+        assert (dest / "ws.md").read_text() == "# WS scoped"
+        assert (dest / "av.md").read_text() == "# AV scoped"
+        # Scope dirs must not appear in output
+        assert not (dest / "_myws").exists()
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_layered_falls_back_to_copy_when_symlink_strategy(self, mock_get_manifests, tmp_path):
+        """Symlink strategy falls back to copy when scope dirs exist."""
+        manifest = self._make_layered_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, "myws", "dev01", strategy="symlink")
+
+        dest = build_dir / "modules" / "layered_mod"
+        # Should NOT be a symlink (layered copy used instead)
+        assert not dest.is_symlink()
+        assert (dest / "base.md").read_text() == "# Base"
+        assert (dest / "ws.md").read_text() == "# WS scoped"
+        assert (dest / "av.md").read_text() == "# AV scoped"
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_layered_workspace_only_no_agent_view(self, mock_get_manifests, tmp_path):
+        """When workspace matches but agent_view doesn't, only base + ws layers apply."""
+        manifest = self._make_layered_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, "myws", "other_av", strategy="copy")
+
+        dest = build_dir / "modules" / "layered_mod"
+        assert (dest / "base.md").read_text() == "# Base"
+        assert (dest / "ws.md").read_text() == "# WS scoped"
+        assert not (dest / "av.md").exists()
+
+    @patch("agento.framework.bootstrap.get_manifests")
+    def test_layered_no_matching_workspace(self, mock_get_manifests, tmp_path):
+        """When workspace doesn't match, only base layer applies."""
+        manifest = self._make_layered_manifest(tmp_path)
+        mock_get_manifests.return_value = [manifest]
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        _copy_module_workspaces(build_dir, "other_ws", "dev01", strategy="copy")
+
+        dest = build_dir / "modules" / "layered_mod"
+        assert (dest / "base.md").read_text() == "# Base"
+        assert not (dest / "ws.md").exists()
+        assert not (dest / "av.md").exists()
 
 
 class TestBuildingStrategyFromOverrides:
@@ -227,18 +500,6 @@ class TestWriteInstructionFiles:
         assert (tmp_path / "SOUL.md").read_text() == "# Soul content"
         assert (tmp_path / "CLAUDE.md").exists()
 
-    def test_falls_back_to_workspace_files(self, tmp_path):
-        ws_dir = tmp_path / "ws"
-        ws_dir.mkdir()
-        (ws_dir / "AGENTS.md").write_text("# Workspace agents")
-        (ws_dir / "SOUL.md").write_text("# Workspace soul")
-
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-        _write_instruction_files(build_dir, {}, workspace_dir=str(ws_dir))
-        assert (build_dir / "AGENTS.md").read_text() == "# Workspace agents"
-        assert (build_dir / "SOUL.md").read_text() == "# Workspace soul"
-
     def test_always_writes_claude_md(self, tmp_path):
         _write_instruction_files(tmp_path, {})
         assert "AGENTS.md" in (tmp_path / "CLAUDE.md").read_text()
@@ -247,57 +508,19 @@ class TestWriteInstructionFiles:
         _write_instruction_files(tmp_path, {"agent_view/instructions/agents_md": ("", False)})
         assert not (tmp_path / "AGENTS.md").exists()
 
-    def test_override_takes_precedence_over_workspace(self, tmp_path):
-        ws_dir = tmp_path / "ws"
-        ws_dir.mkdir()
-        (ws_dir / "AGENTS.md").write_text("# From workspace")
+    def test_does_not_overwrite_theme_file_without_db_value(self, tmp_path):
+        """When no DB override exists, theme file (already in build_dir) is preserved."""
+        (tmp_path / "SOUL.md").write_text("# From theme")
+        _write_instruction_files(tmp_path, {})
+        assert (tmp_path / "SOUL.md").read_text() == "# From theme"
 
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-        _write_instruction_files(build_dir, {"agent_view/instructions/agents_md": ("# From DB", False)}, workspace_dir=str(ws_dir))
-        assert (build_dir / "AGENTS.md").read_text() == "# From DB"
-
-
-class TestCopyTheme:
-    def test_copies_files_from_theme(self, tmp_path):
-        theme = tmp_path / "theme"
-        theme.mkdir()
-        (theme / "SOUL.md").write_text("# Theme soul")
-        (theme / "KnowledgeBase").mkdir()
-        (theme / "KnowledgeBase" / "info.md").write_text("# Info")
-
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-
-        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
-            _copy_theme(build_dir)
-
-        assert (build_dir / "SOUL.md").read_text() == "# Theme soul"
-        assert (build_dir / "KnowledgeBase" / "info.md").read_text() == "# Info"
-
-    def test_skips_dotfiles(self, tmp_path):
-        theme = tmp_path / "theme"
-        theme.mkdir()
-        (theme / ".gitignore").write_text("*.log")
-        (theme / "README.md").write_text("# Readme")
-
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-
-        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
-            _copy_theme(build_dir)
-
-        assert not (build_dir / ".gitignore").exists()
-        assert (build_dir / "README.md").exists()
-
-    def test_noop_when_theme_missing(self, tmp_path):
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-
-        with patch(f"{_BUILDER}.THEME_DIR", str(tmp_path / "nonexistent")):
-            _copy_theme(build_dir)
-
-        assert list(build_dir.iterdir()) == []
+    def test_db_override_replaces_theme_file(self, tmp_path):
+        """DB override takes precedence over file already in build_dir from theme."""
+        (tmp_path / "SOUL.md").write_text("# From theme")
+        _write_instruction_files(
+            tmp_path, {"agent_view/instructions/soul_md": ("# From DB", False)},
+        )
+        assert (tmp_path / "SOUL.md").read_text() == "# From DB"
 
 
 class TestGetCurrentBuildDir:
@@ -402,3 +625,37 @@ class TestExecuteBuild:
 
         with pytest.raises(ValueError, match="workspace 10 not found"):
             execute_build(conn, 1)
+
+
+class TestValidateCode:
+    """Tests for workspace/agent_view code validation."""
+
+    def test_valid_codes(self):
+        from agento.framework.workspace import validate_code
+        for code in ("default", "agent01", "kazar_dev", "my_workspace", "a"):
+            validate_code(code)  # should not raise
+
+    def test_rejects_underscore_prefix(self):
+        from agento.framework.workspace import validate_code
+        with pytest.raises(ValueError, match="must match"):
+            validate_code("_hidden")
+
+    def test_rejects_dot_prefix(self):
+        from agento.framework.workspace import validate_code
+        with pytest.raises(ValueError, match="must match"):
+            validate_code(".dotted")
+
+    def test_rejects_uppercase(self):
+        from agento.framework.workspace import validate_code
+        with pytest.raises(ValueError, match="must match"):
+            validate_code("MyWorkspace")
+
+    def test_rejects_empty(self):
+        from agento.framework.workspace import validate_code
+        with pytest.raises(ValueError, match="must match"):
+            validate_code("")
+
+    def test_rejects_starts_with_digit(self):
+        from agento.framework.workspace import validate_code
+        with pytest.raises(ValueError, match="must match"):
+            validate_code("1abc")

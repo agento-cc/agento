@@ -31,16 +31,16 @@ The two flags are mutually exclusive.
 2. Fetches enabled skills for this agent_view (soft dependency on `skill` module)
 3. Computes a SHA-256 checksum over sorted config values + skill checksums
 4. **Skip check** — if a `ready` build with the same agent_view + checksum exists, skips the rebuild
-5. Creates a build directory and writes:
-   - `.claude.json` — Claude Code project config (model, permissions)
-   - `.mcp.json` — MCP server configuration (with `?agent_view_id=N` injected into toolbox URLs)
-   - `.codex/config.toml` — Codex CLI config (model, approval mode)
-   - `AGENTS.md` — agent instructions (from scoped config or workspace default)
-   - `SOUL.md` — agent personality (from scoped config or workspace default)
-   - `CLAUDE.md` — boilerplate pointing to AGENTS.md
-   - `.claude/skills/*.md` — pre-fetched enabled skills
+5. Creates a build directory and applies layers in order:
+   - **Theme layering** — copies files from `workspace/theme/_root/`, then overlays workspace-scoped (`_root/_{ws_code}/`) and agent_view-scoped (`_root/_{ws_code}/_{av_code}/`) content
+   - **Agent CLI configs** — `.claude.json`, `.mcp.json`, `.codex/config.toml` (via provider-specific ConfigWriter)
+   - **Instruction files** — `AGENTS.md`, `SOUL.md` from DB if set (otherwise keeps theme files), `CLAUDE.md` always written
+   - **Module workspace layering** — copies each enabled module's `workspace/` with the same `_` prefix scoping convention
+   - **Skills** — `.claude/skills/*.md` from enabled skills
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
+
+Theme and module workspace directories use the **`_` prefix convention**: directories starting with `_` are scope boundaries (never copied as content), while all other files and directories are content. See [workspace architecture](../architecture/workspace.md) for full details and examples.
 
 Config files are only generated when the corresponding `agent_view/*` config paths exist in scoped overrides. If no `agent_view/*` paths are set for an agent_view, those files are skipped.
 

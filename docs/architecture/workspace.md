@@ -27,11 +27,15 @@ Each phase has a distinct **lifecycle**, **owner**, and **access pattern**. Unde
 ```
 workspace/
 ├── theme/                                  # [1] Base scaffolding (static, one per host)
-│   ├── app/                                #     User application folder (scaffolded)
-│   ├── AGENTS.md.template                  #     Default instructions
-│   ├── SOUL.md.template                    #     Default personality
-│   ├── SOUL.md                             #     Active soul (if edited)
-│   └── CLAUDE.md                           #     Marker file
+│   ├── AGENTS.md.template                  #     Reference template (not copied to builds)
+│   ├── SOUL.md.template                    #     Reference template (not copied to builds)
+│   └── _root/                              #     ← Build content entry point
+│       ├── CLAUDE.md                       #     → all builds
+│       ├── SOUL.md                         #     → all builds
+│       ├── app/                            #     → all builds
+│       ├── _{workspace_code}/              #     Workspace-scoped overlay
+│       │   └── _{agent_view_code}/         #     Agent_view-scoped overlay
+│       └── …
 │
 ├── build/                                  # [2] Materialized per-agent_view builds
 │   └── {workspace_code}/                   #     e.g. "default", "it"
@@ -101,19 +105,77 @@ So when the Claude or Codex CLI reads `~/.claude/`, it's actually reading `/work
 
 **Source:** `workspace/theme/` on the host. Populated by `agento install` or pre-built for new deployments. Treated as read-only by the build process.
 
-**Contents:**
+### Theme layering with the `_` prefix convention
 
-| File | Purpose |
-|------|---------|
-| `app/` | Application source folder the agent works in — scaffolded empty |
-| `AGENTS.md.template` | Default "what this agent does" instructions |
-| `SOUL.md.template` | Default personality/voice instructions |
-| `SOUL.md` | Active personality (if you customized it) |
-| `CLAUDE.md` | Pointer file — just says "read AGENTS.md" |
+The theme directory uses a **layered hierarchy** that lets you scope files to specific workspaces or agent_views. The entry point is `workspace/theme/_root/`:
 
-**When it's used:** Every build starts by copying the theme as the base layer. Everything else (module assets, generated configs, DB-sourced instructions) is layered **on top** of this copy.
+```
+workspace/theme/
+├── AGENTS.md.template          # NOT copied (outside _root, reference only)
+├── SOUL.md.template            # NOT copied (reference only)
+├── .gitkeep                    # NOT copied (dotfile)
+├── _root/                      # ← Entry point for all build content
+│   ├── CLAUDE.md               # → copied to ALL builds
+│   ├── SOUL.md                 # → copied to ALL builds
+│   ├── app/                    # → copied to ALL builds
+│   ├── _it/                    # Workspace "it" scope
+│   │   ├── it-rules.md         # → all agent_views in workspace "it"
+│   │   ├── shared-docs/        # → all agent_views in workspace "it"
+│   │   ├── _dev_01/            # Agent_view "dev_01" scope
+│   │   │   └── dev-specific.md # → only dev_01 builds
+│   │   └── _qa_01/
+│   │       └── qa-rules.md     # → only qa_01 builds
+│   └── _support/               # Workspace "support" scope
+│       └── _qa_01/
+│           └── support-qa.md
+```
 
-**When to edit theme:** Rarely. Prefer DB-scoped config (per-agent_view instructions, per-workspace rules) over editing theme. Theme is the universal fallback.
+**The convention:**
+
+| Pattern | Meaning |
+|---------|---------|
+| `_` prefixed directories | Scope boundaries — **never** copied as content |
+| Everything else (files, non-`_` dirs) | Content — copied at that scope level |
+| `.` prefixed items | Always excluded (existing behavior) |
+
+**Three layers applied in order (later overrides earlier):**
+
+1. **Base** — `_root/*` content → copied to every build
+2. **Workspace** — `_root/_{workspace_code}/*` content → copied to all agent_views in that workspace
+3. **Agent view** — `_root/_{workspace_code}/_{agent_view_code}/*` content → copied to that specific agent_view only
+
+If a file exists at multiple layers, the most specific layer wins. Directories merge across layers (`dirs_exist_ok=True`), so a workspace layer can add files to a directory defined in the base layer without replacing existing files.
+
+If `_root/` doesn't exist, the theme step is a no-op and the build continues with only module workspaces and DB-sourced instructions. Deployments upgrading from a flat `workspace/theme/` layout must move their content into `_root/` (see migration note below).
+
+### Examples
+
+**Add a knowledge base file to all builds:**
+```
+workspace/theme/_root/docs/knowledge.md
+```
+
+**Add workspace-specific rules:**
+```
+workspace/theme/_root/_it/magento-guidelines.md
+```
+→ Appears in all agent_view builds under workspace "it", but not in "support" workspace builds.
+
+**Override SOUL.md for one agent_view:**
+```
+workspace/theme/_root/_it/_dev_01/SOUL.md
+```
+→ Only `dev_01` gets this personality. Other agent_views in "it" get the base or workspace-level SOUL.md.
+
+**Fresh install (default workspace + agent01):**
+No scope directories needed. Just put files in `_root/` — they'll be the base for all builds. Create `_root/_default/_agent01/` later when you need agent-specific overrides.
+
+### When to edit theme
+
+Use theme layering for **files** that should be part of the agent's workspace (documentation, knowledge base, configuration files). For **config values** (model, personality, MCP servers), prefer DB-scoped config via `agento config:set`.
+
+> **Warning — renaming workspace or agent_view codes is a breaking change:**
+> If you rename a workspace or agent_view code in the database, the corresponding `_`-prefixed directories in theme (and module workspaces) are **not** auto-renamed. You must manually rename `_old_code/` → `_new_code/` in all relevant locations. Failure to do so silently drops scoped files from builds.
 
 ---
 
@@ -136,19 +198,24 @@ execute_build(agent_view_id):
 
   2. INSERT workspace_build (status='building'), mkdir builds/{build_id}/
 
-  3. Copy theme/ as base layer                               →  build_dir/
+  3. Theme layering (3 layers, each overrides the previous):
+       a. Copy _root/* base content                         → build_dir/
+       b. Copy _root/_{workspace_code}/* if exists          → build_dir/ (overlay)
+       c. Copy _root/_{ws_code}/_{av_code}/* if exists      → build_dir/ (overlay)
 
   4. Run ConfigWriter.prepare_workspace() for the agent_view's provider:
        - Claude → writes .claude.json, .claude/settings.json, .mcp.json
        - Codex  → writes .codex/config.toml with [mcp_servers.*]
 
-  5. Write instruction files (3-tier fallback each):
-       - AGENTS.md ← DB override │ theme/AGENTS.md │ skip
-       - SOUL.md   ← DB override │ theme/SOUL.md   │ skip
+  5. Write instruction files from DB (if set):
+       - AGENTS.md ← DB override │ keep theme file
+       - SOUL.md   ← DB override │ keep theme file
        - CLAUDE.md ← always: "Read AGENTS.md" pointer
 
-  6. Copy each enabled module's workspace/ subdir
-     → build_dir/modules/{module_name}/
+  6. Module workspace layering (per enabled module, 3 layers each):
+       a. Copy workspace/* base content                     → build_dir/modules/{name}/
+       b. Copy workspace/_{workspace_code}/* if exists      → build_dir/modules/{name}/
+       c. Copy workspace/_{ws_code}/_{av_code}/* if exists  → build_dir/modules/{name}/
 
   7. Write enabled skills to build_dir/.claude/skills/{skill}.md
 
@@ -164,8 +231,14 @@ When the same file could come from multiple sources, later steps overwrite earli
 ```
 LOWEST PRECEDENCE (base)                              HIGHEST PRECEDENCE (wins)
 
-  theme/      <  module's workspace/  <  DB-scoped config  <  ENV (CONFIG__...)
-  (static)      (feature assets)         (per-agent_view)     (runtime override)
+  theme base  <  theme/ws  <  theme/av  <  module base  <  module/ws  <  module/av  <  DB config  <  ENV
+  (_root/*)     (_root/_ws/)  (_root/_ws/_av/)                                        (per-scope)   (CONFIG__...)
+```
+
+Within each layer, the three-level `_` prefix cascade applies:
+
+```
+  base content (no _)  <  _{workspace_code}/  <  _{workspace_code}/_{agent_view_code}/
 ```
 
 For DB-scoped config specifically, the three-level fallback is:
@@ -175,6 +248,25 @@ For DB-scoped config specifically, the three-level fallback is:
 ```
 
 So a setting on `agent_view` beats the workspace-wide setting, which beats the global default.
+
+### Module workspace layering
+
+Module `workspace/` directories follow the same `_` prefix convention as theme, but without a `_root/` wrapper (the module's `workspace/` dir **is** the root):
+
+```
+app/code/kazar/workspace/
+├── README.md                   # → ALL builds (base content)
+├── docs/                       # → ALL builds
+│   └── magento-api.md
+├── _it/                        # Workspace "it" scope
+│   ├── kazar-it-config.md      # → all agent_views in "it"
+│   └── _dev_01/                # Agent_view "dev_01" scope
+│       └── dev-overrides.md    # → only dev_01 builds
+└── _support/
+    └── support-rules.md        # → all agent_views in "support"
+```
+
+When scope dirs (`_*`) exist in a module workspace, the builder always uses **copy** strategy (even if the global building strategy is "symlink") because symlinks can't merge layers. Modules without scope dirs preserve current symlink behavior.
 
 ### Why builds are cached
 

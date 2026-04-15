@@ -108,7 +108,7 @@ class TestCmdPublishTodoDispatch:
         PublishCommand().execute(_make_args("jira-todo"))
 
         _, kwargs = mock_publisher.publish_todo.call_args
-        assert kwargs.get("issue_key") == "AI-6"
+        assert kwargs.get("reference_id") == "AI-6"
 
     @patch("agento.modules.jira.src.commands.publish._publisher")
     @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
