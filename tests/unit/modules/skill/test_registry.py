@@ -255,3 +255,27 @@ class TestGetSkillContent:
 
     def test_returns_none_for_missing(self, tmp_path):
         assert get_skill_content("nonexistent", tmp_path) is None
+
+    def test_registered_path_takes_priority(self, tmp_path):
+        # Workspace skill
+        ws_skill = tmp_path / "workspace" / "my_skill"
+        ws_skill.mkdir(parents=True)
+        (ws_skill / "SKILL.md").write_text("workspace version")
+        # Module skill at a different location
+        mod_skill = tmp_path / "module" / "my_skill"
+        mod_skill.mkdir(parents=True)
+        (mod_skill / "SKILL.md").write_text("module version")
+
+        result = get_skill_content("my_skill", tmp_path / "workspace", path=str(mod_skill / "SKILL.md"))
+        assert result == "module version"
+
+    def test_falls_back_to_skills_dir_when_path_missing(self, tmp_path):
+        skill_dir = tmp_path / "my_skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("fallback content")
+
+        result = get_skill_content("my_skill", tmp_path, path="/nonexistent/SKILL.md")
+        assert result == "fallback content"
+
+    def test_returns_none_when_both_missing(self, tmp_path):
+        assert get_skill_content("ghost", tmp_path, path="/nonexistent/SKILL.md") is None

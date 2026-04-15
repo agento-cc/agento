@@ -66,20 +66,14 @@ def compute_build_checksum(
 def _write_instruction_files(
     build_dir: Path,
     scoped_overrides: dict,
-    workspace_dir: str | None = None,
 ) -> None:
-    """Write AGENTS.md, SOUL.md, CLAUDE.md into build directory (inline, no module import)."""
-    wd = Path(workspace_dir) if workspace_dir else Path(THEME_DIR)
+    """Write AGENTS.md, SOUL.md from DB into build dir (theme fallback handled by _copy_theme)."""
     for config_path, filename in _INSTRUCTION_FILES.items():
         entry = scoped_overrides.get(config_path)
         if entry is not None:
             value, _encrypted = entry
             if value:
                 (build_dir / filename).write_text(value)
-                continue
-        workspace_file = wd / filename
-        if workspace_file.is_file():
-            shutil.copy2(workspace_file, build_dir / filename)
     (build_dir / "CLAUDE.md").write_text(CLAUDE_MD_CONTENT)
 
 
@@ -106,23 +100,43 @@ def _get_enabled_skills(conn, agent_view_id, workspace_id):
     return skills, registry
 
 
-def _copy_theme(build_dir: Path) -> None:
-    """Copy theme directory as base layer of the build."""
-    theme = Path(THEME_DIR)
-    if not theme.is_dir():
-        return
-    for item in theme.iterdir():
-        if item.name.startswith("."):
+def _copy_layer(source_dir: Path, dest_dir: Path) -> None:
+    """Copy all non-underscore, non-dot prefixed items from source to dest."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for item in source_dir.iterdir():
+        if item.name.startswith((".", "_")):
             continue
-        dest = build_dir / item.name
+        target = dest_dir / item.name
         if item.is_dir():
-            shutil.copytree(item, dest, dirs_exist_ok=True)
+            shutil.copytree(item, target, dirs_exist_ok=True)
         else:
-            shutil.copy2(item, dest)
+            shutil.copy2(item, target)
 
 
-def _copy_module_workspaces(build_dir: Path, *, strategy: str = "copy") -> None:
-    """Copy or symlink workspace/ directories from enabled modules into build (namespaced)."""
+def _copy_theme(build_dir: Path, workspace_code: str, agent_view_code: str) -> None:
+    """Copy theme layers: base → workspace → agent_view (each overrides the previous)."""
+    root = Path(THEME_DIR) / "_root"
+    if not root.is_dir():
+        return
+    _copy_layer(root, build_dir)
+    ws_dir = root / f"_{workspace_code}"
+    if ws_dir.is_dir():
+        _copy_layer(ws_dir, build_dir)
+        av_dir = ws_dir / f"_{agent_view_code}"
+        if av_dir.is_dir():
+            _copy_layer(av_dir, build_dir)
+
+
+def _copy_module_workspaces(
+    build_dir: Path, workspace_code: str, agent_view_code: str,
+    *, strategy: str = "copy",
+) -> None:
+    """Copy or symlink workspace/ directories from enabled modules into build (namespaced).
+
+    Applies the same layered ``_`` prefix convention as theme: base content first,
+    then workspace-scoped overlay, then agent_view-scoped overlay.
+    When scope dirs exist, always uses copy (symlinks can't merge layers).
+    """
     try:
         from agento.framework.bootstrap import get_manifests
         manifests = get_manifests()
@@ -130,13 +144,23 @@ def _copy_module_workspaces(build_dir: Path, *, strategy: str = "copy") -> None:
         return
     for manifest in manifests:
         mod_workspace = Path(manifest.path) / "workspace"
-        if mod_workspace.is_dir():
-            dest = build_dir / "modules" / manifest.name
-            if strategy == "symlink":
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.symlink_to(mod_workspace.resolve())
-            else:
-                shutil.copytree(mod_workspace, dest, dirs_exist_ok=True)
+        if not mod_workspace.is_dir():
+            continue
+        dest = build_dir / "modules" / manifest.name
+        has_scope_dirs = any(
+            d.name.startswith("_") for d in mod_workspace.iterdir() if d.is_dir()
+        )
+        if has_scope_dirs or strategy == "copy":
+            _copy_layer(mod_workspace, dest)
+            ws_dir = mod_workspace / f"_{workspace_code}"
+            if ws_dir.is_dir():
+                _copy_layer(ws_dir, dest)
+                av_dir = ws_dir / f"_{agent_view_code}"
+                if av_dir.is_dir():
+                    _copy_layer(av_dir, dest)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.symlink_to(mod_workspace.resolve())
 
 
 def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) -> None:
@@ -146,7 +170,7 @@ def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) 
     output_dir = build_dir / ".claude" / "skills"
     output_dir.mkdir(parents=True, exist_ok=True)
     for skill in skills:
-        content = registry.get_skill_content(skill.name, skills_dir)
+        content = registry.get_skill_content(skill.name, skills_dir, path=skill.path)
         if content:
             (output_dir / f"{skill.name}.md").write_text(content)
 
@@ -249,7 +273,7 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
         build_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Theme as base layer (scaffolding, KnowledgeBase, etc.)
-        _copy_theme(build_dir)
+        _copy_theme(build_dir, workspace_code, agent_view.code)
 
         # 2. Agent CLI configs via provider-specific ConfigWriter
         runtime = resolve_agent_view_runtime(conn, agent_view_id)
@@ -263,7 +287,7 @@ def execute_build(conn, agent_view_id: int) -> BuildResult:
         _write_instruction_files(build_dir, overrides)
 
         # 4. Module workspace assets (namespaced under modules/{name}/)
-        _copy_module_workspaces(build_dir, strategy=building_strategy)
+        _copy_module_workspaces(build_dir, workspace_code, agent_view.code, strategy=building_strategy)
 
         # 5. Skills (soft dependency)
         skills_dir = _resolve_skills_dir()

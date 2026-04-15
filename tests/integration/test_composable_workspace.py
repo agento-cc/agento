@@ -442,3 +442,125 @@ class TestConsumerUsesPreBuiltWorkspace:
         assert row["status"] == "SUCCESS"
         # Content from build, not regenerated
         assert captured_files.get("AGENTS.md") == "# From Build"
+
+
+class TestThemeLayeringIntegration:
+    """Theme _root/ layering: base → workspace → agent_view, with DB override on top."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_observer_db(self, int_db_config):
+        with patch(
+            "agento.modules.agent_view.src.observers.DatabaseConfig.from_env",
+            return_value=int_db_config,
+        ):
+            yield
+
+    def setup_method(self):
+        _cleanup()
+
+    def teardown_method(self):
+        _cleanup()
+
+    def test_theme_layers_in_build(self, tmp_path):
+        """Build picks up files from _root/, _root/_ws/, _root/_ws/_av/ layers."""
+        from agento.modules.workspace_build.src.builder import execute_build
+
+        ws_id = _insert_workspace("acme")
+        av_id = _insert_agent_view(ws_id, "developer")
+
+        # Create layered theme
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        ws = root / "_acme"
+        av = ws / "_developer"
+        av.mkdir(parents=True)
+
+        (root / "base.md").write_text("# Base file")
+        (root / "SOUL.md").write_text("# Base Soul")
+        (ws / "ws-rules.md").write_text("# WS rules")
+        (ws / "SOUL.md").write_text("# Acme Soul")
+        (av / "SOUL.md").write_text("# Developer Soul")
+        (av / "dev-config.md").write_text("# Dev config")
+
+        # File outside _root should NOT appear
+        (theme / "README.md").write_text("should not appear")
+
+        build_base = tmp_path / "builds"
+        conn = _test_connection(autocommit=False)
+        try:
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(build_base)), \
+                 patch("agento.modules.workspace_build.src.builder.THEME_DIR", str(theme)):
+                result = execute_build(conn, av_id)
+        finally:
+            conn.close()
+
+        build_dir = Path(result.build_dir)
+        assert (build_dir / "base.md").read_text() == "# Base file"
+        assert (build_dir / "ws-rules.md").read_text() == "# WS rules"
+        assert (build_dir / "dev-config.md").read_text() == "# Dev config"
+        # Most specific layer wins
+        assert (build_dir / "SOUL.md").read_text() == "# Developer Soul"
+        # Scope dirs not in output
+        assert not (build_dir / "_acme").exists()
+        # Files outside _root not copied
+        assert not (build_dir / "README.md").exists()
+
+    def test_db_overrides_theme_layered_file(self, tmp_path):
+        """DB agents_md/soul_md override even the most specific theme layer."""
+        from agento.modules.workspace_build.src.builder import execute_build
+
+        ws_id = _insert_workspace("acme")
+        av_id = _insert_agent_view(ws_id, "developer")
+
+        # Theme puts SOUL.md at agent_view level
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        av = root / "_acme" / "_developer"
+        av.mkdir(parents=True)
+        (root / "SOUL.md").write_text("# Base Soul")
+        (av / "SOUL.md").write_text("# AV Soul from theme")
+
+        # DB override — highest precedence
+        _set_config("agent_view", av_id, "agent_view/instructions/soul_md", "# DB Soul Override")
+        _set_config("agent_view", av_id, "agent_view/instructions/agents_md", "# DB AGENTS")
+
+        build_base = tmp_path / "builds"
+        conn = _test_connection(autocommit=False)
+        try:
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(build_base)), \
+                 patch("agento.modules.workspace_build.src.builder.THEME_DIR", str(theme)):
+                result = execute_build(conn, av_id)
+        finally:
+            conn.close()
+
+        build_dir = Path(result.build_dir)
+        assert (build_dir / "SOUL.md").read_text() == "# DB Soul Override"
+        assert (build_dir / "AGENTS.md").read_text() == "# DB AGENTS"
+
+    def test_no_db_override_preserves_theme_file(self, tmp_path):
+        """Without DB override, theme-layered SOUL.md is preserved in the build."""
+        from agento.modules.workspace_build.src.builder import execute_build
+
+        ws_id = _insert_workspace("acme")
+        av_id = _insert_agent_view(ws_id, "developer")
+
+        # Theme puts SOUL.md at workspace level
+        theme = tmp_path / "theme"
+        root = theme / "_root"
+        ws = root / "_acme"
+        ws.mkdir(parents=True)
+        (ws / "SOUL.md").write_text("# Acme Soul from theme")
+
+        # NO DB override
+
+        build_base = tmp_path / "builds"
+        conn = _test_connection(autocommit=False)
+        try:
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(build_base)), \
+                 patch("agento.modules.workspace_build.src.builder.THEME_DIR", str(theme)):
+                result = execute_build(conn, av_id)
+        finally:
+            conn.close()
+
+        build_dir = Path(result.build_dir)
+        assert (build_dir / "SOUL.md").read_text() == "# Acme Soul from theme"

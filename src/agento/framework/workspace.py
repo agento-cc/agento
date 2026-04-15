@@ -1,8 +1,25 @@
 """Workspace and AgentView models — first-class entities for Phase 9 hierarchy."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
+
+_CODE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def validate_code(code: str, entity: str = "code") -> None:
+    """Validate a workspace or agent_view code.
+
+    Codes must start with a lowercase letter and contain only lowercase letters,
+    digits, and underscores.  Starting with ``_`` is reserved for theme/workspace
+    layering scope directories.
+    """
+    if not _CODE_RE.match(code):
+        raise ValueError(
+            f"Invalid {entity} code {code!r}: must match [a-z][a-z0-9_]* "
+            "(lowercase start, no leading underscore)"
+        )
 
 
 @dataclass

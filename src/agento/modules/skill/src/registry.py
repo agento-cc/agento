@@ -157,8 +157,14 @@ def get_enabled_skills(conn, agent_view_id: int | None = None, workspace_id: int
     return enabled
 
 
-def get_skill_content(name: str, skills_dir: Path) -> str | None:
+def get_skill_content(name: str, skills_dir: Path, path: str | None = None) -> str | None:
     """Read SKILL.md content from disk."""
+    # Registered path takes priority — handles module skills with absolute paths
+    if path:
+        registered = Path(path)
+        if registered.is_file():
+            return registered.read_text()
+    # Fallback: user workspace skills layout
     skill_file = skills_dir / name / "SKILL.md"
     if skill_file.is_file():
         return skill_file.read_text()
