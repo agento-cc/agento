@@ -14,6 +14,7 @@ from agento.modules.workspace_build.src.builder import (
     _copy_module_workspaces,
     _copy_theme,
     _write_instruction_files,
+    _write_skills_to_build,
     compute_build_checksum,
     execute_build,
 )
@@ -55,6 +56,22 @@ class TestComputeBuildChecksum:
     def test_changes_with_different_strategy(self):
         o = {"a/b": ("val", False)}
         assert compute_build_checksum(o, building_strategy="copy") != compute_build_checksum(o, building_strategy="symlink")
+
+    def test_includes_skills_layout_marker(self):
+        """The _SKILLS_LAYOUT_VERSION marker is mixed into the hash — upgrading the
+        on-disk build layout invalidates every pre-existing checksum automatically.
+        """
+        from agento.modules.workspace_build.src import builder as _b
+        o = {"a/b": ("val", False)}
+        original = _b._SKILLS_LAYOUT_VERSION
+        try:
+            _b._SKILLS_LAYOUT_VERSION = "dir_v1"
+            checksum_v1 = compute_build_checksum(o)
+            _b._SKILLS_LAYOUT_VERSION = "dir_v2"
+            checksum_v2 = compute_build_checksum(o)
+        finally:
+            _b._SKILLS_LAYOUT_VERSION = original
+        assert checksum_v1 != checksum_v2
 
     def test_empty_overrides(self):
         assert len(compute_build_checksum({})) == 64
@@ -539,6 +556,96 @@ class TestWriteInstructionFiles:
             tmp_path, {"agent_view/instructions/soul_md": ("# From DB", False)},
         )
         assert (tmp_path / "SOUL.md").read_text() == "# From DB"
+
+
+class TestWriteSkillsToBuild:
+    """Skills must materialize as directories (SKILL.md + companion files),
+    not as flat single-file Markdown. Claude Code expects
+    .claude/skills/<name>/SKILL.md with any references/scripts alongside."""
+
+    def _make_skill(self, tmp_path, name, extra_files=()):
+        skill_dir = tmp_path / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"# {name}")
+        for rel, body in extra_files:
+            target = skill_dir / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+        skill = MagicMock()
+        skill.name = name
+        skill.path = str(skill_dir / "SKILL.md")
+        return skill, skill_dir
+
+    def test_copies_skill_directory_with_skill_md(self, tmp_path):
+        skill, _ = self._make_skill(tmp_path, "my_skill")
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(build, [skill], registry=MagicMock(), skills_dir=tmp_path / "skills")
+
+        dest = build / ".claude" / "skills" / "my_skill"
+        assert dest.is_dir()
+        assert (dest / "SKILL.md").read_text() == "# my_skill"
+        # Must NOT have flat `<name>.md` at the skills/ root.
+        assert not (build / ".claude" / "skills" / "my_skill.md").exists()
+
+    def test_preserves_companion_files(self, tmp_path):
+        skill, _ = self._make_skill(
+            tmp_path, "mysql_k3",
+            extra_files=[
+                ("references/schema.md", "# schema ref"),
+                ("scripts/run.sh", "#!/bin/bash\necho hi\n"),
+            ],
+        )
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(build, [skill], registry=MagicMock(), skills_dir=tmp_path / "skills")
+
+        dest = build / ".claude" / "skills" / "mysql_k3"
+        assert (dest / "SKILL.md").exists()
+        assert (dest / "references" / "schema.md").read_text() == "# schema ref"
+        assert (dest / "scripts" / "run.sh").read_text().startswith("#!/bin/bash")
+
+    def test_falls_back_to_skills_dir_when_path_missing(self, tmp_path):
+        """skill.path is stale (file deleted) — fall back to skills_dir / name."""
+        skills_dir = tmp_path / "skills"
+        fallback = skills_dir / "fallback_skill"
+        fallback.mkdir(parents=True)
+        (fallback / "SKILL.md").write_text("# fallback")
+
+        skill = MagicMock()
+        skill.name = "fallback_skill"
+        skill.path = str(tmp_path / "nonexistent" / "SKILL.md")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(build, [skill], registry=MagicMock(), skills_dir=skills_dir)
+
+        assert (build / ".claude" / "skills" / "fallback_skill" / "SKILL.md").read_text() == "# fallback"
+
+    def test_skips_skill_when_source_dir_missing(self, tmp_path, caplog):
+        """Neither skill.path parent nor skills_dir/name exists — skip with warning, no crash."""
+        skill = MagicMock()
+        skill.name = "ghost"
+        skill.path = str(tmp_path / "missing" / "SKILL.md")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(build, [skill], registry=MagicMock(), skills_dir=tmp_path / "skills")
+
+        assert not (build / ".claude" / "skills" / "ghost").exists()
+
+    def test_no_output_when_skills_empty(self, tmp_path):
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(build, [], registry=MagicMock(), skills_dir=tmp_path / "skills")
+        assert not (build / ".claude").exists()
+
+    def test_no_output_when_registry_none(self, tmp_path):
+        """Soft-dependency: skill module not loaded → skills param may be empty, registry None."""
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(build, [MagicMock()], registry=None, skills_dir=tmp_path / "skills")
+        assert not (build / ".claude").exists()
 
 
 class TestGetCurrentBuildDir:

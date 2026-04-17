@@ -14,7 +14,7 @@ Shortcut: `sk:sy`
 
 ### What It Does
 
-Scans the skills directory (`workspace/.claude/skills/` by default) for skill files and syncs them to the database registry. Each `.md` file in the directory is treated as a skill.
+Scans the skills directory (`workspace/.claude/skills/` by default) plus every enabled module's `skills/` directory, and syncs discovered skills to the database registry. A skill is a directory containing a `SKILL.md` file; the directory name becomes the skill name.
 
 Prints a summary after syncing:
 
@@ -109,20 +109,27 @@ Sets `skill/{name}/is_enabled = 0` in scoped config.
 
 ### Disk Layout
 
-Skills live in the configured skills directory (default: `workspace/.claude/skills/`):
+Skills live in the configured skills directory (default: `workspace/.claude/skills/`) and in any enabled module's `skills/` directory (`src/agento/modules/<mod>/skills/`, `app/code/<mod>/skills/`). Each skill is a directory containing a `SKILL.md` file plus any companion files (references, scripts, resources):
 
 ```
 workspace/.claude/skills/
-├── my_skill.md
-├── debugging.md
-└── brainstorming.md
+├── my-skill/
+│   └── SKILL.md
+├── debugging/
+│   ├── SKILL.md
+│   └── references/
+│       └── patterns.md
+└── brainstorming/
+    └── SKILL.md
 ```
 
-Each `.md` file is a skill. The filename (without extension) becomes the skill name.
+The directory name becomes the skill name. On name collisions, user-workspace skills win over module skills (see `sync_skills_multi` in the registry).
 
 ### Registry
 
-`skill:sync` scans the directory, computes a SHA-256 checksum of each file's content, and upserts into the `skill` database table. This lets the framework track which skills are available and detect changes.
+`skill:sync` scans each configured directory for `<name>/SKILL.md`, computes a SHA-256 checksum of the `SKILL.md` content, and upserts into the `skill` database table. This lets the framework track which skills are available and detect changes.
+
+> **Companion-file caveat:** the checksum today covers `SKILL.md` only. Edits to companion files (`references/*`, `scripts/*`) don't invalidate the build — run `agento workspace:build --force` to pick them up.
 
 ### Scoped Config
 
@@ -136,6 +143,6 @@ Skills are enabled by default — no config entry needed. Only explicitly disabl
 
 ### Integration with Workspace Builds
 
-When `workspace:build` runs, it fetches enabled skills for the target agent_view and writes them into the build directory as `.claude/skills/{name}.md`. This pre-materializes the skill files so the agent CLI can discover them at runtime.
+When `workspace:build` runs, it fetches enabled skills for the target agent_view and copies each skill's source directory into the build at `.claude/skills/{name}/`. The full tree (`SKILL.md` + any companion files) is preserved so the agent CLI finds skills in the format Claude Code expects at runtime.
 
 Source: `src/agento/modules/skill/src/registry.py`, `src/agento/modules/skill/src/commands/`

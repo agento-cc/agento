@@ -40,7 +40,7 @@ The `--agent-view` and `--all` flags are mutually exclusive; `--force` can be co
    - **Agent CLI configs** — `.claude.json`, `.mcp.json`, `.codex/config.toml` (via provider-specific ConfigWriter)
    - **Instruction files** — `AGENTS.md`, `SOUL.md` from DB if set (otherwise keeps theme files), `CLAUDE.md` always written
    - **Module workspace layering** — copies each enabled module's `workspace/` with the same `_` prefix scoping convention
-   - **Skills** — `.claude/skills/*.md` from enabled skills
+   - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`) copied from enabled skills
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
 

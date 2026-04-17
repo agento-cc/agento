@@ -42,7 +42,7 @@ workspace/
 │           │   ├── 4/
 │           │   └── 5/                      #     Most recent
 │           │       ├── .claude.json        #     model, systemPrompt, permissions
-│           │       ├── .claude/            #     settings.json, skills/*.md
+│           │       ├── .claude/            #     settings.json, skills/<name>/ directories
 │           │       ├── .codex/             #     config.toml (model, [mcp_servers.*])
 │           │       ├── .mcp.json           #     Toolbox URL with ?agent_view_id=N
 │           │       ├── AGENTS.md           #     Resolved instructions
@@ -221,7 +221,7 @@ execute_build(agent_view_id):
        b. Copy workspace/_{workspace_code}/* if exists      → build_dir/modules/{name}/
        c. Copy workspace/_{ws_code}/_{av_code}/* if exists  → build_dir/modules/{name}/
 
-  7. Write enabled skills to build_dir/.claude/skills/{skill}.md
+  7. Copy enabled skill directories to build_dir/.claude/skills/{skill}/ (SKILL.md + companion files)
 
   8. UPDATE workspace_build SET status='ready'
 

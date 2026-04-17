@@ -239,10 +239,12 @@ class TestWorkspaceBuildIntegration:
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
 
-        # Create skills on disk
+        # Create a skill on disk as a real skill directory: SKILL.md + companion file.
         skills_dir = tmp_path / "skills"
         (skills_dir / "git-workflow").mkdir(parents=True)
         (skills_dir / "git-workflow" / "SKILL.md").write_text("# Git Workflow\nManage PRs.")
+        (skills_dir / "git-workflow" / "references").mkdir()
+        (skills_dir / "git-workflow" / "references" / "commands.md").write_text("# commands ref")
 
         # Sync skills to DB
         conn = _test_connection(autocommit=False)
@@ -251,17 +253,10 @@ class TestWorkspaceBuildIntegration:
         finally:
             conn.close()
 
-        # Build workspace — patch get_skill_content to use our tmp skills_dir
-        from agento.modules.skill.src.registry import get_skill_content as _orig_get_skill_content
-
-        def _get_skill_content(name, _skills_dir, path=None):
-            return _orig_get_skill_content(name, skills_dir, path=path)
-
         ws_base = tmp_path / "workspace"
         conn = _test_connection(autocommit=False)
         try:
-            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(ws_base)), \
-                 patch("agento.modules.skill.src.registry.get_skill_content", _get_skill_content):
+            with patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(ws_base)):
                 result = execute_build(conn, av_id)
         finally:
             conn.close()
@@ -269,8 +264,13 @@ class TestWorkspaceBuildIntegration:
         build_dir = Path(result.build_dir)
         skills_output = build_dir / ".claude" / "skills"
         assert skills_output.is_dir()
-        assert (skills_output / "git-workflow.md").exists()
-        assert "Manage PRs" in (skills_output / "git-workflow.md").read_text()
+        # Skill materialized as a directory (matches Claude Code's skill format)
+        assert (skills_output / "git-workflow" / "SKILL.md").exists()
+        assert "Manage PRs" in (skills_output / "git-workflow" / "SKILL.md").read_text()
+        # Companion files are preserved
+        assert (skills_output / "git-workflow" / "references" / "commands.md").read_text() == "# commands ref"
+        # No flat `<name>.md` at the skills/ root
+        assert not (skills_output / "git-workflow.md").exists()
 
 
 class TestConsumerUsesPreBuiltWorkspace:

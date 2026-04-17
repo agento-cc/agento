@@ -32,6 +32,10 @@ def _dispatch(event_name: str, event: object) -> None:
 
 CLAUDE_MD_CONTENT = "# Instructions\n\nPlease read and follow [AGENTS.md](AGENTS.md).\n"
 
+# Bump when the on-disk build layout changes in a backwards-incompatible way;
+# mixed into the checksum so existing builds invalidate automatically on upgrade.
+_SKILLS_LAYOUT_VERSION = "dir_v1"
+
 _INSTRUCTION_FILES = {
     "agent_view/instructions/agents_md": "AGENTS.md",
     "agent_view/instructions/soul_md": "SOUL.md",
@@ -60,6 +64,7 @@ def compute_build_checksum(
     if skill_checksums:
         parts.extend(sorted(skill_checksums))
     parts.append(f"__building_strategy={building_strategy}")
+    parts.append(f"__skills_layout={_SKILLS_LAYOUT_VERSION}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
@@ -170,15 +175,31 @@ def _copy_module_workspaces(
 
 
 def _write_skills_to_build(build_dir: Path, skills, registry, skills_dir: Path) -> None:
-    """Write pre-fetched enabled skills into build dir."""
+    """Copy each enabled skill's source directory to build_dir/.claude/skills/<name>/.
+
+    Claude Code's skill format is a directory containing SKILL.md plus any
+    companion files (references, scripts, resources). SkillInfo.path stores the
+    absolute path to SKILL.md; its parent is the skill directory. We copy the
+    whole tree so companion files are preserved.
+    """
     if not skills or registry is None:
         return
     output_dir = build_dir / ".claude" / "skills"
     output_dir.mkdir(parents=True, exist_ok=True)
     for skill in skills:
-        content = registry.get_skill_content(skill.name, skills_dir, path=skill.path)
-        if content:
-            (output_dir / f"{skill.name}.md").write_text(content)
+        source_dir: Path | None = None
+        if skill.path:
+            parent = Path(skill.path).parent
+            if parent.is_dir():
+                source_dir = parent
+        if source_dir is None:
+            candidate = skills_dir / skill.name
+            if candidate.is_dir():
+                source_dir = candidate
+        if source_dir is None:
+            logger.warning("Skill %r source directory not found — skipping", skill.name)
+            continue
+        shutil.copytree(source_dir, output_dir / skill.name, dirs_exist_ok=True)
 
 
 def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResult:
