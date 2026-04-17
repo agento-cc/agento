@@ -63,18 +63,22 @@ class TestCopyBuildToArtifactsDir:
         assert (artifacts_dir / "AGENTS.md").read_text() == "# Agents"
 
     def test_copies_directories(self, tmp_path, with_writers):
+        """Skills land as directories (SKILL.md + companions); copy preserves the tree."""
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        subdir = build_dir / ".claude" / "skills"
-        subdir.mkdir(parents=True)
-        (subdir / "test.md").write_text("# Skill")
+        skill = build_dir / ".claude" / "skills" / "test_skill"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# Skill")
+        (skill / "references").mkdir()
+        (skill / "references" / "schema.md").write_text("# schema")
 
         artifacts_dir = tmp_path / "run"
         artifacts_dir.mkdir()
 
         copy_build_to_artifacts_dir(build_dir, artifacts_dir)
 
-        assert (artifacts_dir / ".claude" / "skills" / "test.md").read_text() == "# Skill"
+        assert (artifacts_dir / ".claude" / "skills" / "test_skill" / "SKILL.md").read_text() == "# Skill"
+        assert (artifacts_dir / ".claude" / "skills" / "test_skill" / "references" / "schema.md").read_text() == "# schema"
 
     def test_handles_empty_build_dir(self, tmp_path):
         build_dir = tmp_path / "build"
