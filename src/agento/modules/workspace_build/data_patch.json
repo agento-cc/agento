@@ -1,5 +1,6 @@
 {
     "patches": [
-        {"name": "FlattenThemeRoot", "class": "src.patches.flatten_theme_root.FlattenThemeRoot"}
+        {"name": "FlattenThemeRoot", "class": "src.patches.flatten_theme_root.FlattenThemeRoot"},
+        {"name": "MigrateBuildingStrategy", "class": "src.patches.migrate_building_strategy.MigrateBuildingStrategy"}
     ]
 }

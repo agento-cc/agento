@@ -10,11 +10,13 @@ from agento.framework.artifacts_dir import get_current_build_dir
 from agento.framework.workspace import AgentView
 from agento.modules.workspace_build.src.builder import (
     BuildResult,
-    _copy_layer,
     _copy_module_workspaces,
     _copy_theme,
+    _read_strategy,
     _write_instruction_files,
     _write_skills_to_build,
+    apply_manifest,
+    build_manifest,
     compute_build_checksum,
     execute_build,
 )
@@ -53,9 +55,39 @@ class TestComputeBuildChecksum:
             == compute_build_checksum(o, skill_checksums=["bbb", "aaa"])
         )
 
-    def test_changes_with_different_strategy(self):
+    def test_changes_with_theme_strategy(self):
         o = {"a/b": ("val", False)}
-        assert compute_build_checksum(o, building_strategy="copy") != compute_build_checksum(o, building_strategy="symlink")
+        assert (
+            compute_build_checksum(o, strategies={"theme": "copy"})
+            != compute_build_checksum(o, strategies={"theme": "symlink"})
+        )
+
+    def test_changes_with_modules_strategy(self):
+        o = {"a/b": ("val", False)}
+        assert (
+            compute_build_checksum(o, strategies={"modules": "copy"})
+            != compute_build_checksum(o, strategies={"modules": "symlink"})
+        )
+
+    def test_changes_with_skills_strategy(self):
+        o = {"a/b": ("val", False)}
+        assert (
+            compute_build_checksum(o, strategies={"skills": "copy"})
+            != compute_build_checksum(o, strategies={"skills": "symlink"})
+        )
+
+    def test_default_strategies_are_copy(self):
+        o = {"a/b": ("val", False)}
+        all_copy = {"theme": "copy", "modules": "copy", "skills": "copy"}
+        assert compute_build_checksum(o) == compute_build_checksum(o, strategies=all_copy)
+
+    def test_unknown_strategy_source_is_ignored(self):
+        """Unknown source keys in strategies dict must not affect the checksum."""
+        o = {"a/b": ("val", False)}
+        assert (
+            compute_build_checksum(o, strategies={"bogus": "symlink"})
+            == compute_build_checksum(o)
+        )
 
     def test_includes_skills_layout_marker(self):
         """The _SKILLS_LAYOUT_VERSION marker is mixed into the hash — upgrading the
@@ -82,65 +114,199 @@ class TestComputeBuildChecksum:
         assert all(c in "0123456789abcdef" for c in checksum)
 
 
-class TestCopyLayer:
-    """Tests for the shared _copy_layer helper."""
+class TestBuildManifest:
+    """Tests for the recursive merge-walk that produces a layered manifest."""
 
-    def test_copies_files(self, tmp_path):
-        src = tmp_path / "src"
-        src.mkdir()
-        (src / "file.md").write_text("hello")
-        dest = tmp_path / "dest"
-        _copy_layer(src, dest)
-        assert (dest / "file.md").read_text() == "hello"
+    def test_unique_names_keep_as_is(self, tmp_path):
+        base = tmp_path / "base"
+        ws = tmp_path / "ws"
+        base.mkdir()
+        ws.mkdir()
+        (base / "only_in_base.md").write_text("b")
+        (ws / "only_in_ws.md").write_text("w")
+        (base / "base_dir").mkdir()
+        (base / "base_dir" / "x.md").write_text("x")
 
-    def test_copies_directories(self, tmp_path):
-        src = tmp_path / "src"
-        (src / "subdir").mkdir(parents=True)
-        (src / "subdir" / "deep.md").write_text("deep")
-        dest = tmp_path / "dest"
-        _copy_layer(src, dest)
-        assert (dest / "subdir" / "deep.md").read_text() == "deep"
+        manifest = build_manifest([base, ws])
+        assert set(manifest.keys()) == {"only_in_base.md", "only_in_ws.md", "base_dir"}
+        assert manifest["only_in_base.md"] == (base / "only_in_base.md", "file")
+        assert manifest["only_in_ws.md"] == (ws / "only_in_ws.md", "file")
+        assert manifest["base_dir"] == (base / "base_dir", "dir")
 
-    def test_skips_underscore_dirs(self, tmp_path):
-        src = tmp_path / "src"
-        src.mkdir()
-        (src / "_scope").mkdir()
-        (src / "_scope" / "hidden.md").write_text("nope")
-        (src / "visible.md").write_text("yes")
-        dest = tmp_path / "dest"
-        _copy_layer(src, dest)
-        assert (dest / "visible.md").exists()
-        assert not (dest / "_scope").exists()
+    def test_file_collision_latest_wins(self, tmp_path):
+        base = tmp_path / "base"
+        ws = tmp_path / "ws"
+        av = tmp_path / "av"
+        for d in (base, ws, av):
+            d.mkdir()
+        (base / "file.md").write_text("base")
+        (ws / "file.md").write_text("ws")
+        (av / "file.md").write_text("av")
 
-    def test_skips_dotfiles(self, tmp_path):
-        src = tmp_path / "src"
-        src.mkdir()
-        (src / ".hidden").write_text("nope")
-        (src / "visible.md").write_text("yes")
-        dest = tmp_path / "dest"
-        _copy_layer(src, dest)
-        assert not (dest / ".hidden").exists()
-        assert (dest / "visible.md").exists()
+        manifest = build_manifest([base, ws, av])
+        assert manifest["file.md"] == (av / "file.md", "file")
 
-    def test_merges_directories(self, tmp_path):
-        """dirs_exist_ok=True allows merging into existing dirs."""
-        src = tmp_path / "src"
-        (src / "subdir").mkdir(parents=True)
-        (src / "subdir" / "new.md").write_text("new")
-        dest = tmp_path / "dest"
-        (dest / "subdir").mkdir(parents=True)
-        (dest / "subdir" / "existing.md").write_text("existing")
-        _copy_layer(src, dest)
-        assert (dest / "subdir" / "existing.md").read_text() == "existing"
-        assert (dest / "subdir" / "new.md").read_text() == "new"
+    def test_dir_collision_descends(self, tmp_path):
+        base = tmp_path / "base"
+        ws = tmp_path / "ws"
+        (base / "docs").mkdir(parents=True)
+        (base / "docs" / "a.md").write_text("a")
+        (ws / "docs").mkdir(parents=True)
+        (ws / "docs" / "b.md").write_text("b")
 
-    def test_creates_dest_dir(self, tmp_path):
-        src = tmp_path / "src"
-        src.mkdir()
-        (src / "file.md").write_text("hello")
-        dest = tmp_path / "nonexistent" / "dest"
-        _copy_layer(src, dest)
-        assert (dest / "file.md").read_text() == "hello"
+        manifest = build_manifest([base, ws])
+        assert set(manifest.keys()) == {"docs/a.md", "docs/b.md"}
+        assert manifest["docs/a.md"] == (base / "docs" / "a.md", "file")
+        assert manifest["docs/b.md"] == (ws / "docs" / "b.md", "file")
+
+    def test_dir_collision_descends_with_nested_collision(self, tmp_path):
+        base = tmp_path / "base"
+        ws = tmp_path / "ws"
+        (base / "docs" / "inner").mkdir(parents=True)
+        (base / "docs" / "inner" / "x.md").write_text("base-inner")
+        (ws / "docs" / "inner").mkdir(parents=True)
+        (ws / "docs" / "inner" / "x.md").write_text("ws-inner")
+        (ws / "docs" / "inner" / "y.md").write_text("ws-only")
+
+        manifest = build_manifest([base, ws])
+        # x.md collides at depth 2 → latest wins
+        assert manifest["docs/inner/x.md"] == (ws / "docs" / "inner" / "x.md", "file")
+        # y.md unique at depth 2 → stays
+        assert manifest["docs/inner/y.md"] == (ws / "docs" / "inner" / "y.md", "file")
+
+    def test_mixed_file_and_dir_latest_wins(self, tmp_path):
+        """file in one layer, dir with same name in another → latest wins wholesale, no descent."""
+        base = tmp_path / "base"
+        ws = tmp_path / "ws"
+        base.mkdir()
+        (base / "notes.md").write_text("base file")
+        (ws / "notes.md").mkdir(parents=True)
+        (ws / "notes.md" / "draft.md").write_text("ws draft")
+
+        manifest = build_manifest([base, ws])
+        # ws is later → the directory wins
+        assert manifest["notes.md"] == (ws / "notes.md", "dir")
+        # no descended children since collision was mixed
+        assert not any(k.startswith("notes.md/") for k in manifest)
+
+    def test_skips_dot_and_underscore_prefixed(self, tmp_path):
+        base = tmp_path / "base"
+        base.mkdir()
+        (base / "visible.md").write_text("v")
+        (base / ".hidden").write_text("h")
+        (base / "_scope").mkdir()
+        (base / "_scope" / "inside.md").write_text("s")
+
+        manifest = build_manifest([base])
+        assert "visible.md" in manifest
+        assert ".hidden" not in manifest
+        assert "_scope" not in manifest
+        assert not any("inside.md" in k for k in manifest)
+
+    def test_missing_or_none_layers_skipped(self, tmp_path):
+        base = tmp_path / "base"
+        base.mkdir()
+        (base / "f.md").write_text("x")
+
+        manifest = build_manifest([base, None, tmp_path / "nonexistent"])
+        assert set(manifest.keys()) == {"f.md"}
+
+    def test_max_depth_cap(self, tmp_path, monkeypatch):
+        """At MAX_DEPTH, colliding dirs collapse to latest-layer wins (no further descent)."""
+        import agento.modules.workspace_build.src.builder as builder_mod
+        monkeypatch.setattr(builder_mod, "_MAX_MANIFEST_DEPTH", 1)
+
+        base = tmp_path / "base"
+        ws = tmp_path / "ws"
+        (base / "a" / "b" / "c.md").parent.mkdir(parents=True)
+        (base / "a" / "b" / "c.md").write_text("base")
+        (ws / "a" / "b" / "c.md").parent.mkdir(parents=True)
+        (ws / "a" / "b" / "c.md").write_text("ws")
+        (ws / "a" / "b" / "extra.md").write_text("ws-extra")
+
+        manifest = build_manifest([base, ws])
+        # depth 0: 'a' collides (both dirs) → descend to depth 1
+        # depth 1: 'b' collides (both dirs) but depth >= MAX (1) → latest wins on b wholesale
+        assert manifest.get("a/b") == (ws / "a" / "b", "dir")
+        # No descended children — cap prevented depth-2 descent
+        assert not any(k.startswith("a/b/") for k in manifest)
+
+    def test_empty_layers_returns_empty(self):
+        assert build_manifest([]) == {}
+
+
+class TestApplyManifest:
+    """Tests for the strategy-aware writer that materializes a manifest on disk."""
+
+    def test_copy_files_and_dirs(self, tmp_path):
+        src_file = tmp_path / "src_file.md"
+        src_file.write_text("hello")
+        src_dir = tmp_path / "src_dir"
+        src_dir.mkdir()
+        (src_dir / "inner.md").write_text("inner")
+
+        target = tmp_path / "target"
+        manifest = {"f.md": (src_file, "file"), "d": (src_dir, "dir")}
+        apply_manifest(manifest, target, "copy")
+
+        assert (target / "f.md").is_file()
+        assert not (target / "f.md").is_symlink()
+        assert (target / "f.md").read_text() == "hello"
+        assert (target / "d").is_dir()
+        assert not (target / "d").is_symlink()
+        assert (target / "d" / "inner.md").read_text() == "inner"
+
+    def test_symlink_files_and_dirs(self, tmp_path):
+        src_file = tmp_path / "src_file.md"
+        src_file.write_text("hello")
+        src_dir = tmp_path / "src_dir"
+        src_dir.mkdir()
+        (src_dir / "inner.md").write_text("inner")
+
+        target = tmp_path / "target"
+        manifest = {"f.md": (src_file, "file"), "d": (src_dir, "dir")}
+        apply_manifest(manifest, target, "symlink")
+
+        assert (target / "f.md").is_symlink()
+        assert (target / "f.md").read_text() == "hello"
+        assert (target / "d").is_symlink()
+        assert (target / "d" / "inner.md").read_text() == "inner"
+
+    def test_symlink_target_is_absolute(self, tmp_path):
+        src_file = tmp_path / "src.md"
+        src_file.write_text("x")
+        target = tmp_path / "out"
+        apply_manifest({"f.md": (src_file, "file")}, target, "symlink")
+
+        link = target / "f.md"
+        assert link.is_symlink()
+        assert str(link.readlink()).startswith(str(tmp_path.resolve()))
+
+    def test_nested_relative_paths_create_real_parent_dirs(self, tmp_path):
+        src = tmp_path / "src.md"
+        src.write_text("nested")
+        target = tmp_path / "out"
+        apply_manifest({"a/b/c.md": (src, "file")}, target, "symlink")
+
+        parent = target / "a" / "b"
+        assert parent.is_dir()
+        assert not parent.is_symlink()
+        assert (parent / "c.md").is_symlink()
+
+    def test_reapply_replaces_prior_entry(self, tmp_path):
+        """Re-running apply_manifest on the same target replaces stale entries cleanly."""
+        target = tmp_path / "out"
+        src_a = tmp_path / "a.md"
+        src_a.write_text("A")
+        src_b = tmp_path / "b.md"
+        src_b.write_text("B")
+
+        apply_manifest({"f.md": (src_a, "file")}, target, "copy")
+        assert (target / "f.md").read_text() == "A"
+
+        apply_manifest({"f.md": (src_b, "file")}, target, "symlink")
+        assert (target / "f.md").is_symlink()
+        assert (target / "f.md").read_text() == "B"
 
 
 class TestCopyTheme:
@@ -258,9 +424,34 @@ class TestCopyTheme:
             _copy_theme(build, "default", "agent01")
         assert list(build.iterdir()) == []
 
+    def test_symlink_strategy_preserves_layer_override(self, tmp_path):
+        """Heavy base dir stays symlinked; colliding subtrees descend to file-level symlinks."""
+        theme = tmp_path / "theme"
+        (theme / "heavy").mkdir(parents=True)
+        (theme / "heavy" / "bulk.bin").write_text("x" * 1024)
+        (theme / "docs").mkdir()
+        (theme / "docs" / "base.md").write_text("base")
+        ws = theme / "_myws"
+        (ws / "docs").mkdir(parents=True)
+        (ws / "docs" / "ws.md").write_text("ws-only")
+
+        build = tmp_path / "build"
+        build.mkdir()
+        with patch(f"{_BUILDER}.THEME_DIR", str(theme)):
+            _copy_theme(build, "myws", "dev", strategy="symlink")
+
+        # Unique base dir → single symlink
+        assert (build / "heavy").is_symlink()
+        assert (build / "heavy" / "bulk.bin").read_text() == "x" * 1024
+        # Colliding dir → real dir, file-level symlinks underneath
+        assert (build / "docs").is_dir()
+        assert not (build / "docs").is_symlink()
+        assert (build / "docs" / "base.md").is_symlink()
+        assert (build / "docs" / "ws.md").is_symlink()
+
 
 class TestCopyModuleWorkspaces:
-    """Tests for _copy_module_workspaces with copy, symlink, and layered strategies."""
+    """Tests for _copy_module_workspaces under both strategies."""
 
     def _make_manifest(self, tmp_path, name="testmod"):
         mod_dir = tmp_path / "modules" / name
@@ -303,10 +494,12 @@ class TestCopyModuleWorkspaces:
         assert dest.is_dir()
         assert not dest.is_symlink()
         assert (dest / "README.md").read_text() == "# Test knowledge"
+        assert not (dest / "README.md").is_symlink()
         assert (dest / "subdir" / "deep.md").read_text() == "deep file"
 
     @patch("agento.framework.bootstrap.get_manifests")
-    def test_symlink_strategy_creates_symlinks(self, mock_get_manifests, tmp_path):
+    def test_symlink_strategy_symlinks_top_level_items(self, mock_get_manifests, tmp_path):
+        """Symlink strategy creates one symlink per top-level item under a real dest dir."""
         manifest = self._make_manifest(tmp_path)
         mock_get_manifests.return_value = [manifest]
 
@@ -315,8 +508,12 @@ class TestCopyModuleWorkspaces:
         _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
 
         dest = build_dir / "modules" / "testmod"
-        assert dest.is_symlink()
+        assert dest.is_dir()
+        assert not dest.is_symlink()
+        assert (dest / "README.md").is_symlink()
         assert (dest / "README.md").read_text() == "# Test knowledge"
+        # Subdir becomes its own symlink (no collision)
+        assert (dest / "subdir").is_symlink()
         assert (dest / "subdir" / "deep.md").read_text() == "deep file"
 
     @patch("agento.framework.bootstrap.get_manifests")
@@ -329,26 +526,11 @@ class TestCopyModuleWorkspaces:
         _copy_module_workspaces(build_dir, "default", "agent01")
 
         dest = build_dir / "modules" / "testmod"
-        assert dest.is_dir()
-        assert not dest.is_symlink()
+        assert (dest / "README.md").is_file()
+        assert not (dest / "README.md").is_symlink()
 
     @patch("agento.framework.bootstrap.get_manifests")
-    def test_symlink_resolves_to_real_path(self, mock_get_manifests, tmp_path):
-        manifest = self._make_manifest(tmp_path)
-        mock_get_manifests.return_value = [manifest]
-
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-        _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
-
-        dest = build_dir / "modules" / "testmod"
-        # Symlink target should be an absolute resolved path
-        target = dest.resolve()
-        assert target.is_dir()
-        assert not target.is_symlink()
-
-    @patch("agento.framework.bootstrap.get_manifests")
-    def test_multiple_modules_symlinked(self, mock_get_manifests, tmp_path):
+    def test_multiple_modules_materialized_independently(self, mock_get_manifests, tmp_path):
         m1 = self._make_manifest(tmp_path, "mod_a")
         m2 = self._make_manifest(tmp_path, "mod_b")
         mock_get_manifests.return_value = [m1, m2]
@@ -357,8 +539,8 @@ class TestCopyModuleWorkspaces:
         build_dir.mkdir()
         _copy_module_workspaces(build_dir, "default", "agent01", strategy="symlink")
 
-        assert (build_dir / "modules" / "mod_a").is_symlink()
-        assert (build_dir / "modules" / "mod_b").is_symlink()
+        assert (build_dir / "modules" / "mod_a" / "README.md").is_symlink()
+        assert (build_dir / "modules" / "mod_b" / "README.md").is_symlink()
 
     @patch("agento.framework.bootstrap.get_manifests")
     def test_skips_module_without_workspace_dir(self, mock_get_manifests, tmp_path):
@@ -393,8 +575,8 @@ class TestCopyModuleWorkspaces:
         assert not (dest / "_myws").exists()
 
     @patch("agento.framework.bootstrap.get_manifests")
-    def test_layered_falls_back_to_copy_when_symlink_strategy(self, mock_get_manifests, tmp_path):
-        """Symlink strategy falls back to copy when scope dirs exist."""
+    def test_layered_symlink_preserves_overrides(self, mock_get_manifests, tmp_path):
+        """Symlink strategy with scope overlays symlinks each layer's unique files."""
         manifest = self._make_layered_manifest(tmp_path)
         mock_get_manifests.return_value = [manifest]
 
@@ -403,10 +585,13 @@ class TestCopyModuleWorkspaces:
         _copy_module_workspaces(build_dir, "myws", "dev01", strategy="symlink")
 
         dest = build_dir / "modules" / "layered_mod"
-        # Should NOT be a symlink (layered copy used instead)
+        assert dest.is_dir()
         assert not dest.is_symlink()
+        assert (dest / "base.md").is_symlink()
         assert (dest / "base.md").read_text() == "# Base"
+        assert (dest / "ws.md").is_symlink()
         assert (dest / "ws.md").read_text() == "# WS scoped"
+        assert (dest / "av.md").is_symlink()
         assert (dest / "av.md").read_text() == "# AV scoped"
 
     @patch("agento.framework.bootstrap.get_manifests")
@@ -443,7 +628,7 @@ class TestCopyModuleWorkspaces:
     def test_user_module_overlay_merges_via_app_code_path(self, mock_get_manifests, tmp_path):
         """User modules (app/code/*) apply the layered cascade exactly like core modules."""
         # Simulate a manifest whose path lives outside src/agento/modules — i.e. app/code/*.
-        mod_dir = tmp_path / "app" / "code" / "mymod"
+        mod_dir = tmp_path / "app" / "code" / "my_module"
         ws_dir = mod_dir / "workspace"
         ws_dir.mkdir(parents=True)
         (ws_dir / "README.md").write_text("# base readme")
@@ -456,7 +641,7 @@ class TestCopyModuleWorkspaces:
         (av / "only_av.md").write_text("av only")
 
         manifest = MagicMock()
-        manifest.name = "mymod"
+        manifest.name = "my_module"
         manifest.path = str(mod_dir)
         mock_get_manifests.return_value = [manifest]
 
@@ -464,7 +649,7 @@ class TestCopyModuleWorkspaces:
         build_dir.mkdir()
         _copy_module_workspaces(build_dir, "myws", "myav", strategy="copy")
 
-        dest = build_dir / "modules" / "mymod"
+        dest = build_dir / "modules" / "my_module"
         assert dest.is_dir()
         assert (dest / "README.md").read_text() == "# ws readme override"
         assert (dest / "only_in_ws.md").read_text() == "ws only"
@@ -473,55 +658,70 @@ class TestCopyModuleWorkspaces:
         assert not (dest / "_myws").exists()
 
 
-class TestBuildingStrategyFromOverrides:
-    """Verify execute_build reads building_strategy from scoped overrides, not global config."""
+class TestReadStrategy:
+    """Tests for _read_strategy: reads global scope only, falls back to config.json, coerces invalid values."""
 
-    @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
-    @patch("agento.framework.scoped_config.build_scoped_overrides")
-    @patch("agento.framework.workspace.get_agent_view")
-    def test_reads_strategy_from_scoped_overrides(
-        self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer, tmp_path,
-    ):
-        """When building_strategy is in scoped overrides, it should be used."""
-        mock_get_av.return_value = _make_agent_view()
-        mock_overrides.return_value = {
-            "agent_view/provider": ("claude", False),
-            "workspace_build/building_strategy": ("symlink", False),
-        }
+    def _mock_conn_for_global_overrides(self, rows):
+        """Build a mock conn whose global-scope query returns the given rows."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = rows
+        return conn
 
-        from agento.framework.agent_view_runtime import AgentViewRuntime
-        mock_resolve.return_value = AgentViewRuntime(provider="claude")
-        mock_get_writer.return_value = MagicMock()
+    def test_reads_global_db_value(self):
+        rows = [{"path": "workspace_build/strategy/theme", "value": "symlink", "encrypted": 0}]
+        conn = self._mock_conn_for_global_overrides(rows)
+        with patch("agento.framework.bootstrap.get_module_config", return_value={}):
+            assert _read_strategy(conn, "theme") == "symlink"
 
+    def test_falls_back_to_module_config(self):
+        conn = self._mock_conn_for_global_overrides([])
+        with patch(
+            "agento.framework.bootstrap.get_module_config",
+            return_value={"strategy/modules": "symlink"},
+        ):
+            assert _read_strategy(conn, "modules") == "symlink"
+
+    def test_defaults_to_copy_when_unset(self):
+        conn = self._mock_conn_for_global_overrides([])
+        with patch("agento.framework.bootstrap.get_module_config", return_value={}):
+            assert _read_strategy(conn, "skills") == "copy"
+
+    def test_invalid_value_falls_back_to_copy(self):
+        rows = [{"path": "workspace_build/strategy/theme", "value": "bogus", "encrypted": 0}]
+        conn = self._mock_conn_for_global_overrides(rows)
+        with patch("agento.framework.bootstrap.get_module_config", return_value={}):
+            assert _read_strategy(conn, "theme") == "copy"
+
+    def test_ignores_scoped_db_overrides(self):
+        """A value set at workspace or agent_view scope must not influence _read_strategy."""
         conn = MagicMock()
         cursor = MagicMock()
         conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
         conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
-        call_count = 0
-        def fetchone_side_effect():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return {"code": "testws"}
-            if call_count == 2:
-                return None  # No existing build
-            return None
-        cursor.fetchone.side_effect = fetchone_side_effect
-        cursor.lastrowid = 99
+        def fetchall_side_effect():
+            # load_scoped_db_overrides queries (scope=default, scope_id=0) only;
+            # we return nothing to simulate global scope being unset.
+            return []
+        cursor.fetchall.side_effect = fetchall_side_effect
 
-        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
-            result = execute_build(conn, 1)
+        with patch("agento.framework.bootstrap.get_module_config", return_value={}):
+            assert _read_strategy(conn, "theme") == "copy"
 
-        assert result.build_id == 99
-        assert result.skipped is False
-        # Verify a different checksum than without the strategy override
-        checksum_copy = compute_build_checksum(
-            {"agent_view/provider": ("claude", False), "workspace_build/building_strategy": ("symlink", False)},
-            building_strategy="symlink",
-        )
-        assert result.checksum == checksum_copy
+        # Confirm we queried only the global scope
+        queries = [c.args for c in cursor.execute.call_args_list]
+        for sql, params in queries:
+            if "core_config_data" in sql and "scope" in sql:
+                # load_scoped_db_overrides passes (scope, scope_id) as params
+                assert params == ("default", 0)
+
+    def test_rejects_unknown_source(self):
+        conn = MagicMock()
+        with pytest.raises(ValueError, match="Unknown workspace_build source"):
+            _read_strategy(conn, "bogus")
 
 
 class TestWriteInstructionFiles:
@@ -557,6 +757,46 @@ class TestWriteInstructionFiles:
         )
         assert (tmp_path / "SOUL.md").read_text() == "# From DB"
 
+    def test_unlinks_symlink_before_writing(self, tmp_path):
+        """If a prior layer left AGENTS.md as a symlink, writing must not mutate the source."""
+        source_dir = tmp_path / "theme_src"
+        source_dir.mkdir()
+        source_file = source_dir / "AGENTS.md"
+        source_file.write_text("# original source content")
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        (build_dir / "AGENTS.md").symlink_to(source_file)
+
+        _write_instruction_files(
+            build_dir,
+            {"agent_view/instructions/agents_md": ("# from DB", False)},
+        )
+        # Source file must be unchanged
+        assert source_file.read_text() == "# original source content"
+        # Build file must contain the DB value, and no longer be a symlink
+        target = build_dir / "AGENTS.md"
+        assert target.read_text() == "# from DB"
+        assert not target.is_symlink()
+
+    def test_unlinks_symlinked_claude_md_before_writing(self, tmp_path):
+        """CLAUDE.md is always overwritten — must not follow a prior symlink."""
+        source_dir = tmp_path / "theme_src"
+        source_dir.mkdir()
+        source_file = source_dir / "CLAUDE.md"
+        source_file.write_text("# original claude content")
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        (build_dir / "CLAUDE.md").symlink_to(source_file)
+
+        _write_instruction_files(build_dir, {})
+        # Source file must be unchanged
+        assert source_file.read_text() == "# original claude content"
+        # CLAUDE.md must be the canonical pointer content
+        assert not (build_dir / "CLAUDE.md").is_symlink()
+        assert "AGENTS.md" in (build_dir / "CLAUDE.md").read_text()
+
 
 class TestWriteSkillsToBuild:
     """Skills must materialize as directories (SKILL.md + companion files),
@@ -584,9 +824,22 @@ class TestWriteSkillsToBuild:
 
         dest = build / ".claude" / "skills" / "my_skill"
         assert dest.is_dir()
+        assert not dest.is_symlink()
         assert (dest / "SKILL.md").read_text() == "# my_skill"
-        # Must NOT have flat `<name>.md` at the skills/ root.
         assert not (build / ".claude" / "skills" / "my_skill.md").exists()
+
+    def test_symlink_strategy_creates_skill_dir_symlinks(self, tmp_path):
+        skill, _ = self._make_skill(tmp_path, "my_skill")
+        build = tmp_path / "build"
+        build.mkdir()
+        _write_skills_to_build(
+            build, [skill], registry=MagicMock(), skills_dir=tmp_path / "skills",
+            strategy="symlink",
+        )
+
+        dest = build / ".claude" / "skills" / "my_skill"
+        assert dest.is_symlink()
+        assert (dest / "SKILL.md").read_text() == "# my_skill"
 
     def test_preserves_companion_files(self, tmp_path):
         skill, _ = self._make_skill(
@@ -693,6 +946,7 @@ class TestExecuteBuild:
             return None
 
         cursor.fetchone.side_effect = fetchone_side_effect
+        cursor.fetchall.return_value = []  # global-scope DB overrides for strategy
         cursor.lastrowid = 42
         return conn, cursor
 
@@ -826,7 +1080,7 @@ class TestValidateCode:
 
     def test_valid_codes(self):
         from agento.framework.workspace import validate_code
-        for code in ("default", "agent01", "kazar_dev", "my_workspace", "a"):
+        for code in ("default", "agent01", "my_company_dev", "my_workspace", "a"):
             validate_code(code)  # should not raise
 
     def test_rejects_underscore_prefix(self):

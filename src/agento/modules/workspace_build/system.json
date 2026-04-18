@@ -1,10 +1,26 @@
 {
-  "building_strategy": {
+  "strategy/theme": {
     "type": "select",
-    "label": "Module workspace building strategy (copy or symlink)",
+    "label": "Theme source building strategy (global)",
+    "options": [
+      {"value": "copy", "label": "Copy files (default)"},
+      {"value": "symlink", "label": "Symlink to theme sources"}
+    ]
+  },
+  "strategy/modules": {
+    "type": "select",
+    "label": "Module workspace building strategy (global)",
     "options": [
       {"value": "copy", "label": "Copy files (default)"},
       {"value": "symlink", "label": "Symlink to module sources"}
+    ]
+  },
+  "strategy/skills": {
+    "type": "select",
+    "label": "Skills building strategy (global)",
+    "options": [
+      {"value": "copy", "label": "Copy files (default)"},
+      {"value": "symlink", "label": "Symlink to skill sources"}
     ]
   }
 }

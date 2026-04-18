@@ -189,6 +189,18 @@ Use theme layering for **files** that should be part of the agent's workspace (d
 
 **What triggers a rebuild:** A change to any scoped config (`core_config_data` rows) that affects this agent_view, OR a change to its enabled skills. Builds are **cached by checksum** — if config hasn't changed, the existing build is reused.
 
+### Build sources
+
+Five kinds of content land in a build. Three come from the filesystem via the shared manifest algorithm (see "How strategies work" below); the other two are generated fresh each build.
+
+| # | Source | Write path | How it lands |
+|---|---|---|---|
+| 1 | **Theme** (`workspace/theme/` + `_{ws}` + `_{ws}/_{av}`) | build root | manifest-driven; strategy = `workspace_build/strategy/theme` |
+| 2 | **ConfigWriter output** (`.claude.json`, `.mcp.json`, `.codex/config.toml`) | build root | generated from scoped config — strategy does not apply |
+| 3 | **Instructions** (`AGENTS.md`, `SOUL.md`, `CLAUDE.md`) | build root | generated from DB overrides (falls back to theme file) |
+| 4 | **Modules** (each enabled module's `workspace/` + `_{ws}` + `_{ws}/_{av}`) | `build/modules/{name}/` | manifest-driven; strategy = `workspace_build/strategy/modules` |
+| 5 | **Skills** (enabled skill dirs) | `build/.claude/skills/{name}/` | manifest-driven (single-layer); strategy = `workspace_build/strategy/skills` |
+
 ### How a build is constructed
 
 Each build is a full materialization, written in this order:
@@ -198,30 +210,32 @@ execute_build(agent_view_id):
   1. Compute checksum from:
        - sorted(scoped_config.keys())
        - skill_checksums
+       - workspace_build/strategy/{theme,modules,skills}
      → If a build with this checksum already exists as 'ready', return it. Done.
 
   2. INSERT workspace_build (status='building'), mkdir builds/{build_id}/
 
-  3. Theme layering (3 layers, each overrides the previous):
-       a. Copy workspace/theme/* base content               → build_dir/
-       b. Copy workspace/theme/_{ws_code}/* if exists       → build_dir/ (overlay)
-       c. Copy workspace/theme/_{ws_code}/_{av_code}/*      → build_dir/ (overlay)
+  3. Theme:
+       build_manifest([theme/, theme/_{ws}/, theme/_{ws}/_{av}/])
+         └─ apply_manifest(build_dir, strategy=strategy/theme)
 
   4. Run ConfigWriter.prepare_workspace() for the agent_view's provider:
        - Claude → writes .claude.json, .claude/settings.json, .mcp.json
        - Codex  → writes .codex/config.toml with [mcp_servers.*]
 
-  5. Write instruction files from DB (if set):
+  5. Write instruction files from DB (always unlinks target first, so a
+     theme-provided symlink is replaced — never followed and mutated):
        - AGENTS.md ← DB override │ keep theme file
        - SOUL.md   ← DB override │ keep theme file
        - CLAUDE.md ← always: "Read AGENTS.md" pointer
 
-  6. Module workspace layering (per enabled module, 3 layers each):
-       a. Copy workspace/* base content                     → build_dir/modules/{name}/
-       b. Copy workspace/_{workspace_code}/* if exists      → build_dir/modules/{name}/
-       c. Copy workspace/_{ws_code}/_{av_code}/* if exists  → build_dir/modules/{name}/
+  6. Modules — for each enabled module:
+       build_manifest([mod/workspace/, mod/workspace/_{ws}/, mod/workspace/_{ws}/_{av}/])
+         └─ apply_manifest(build_dir/modules/{name}/, strategy=strategy/modules)
 
-  7. Copy enabled skill directories to build_dir/.claude/skills/{skill}/ (SKILL.md + companion files)
+  7. Skills — for each enabled skill (one-layer manifest per skill):
+       apply_manifest({skill.name: (skill_source_dir, "dir")},
+                      build_dir/.claude/skills/, strategy=strategy/skills)
 
   8. UPDATE workspace_build SET status='ready'
 
@@ -230,47 +244,145 @@ execute_build(agent_view_id):
 
 ### Override precedence (what wins)
 
-When the same file could come from multiple sources, later steps overwrite earlier ones:
+Theme, modules, and skills are all resolved through the same manifest algorithm, so their override rules are identical: within each source, later layers beat earlier ones. The strategy (`copy` or `symlink`) changes only the on-disk representation — never the winner.
 
 ```
-LOWEST PRECEDENCE (base)                              HIGHEST PRECEDENCE (wins)
-
-  theme base  <  theme/ws  <  theme/av  <  module base  <  module/ws  <  module/av  <  DB config  <  ENV
-  (theme/*)     (theme/_ws/)  (theme/_ws/_av/)                                        (per-scope)   (CONFIG__...)
-```
-
-Within each layer, the three-level `_` prefix cascade applies:
-
-```
+Within a source:
   base content (no _)  <  _{workspace_code}/  <  _{workspace_code}/_{agent_view_code}/
-```
 
-For DB-scoped config specifically, the three-level fallback is:
+Across writes (earlier steps can be overwritten by later ones in the build order):
+  theme  <  ConfigWriter output  <  instructions  <  modules  <  skills
+  (modules/skills land in their own subdirs, so collisions with theme are rare)
 
-```
-  global (scope_id=0)  <  workspace  <  agent_view
+DB-scoped config fallback (feeds instructions + ConfigWriter):
+  global (scope_id=0)  <  workspace  <  agent_view  <  ENV (CONFIG__…)
 ```
 
 So a setting on `agent_view` beats the workspace-wide setting, which beats the global default.
+
+### How strategies work
+
+Each file-based source (theme, modules, skills) respects a global strategy key:
+
+```
+workspace_build/strategy/theme    = copy | symlink   (default: copy)
+workspace_build/strategy/modules  = copy | symlink   (default: copy)
+workspace_build/strategy/skills   = copy | symlink   (default: copy)
+```
+
+- **Global only.** These keys are read from `scope_id=0`. Per-workspace and per-agent_view scopes are ignored — strategy is an operator-level choice, not a per-build one.
+- **Checksum input.** All three values feed the build checksum, so changing any key invalidates existing builds.
+- **Migration.** The former single key `workspace_build/building_strategy` is migrated automatically on `agento setup:upgrade` → its value moves to `workspace_build/strategy/modules`; the old row is deleted.
+
+#### The manifest algorithm
+
+The builder converts each source's layers into a relative-path → `(source, kind)` manifest via a recursive merge-walk. Same function, same rules, applied everywhere:
+
+```
+build_manifest(layers, depth=0):
+  for each top-level name across the layers (skipping . and _ prefixes):
+    - unique across layers       → keep as-is (whole file or whole dir)
+    - file-only collision        → latest layer wins outright (file)
+    - mixed file/dir collision   → latest wins outright (no descent)
+    - all dirs collide           → descend and merge sub-manifest under name/
+                                   (capped at MAX_DEPTH=10; at the cap, latest wins)
+
+apply_manifest(manifest, target_dir, strategy):
+  for each entry:
+    - parent dirs are always real dirs
+    - strategy=copy    → shutil.copy2 (files) or shutil.copytree (dirs)
+    - strategy=symlink → target.symlink_to(absolute source path)
+```
+
+The apply step is strategy-agnostic on correctness: the manifest has already encoded the winner for every path. Whether you copy or symlink, the resulting tree has identical contents from the consumer's view.
+
+#### Safety: overwriting symlinked targets
+
+When `strategy/theme=symlink`, theme-provided files like `AGENTS.md` land in the build as symlinks to the source. The instructions step (step 5) then overwrites them. To avoid following a symlink and mutating the original source file, every target is `unlink()`ed before being written.
 
 ### Module workspace layering
 
 Module `workspace/` directories use the same layered cascade as theme — the module's `workspace/` dir is the base layer, with `_{ws}/` and `_{ws}/_{av}/` as scope overlays:
 
 ```
-app/code/kazar/workspace/
+app/code/my_module/workspace/
 ├── README.md                   # → ALL builds (base content)
 ├── docs/                       # → ALL builds
 │   └── magento-api.md
 ├── _it/                        # Workspace "it" scope
-│   ├── kazar-it-config.md      # → all agent_views in "it"
+│   ├── my-module-it-config.md  # → all agent_views in "it"
 │   └── _dev_01/                # Agent_view "dev_01" scope
 │       └── dev-overrides.md    # → only dev_01 builds
 └── _support/
     └── support-rules.md        # → all agent_views in "support"
 ```
 
-When scope dirs (`_*`) exist in a module workspace, the builder always uses **copy** strategy (even if the global building strategy is "symlink") because symlinks can't merge layers. Modules without scope dirs preserve current symlink behavior.
+Modules feed their three layers into the same `build_manifest()` used for theme, so the symlink/copy choice (`strategy/modules`) behaves identically — unique files at any layer become symlinks (when the strategy is `symlink`); collisions descend to file-level granularity automatically.
+
+### Example: heavy base dir + a scope overlay
+
+Given this theme:
+
+```
+workspace/theme/
+├── CLAUDE.md                      # base only
+├── magento-source/                # 800 MB, base only
+├── docs/
+│   └── general.md
+└── _it/
+    ├── magento-rules.md
+    └── docs/
+        └── it-specific.md
+```
+
+Build target `(ws=it, av=dev_01)`, `strategy/theme=symlink`:
+
+| Entry | Kind | Source (winner) |
+|---|---|---|
+| `CLAUDE.md` | file | `theme/CLAUDE.md` |
+| `magento-source` | **dir** | `theme/magento-source/` *(single symlink — no duplication)* |
+| `docs/general.md` | file | `theme/docs/general.md` |
+| `docs/it-specific.md` | file | `theme/_it/docs/it-specific.md` |
+| `magento-rules.md` | file | `theme/_it/magento-rules.md` |
+
+`docs/` collided across layers, so it descends to a real directory with file-level symlinks inside. `magento-source/` was unique to the base layer, so it stays as a single symlink — the heavy tree is never copied.
+
+With `strategy/theme=copy` the structure is identical; every entry is a real file/tree instead of a symlink.
+
+### Example: module with scope overlays
+
+```
+app/code/my_module/workspace/
+├── README.md
+├── docs/api.md
+├── _it/
+│   ├── it-config.md
+│   └── docs/it-notes.md
+└── _it/_dev_01/
+    └── README.md                  # overrides base README.md for dev_01
+```
+
+Build target `(ws=it, av=dev_01)`, `strategy/modules=symlink`:
+
+| Entry | Kind | Source (winner) |
+|---|---|---|
+| `README.md` | file | `_it/_dev_01/README.md` (latest layer wins) |
+| `docs/api.md` | file | `docs/api.md` |
+| `docs/it-notes.md` | file | `_it/docs/it-notes.md` |
+| `it-config.md` | file | `_it/it-config.md` |
+
+Each entry lands under `build/modules/my_module/` as a symlink. The `README.md` override was resolved in the manifest — no extra logic at apply time.
+
+### Example: skills
+
+Skills have no scope cascade today. Each enabled skill is one manifest entry:
+
+| Entry | Kind | Source |
+|---|---|---|
+| `my-skill` | dir | `skills_dir/my-skill/` |
+| `another-skill` | dir | `skills_dir/another-skill/` |
+
+`strategy/skills=symlink` → each skill becomes one symlink under `build/.../.claude/skills/`.  `strategy/skills=copy` → each is copied via `copytree`.
 
 ### Why builds are cached
 
