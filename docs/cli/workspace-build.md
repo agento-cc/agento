@@ -33,18 +33,38 @@ The `--agent-view` and `--all` flags are mutually exclusive; `--force` can be co
 
 1. Resolves the agent_view and its scoped config overrides (agent_view → workspace → global fallback)
 2. Fetches enabled skills for this agent_view (soft dependency on `skill` module)
-3. Computes a SHA-256 checksum over sorted config values + skill checksums
-4. **Skip check** — if a `ready` build with the same agent_view + checksum exists **and its `build_dir` is intact on disk**, skips the rebuild. `--force` bypasses this check; a missing on-disk directory also forces a rebuild (the stale DB row is retired first).
-5. Creates a build directory and applies layers in order:
-   - **Theme layering** — copies files from `workspace/theme/`, then overlays workspace-scoped (`workspace/theme/_{ws_code}/`) and agent_view-scoped (`workspace/theme/_{ws_code}/_{av_code}/`) content
+3. Computes a SHA-256 checksum over sorted config values + skill checksums + per-source build strategies
+4. **Skip check** — if a `ready` build with the same agent_view + checksum exists **and its `build_dir` is intact on disk**, skips the rebuild and updates the `current` symlink if needed. `--force` bypasses this check; a missing on-disk directory also forces a rebuild (the stale DB row is retired first).
+5. Creates a build directory and materializes each source using its configured strategy (copy or symlink):
+   - **Theme** — merges `workspace/theme/`, `workspace/theme/_{ws_code}/`, `workspace/theme/_{ws_code}/_{av_code}/` via the manifest algorithm
    - **Agent CLI configs** — `.claude.json`, `.mcp.json`, `.codex/config.toml` (via provider-specific ConfigWriter)
    - **Instruction files** — `AGENTS.md`, `SOUL.md` from DB if set (otherwise keeps theme files), `CLAUDE.md` always written
-   - **Module workspace layering** — copies each enabled module's `workspace/` with the same `_` prefix scoping convention
-   - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`) copied from enabled skills
+   - **Module workspaces** — each enabled module's `workspace/` with the same `_` prefix scoping convention
+   - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`)
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
 
 Theme and module workspace directories use the **`_` prefix convention**: directories starting with `_` are scope boundaries (never copied as content), while all other files and directories are content. See [workspace architecture](../architecture/workspace.md) for full details and examples.
+
+### Build Strategy
+
+Three config keys control how file sources are materialized — globally (not per agent_view):
+
+| Config path | Values | Default | Applies to |
+|---|---|---|---|
+| `workspace_build/strategy/theme` | `copy` \| `symlink` | `copy` | `workspace/theme/` layers |
+| `workspace_build/strategy/modules` | `copy` \| `symlink` | `copy` | Each module's `workspace/` |
+| `workspace_build/strategy/skills` | `copy` \| `symlink` | `copy` | Skill directories |
+
+```bash
+agento config:set workspace_build/strategy/theme symlink    # symlink theme (saves disk for large repos)
+agento config:set workspace_build/strategy/modules symlink
+agento config:set workspace_build/strategy/skills symlink
+```
+
+`symlink` creates one symlink per resolved file/directory entry. `copy` produces fully independent real files. Both strategies produce identical logical trees — only on-disk representation differs. Changing any strategy key changes the checksum, triggering a new build.
+
+**Migration note:** The former single key `workspace_build/building_strategy` is automatically migrated to `workspace_build/strategy/modules` by `agento setup:upgrade`. No manual action required.
 
 Config files are only generated when the corresponding `agent_view/*` config paths exist in scoped overrides. If no `agent_view/*` paths are set for an agent_view, those files are skipped.
 

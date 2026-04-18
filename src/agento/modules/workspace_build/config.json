@@ -1,3 +1,5 @@
 {
-  "building_strategy": "copy"
+  "strategy/theme": "copy",
+  "strategy/modules": "copy",
+  "strategy/skills": "copy"
 }
