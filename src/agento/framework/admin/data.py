@@ -6,7 +6,17 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agento.framework.scoped_config import Scope
+from agento.framework.config_resolver import (
+    load_db_overrides,
+    read_config_defaults,
+)
+from agento.framework.config_schema import allowed_scopes as get_allowed_scopes
+from agento.framework.config_schema import is_scope_allowed
+from agento.framework.scoped_config import (
+    Scope,
+    build_scoped_overrides,
+    load_scoped_db_overrides,
+)
 
 
 @dataclass
@@ -29,6 +39,9 @@ class ModuleSchema:
     module_path: Path | None = None
 
 
+_ALL_SCOPES: list[str] = [Scope.DEFAULT, Scope.WORKSPACE, Scope.AGENT_VIEW]
+
+
 @dataclass
 class ResolvedField:
     path: str
@@ -40,6 +53,8 @@ class ResolvedField:
     label: str
     obscure: bool
     options: list[dict] | None = None  # For select/multiselect: [{"value": ..., "label": ...}]
+    editable_at_scope: bool = True
+    allowed_scopes: list[str] = field(default_factory=lambda: list(_ALL_SCOPES))
 
 
 def _count_modules() -> int:
@@ -321,8 +336,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
     if target is None:
         return []
 
-    from ..config_resolver import _db_path, _db_path_tool, _env_key, _env_key_tool, read_config_defaults
-    from ..scoped_config import build_scoped_overrides, load_scoped_db_overrides
+    from ..config_resolver import _db_path, _db_path_tool, _env_key, _env_key_tool
 
     if conn is not None:
         _ensure_conn(conn)
@@ -348,7 +362,6 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
         merged_overrides = build_scoped_overrides(conn, workspace_id=scope_id)
         scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
     else:
-        from ..config_resolver import load_db_overrides
         merged_overrides = load_db_overrides(conn)
         scope_overrides = merged_overrides
 
@@ -379,6 +392,10 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             value = None
 
         display_value = "****" if obscure and value else (value if value is not None else "")
+        editable = is_scope_allowed(field_schema, scope)
+        scopes_list = get_allowed_scopes(field_schema)
+        if not editable:
+            display_value = f"{display_value} [global]" if display_value else "[global]"
         options = field_schema.get("options") if field_type in ("select", "multiselect") else None
         results.append(ResolvedField(
             path=f"{module}/{field_name}",
@@ -390,6 +407,8 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             label=label,
             obscure=obscure,
             options=options,
+            editable_at_scope=editable,
+            allowed_scopes=scopes_list,
         ))
 
     # Tool fields
@@ -421,6 +440,10 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
                 value = None
 
             display_value = "****" if obscure and value else (value if value is not None else "")
+            editable = is_scope_allowed(field_schema, scope)
+            scopes_list = get_allowed_scopes(field_schema)
+            if not editable:
+                display_value = f"{display_value} [global]" if display_value else "[global]"
             options = field_schema.get("options") if field_type in ("select", "multiselect") else None
             results.append(ResolvedField(
                 path=f"{module}/tools/{tool_name}/{field_name}",
@@ -432,6 +455,8 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
                 label=label,
                 obscure=obscure,
                 options=options,
+                editable_at_scope=editable,
+                allowed_scopes=scopes_list,
             ))
 
     return results

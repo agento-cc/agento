@@ -38,6 +38,29 @@ Toolbox reads config at each MCP session:
 
 Source: [docker/toolbox/config-loader.js](../../docker/toolbox/config-loader.js)
 
+## Scope Restrictions (`showIn*`)
+
+Fields declared in a module's `system.json` may restrict which scopes allow editing, using Magento-style flags:
+
+```json
+{
+  "timezone": {
+    "type": "string",
+    "label": "IANA timezone",
+    "showInDefault": true,
+    "showInWorkspace": false,
+    "showInAgentView": false
+  }
+}
+```
+
+Rules:
+
+- All three flags are optional; missing flags default to `true` (editable at that scope).
+- Fields without any `showIn*` declaration remain editable on every scope — backward compatible.
+- Enforcement is in CLI (`config:set`) and in the admin TUI (edit blocked with a `[global]` badge). No DB constraint is applied.
+- Applies equally to module-level fields (`module/field`) and tool fields (`module/tools/tool/field`).
+
 ## Further Reading
 
 - [ENV Variables](env-vars.md) — naming convention and examples
