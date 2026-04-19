@@ -15,6 +15,10 @@ class ClaudeConfigWriter:
     def owned_paths(self) -> tuple[set[str], set[str]]:
         return {".claude.json", ".mcp.json"}, {".claude"}
 
+    def persistent_home_paths(self) -> list[str]:
+        """Claude Code session + todo state that must survive workspace rebuilds."""
+        return [".claude/projects", ".claude/todos"]
+
     def prepare_workspace(
         self,
         working_dir: Path,

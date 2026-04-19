@@ -1,62 +1,38 @@
+"""Active-token resolution — purely DB-backed.
+
+Prior versions mirrored the "active" token as a filesystem symlink under
+``/etc/tokens/active/<agent_type>``. That indirection was removed when
+credentials moved inline into ``oauth_token.credentials`` (encrypted): the
+primary token for an agent_type is now the row with ``is_primary=TRUE``.
+"""
 from __future__ import annotations
 
-import json
 import logging
-import os
-import tempfile
-from pathlib import Path
 
-from .config import AgentManagerConfig
+import pymysql
+
 from .models import AgentProvider, Token
+from .token_store import get_primary_token, set_primary_token
 
 
 def resolve_active_token(
-    config: AgentManagerConfig,
+    conn: pymysql.Connection,
     agent_type: AgentProvider,
-) -> str | None:
-    """Read the active symlink for an agent type. Returns the target path, or None."""
-    link = Path(config.active_dir) / agent_type.value
-    if not link.is_symlink():
-        return None
-    target = link.resolve()
-    if not target.is_file():
-        return None
-    return str(target)
+) -> Token | None:
+    """Return the currently-active (primary) Token for ``agent_type``, or None."""
+    return get_primary_token(conn, agent_type)
 
 
 def update_active_token(
-    config: AgentManagerConfig,
+    conn: pymysql.Connection,
     agent_type: AgentProvider,
     token: Token,
     logger: logging.Logger | None = None,
 ) -> None:
-    """Atomically update the active symlink for an agent type.
-
-    Strategy: create temp symlink in active_dir, then os.rename() over the
-    real one. os.rename() is atomic on POSIX when src and dst are on the
-    same filesystem.
-    """
-    active_dir = Path(config.active_dir)
-    active_dir.mkdir(parents=True, exist_ok=True)
-
-    link_path = active_dir / agent_type.value
-    target = token.credentials_path
-
-    # mkstemp creates a file; remove it so we can create a symlink at that path.
-    fd, tmp_path = tempfile.mkstemp(dir=str(active_dir), prefix=f".{agent_type.value}.")
-    os.close(fd)
-    os.unlink(tmp_path)
-    os.symlink(target, tmp_path)
-    os.rename(tmp_path, str(link_path))
-
+    """Mark ``token`` as the primary token for ``agent_type``."""
+    set_primary_token(conn, agent_type, token.id, logger=logger)
     if logger:
         logger.info(
             f"Active token updated: agent_type={agent_type.value} "
-            f"label={token.label} target={target}"
+            f"label={token.label} id={token.id}"
         )
-
-
-def read_credentials(credentials_path: str) -> dict:
-    """Read opaque credentials JSON from a token file."""
-    with open(credentials_path) as f:
-        return json.load(f)

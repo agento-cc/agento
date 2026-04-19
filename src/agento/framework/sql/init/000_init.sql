@@ -89,12 +89,12 @@ CREATE TABLE IF NOT EXISTS job (
         FOREIGN KEY (agent_view_id) REFERENCES agent_view(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- OAuth token registry
+-- OAuth token registry (credentials stored encrypted inline; see framework/crypto.py)
 CREATE TABLE IF NOT EXISTS oauth_token (
     id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     agent_type       VARCHAR(20)  NOT NULL,
     label            VARCHAR(100) NOT NULL,
-    credentials_path VARCHAR(500) NOT NULL,
+    credentials      MEDIUMTEXT   NULL,
     model            VARCHAR(50)  NULL,
     is_primary       TINYINT(1)   NOT NULL DEFAULT 0,
     token_limit      BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -171,4 +171,7 @@ INSERT INTO schema_migration (version) VALUES
     ('013_singular_table_names'),
     ('014_workspace_agent_view'),
     ('015_ingress_identity'),
-    ('016_job_priority');
+    ('016_job_priority'),
+    ('017_job_pid_session_tracking'),
+    ('018_job_paused_status'),
+    ('019_oauth_token_inline_credentials');

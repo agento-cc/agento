@@ -10,15 +10,8 @@ from agento.framework.agent_manager.models import AgentProvider, Token, UsageSum
 
 @pytest.fixture
 def agent_config(tmp_path):
-    """AgentManagerConfig pointing to tmp_path for filesystem tests."""
-    tokens_dir = tmp_path / "tokens"
-    tokens_dir.mkdir()
-    active_dir = tokens_dir / "active"
-    active_dir.mkdir()
-    return AgentManagerConfig(
-        tokens_dir=str(tokens_dir),
-        active_dir=str(active_dir),
-    )
+    """AgentManagerConfig for tests that still need one."""
+    return AgentManagerConfig()
 
 
 def make_token(
@@ -26,7 +19,7 @@ def make_token(
     id: int = 1,
     agent_type: AgentProvider = AgentProvider.CLAUDE,
     label: str = "test-token",
-    credentials_path: str = "/etc/tokens/test.json",
+    credentials: dict | None = None,
     model: str | None = None,
     is_primary: bool = False,
     token_limit: int = 100_000,
@@ -34,11 +27,13 @@ def make_token(
 ) -> Token:
     """Helper to create Token instances for testing."""
     now = datetime.now(UTC)
+    if credentials is None:
+        credentials = {"subscription_key": "sk-test"}
     return Token(
         id=id,
         agent_type=agent_type,
         label=label,
-        credentials_path=credentials_path,
+        credentials=credentials,
         model=model,
         is_primary=is_primary,
         token_limit=token_limit,

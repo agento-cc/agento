@@ -18,7 +18,8 @@ def create_runner(
     timeout_seconds: int = 1200,
     model_override: str | None = None,
     working_dir: str | None = None,
-    credentials_path: str | None = None,
+    home_dir: str | None = None,
+    credentials_override: dict | None = None,
 ) -> Runner:
     """Create the appropriate Runner for the given AgentProvider."""
     factory = _RUNNERS.get(agent_type)
@@ -35,8 +36,10 @@ def create_runner(
     )
     if working_dir is not None:
         kwargs["working_dir"] = working_dir
-    if credentials_path is not None:
-        kwargs["credentials_path"] = credentials_path
+    if home_dir is not None:
+        kwargs["home_dir"] = home_dir
+    if credentials_override is not None:
+        kwargs["credentials_override"] = credentials_override
     return factory(**kwargs)
 
 

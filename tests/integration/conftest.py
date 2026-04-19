@@ -22,6 +22,9 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
 TEST_DB = "cron_agent_test"
 
+# Ensure encryption key is available for tests (used for oauth_token.credentials and obscure configs)
+os.environ.setdefault("AGENTO_ENCRYPTION_KEY", "test-encryption-key-for-integration")
+
 
 def _load_fixture(name: str) -> dict:
     return json.loads((FIXTURES_DIR / name).read_text())
@@ -204,17 +207,23 @@ def _truncate_tables():
 
 def insert_primary_token(agent_type: str = "claude", model: str | None = None) -> int:
     """Insert an enabled, primary oauth_token and return its id."""
+    from agento.framework.agent_manager.models import encrypt_credentials
+
+    encrypted = encrypt_credentials({"subscription_key": f"sk-test-{agent_type}"})
     conn = _test_connection(autocommit=True)
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE oauth_token SET is_primary = FALSE WHERE is_primary = TRUE")
+            cur.execute(
+                "UPDATE oauth_token SET is_primary = FALSE WHERE agent_type = %s AND is_primary = TRUE",
+                (agent_type,),
+            )
             cur.execute(
                 """
                 INSERT INTO oauth_token
-                    (agent_type, label, credentials_path, is_primary, enabled, model)
+                    (agent_type, label, credentials, is_primary, enabled, model)
                 VALUES (%s, %s, %s, TRUE, TRUE, %s)
                 """,
-                (agent_type, f"test-{agent_type}", f"/tmp/test-{agent_type}.json", model),
+                (agent_type, f"test-{agent_type}", encrypted, model),
             )
             return cur.lastrowid
     finally:

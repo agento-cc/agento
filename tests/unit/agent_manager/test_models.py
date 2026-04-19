@@ -1,8 +1,30 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
+import pytest
+
 from agento.framework.agent_manager.models import AgentProvider, RotationResult, Token, UsageSummary
+
+
+class _FakeEncryptor:
+    def encrypt(self, plaintext: str) -> str:
+        return f"aes256:iv:{plaintext}"
+
+    def decrypt(self, ciphertext: str) -> str:
+        return ciphertext.split(":", 2)[-1]
+
+
+@pytest.fixture(autouse=True)
+def _fake_encryptor(monkeypatch):
+    from agento.framework import encryptor as enc
+    monkeypatch.setattr(enc, "_instance", _FakeEncryptor())
+    yield
+
+
+_CREDS = {"subscription_key": "sk-test"}
+_CIPHERTEXT = f"aes256:iv:{json.dumps(_CREDS)}"
 
 
 class TestAgentProvider:
@@ -23,7 +45,7 @@ class TestToken:
             "id": 1,
             "agent_type": "claude",
             "label": "prod-1",
-            "credentials_path": "/etc/tokens/claude_1.json",
+            "credentials": _CIPHERTEXT,
             "model": "claude-sonnet-4-20250514",
             "is_primary": 1,
             "token_limit": 100000,
@@ -37,7 +59,7 @@ class TestToken:
         assert token.id == 1
         assert token.agent_type == AgentProvider.CLAUDE
         assert token.label == "prod-1"
-        assert token.credentials_path == "/etc/tokens/claude_1.json"
+        assert token.credentials == _CREDS
         assert token.model == "claude-sonnet-4-20250514"
         assert token.is_primary is True
         assert token.token_limit == 100000
@@ -48,7 +70,7 @@ class TestToken:
             "id": 2,
             "agent_type": "codex",
             "label": "codex-1",
-            "credentials_path": "/etc/tokens/codex_1.json",
+            "credentials": None,
             "model": None,
             "is_primary": 0,
             "token_limit": 0,
@@ -64,13 +86,14 @@ class TestToken:
         assert token.token_limit == 0
         assert token.model is None
         assert token.is_primary is False
+        assert token.credentials is None
 
     def test_from_row_defaults_missing_model_and_primary(self):
         row = {
             "id": 3,
             "agent_type": "claude",
             "label": "legacy",
-            "credentials_path": "/etc/tokens/old.json",
+            "credentials": _CIPHERTEXT,
             "token_limit": 50000,
             "enabled": 1,
             "created_at": datetime(2025, 1, 1),

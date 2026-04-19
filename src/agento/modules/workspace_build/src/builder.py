@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,14 @@ from agento.framework.events import (
     WorkspaceBuildStartedEvent,
 )
 from agento.framework.workspace_paths import BUILD_DIR, THEME_DIR
+
+_DEFAULT_MAX_BUILDS = 10
+
+# Config paths (scoped, from agent_view/workspace/global)
+_SSH_PRIVATE_KEY_PATH = "agent_view/identity/ssh_private_key"
+_SSH_PUBLIC_KEY_PATH = "agent_view/identity/ssh_public_key"
+_SSH_CONFIG_PATH = "agent_view/identity/ssh_config"
+_SSH_KNOWN_HOSTS_PATH = "agent_view/identity/ssh_known_hosts"
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +345,158 @@ def _resolve_strategies(conn) -> dict[str, Strategy]:
     return {source: _read_strategy(conn, source) for source in _SOURCES}
 
 
+def _state_dir(workspace_code: str, agent_view_code: str) -> Path:
+    return Path(BUILD_DIR) / workspace_code / agent_view_code / "state"
+
+
+def ensure_state_dir(
+    workspace_code: str,
+    agent_view_code: str,
+    persistent_paths: list[str],
+) -> Path:
+    """Create the per-agent_view persistent ``state/`` directory and ensure every
+    declared relative path exists inside it (so symlinks from the build dir
+    resolve to real targets).
+    """
+    state = _state_dir(workspace_code, agent_view_code)
+    state.mkdir(parents=True, exist_ok=True)
+    for rel in persistent_paths:
+        target = state / rel
+        # Treat paths ending in a file-like name conservatively as dirs — the
+        # agent creates files inside. If an agent declares a literal file path
+        # that needs to pre-exist, they can touch it themselves on first run.
+        target.mkdir(parents=True, exist_ok=True)
+    return state
+
+
+def materialize_ssh_identity(
+    build_dir: Path,
+    scoped_overrides: dict,
+) -> None:
+    """Write SSH key, config, and known_hosts from DB into ``build_dir/.ssh/``
+    when present. Private key is decrypted via the framework Encryptor and
+    written with mode 0600. Missing fields are silently skipped.
+    """
+    from agento.framework.encryptor import get_encryptor
+
+    private_entry = scoped_overrides.get(_SSH_PRIVATE_KEY_PATH)
+    public_entry = scoped_overrides.get(_SSH_PUBLIC_KEY_PATH)
+    config_entry = scoped_overrides.get(_SSH_CONFIG_PATH)
+    known_hosts_entry = scoped_overrides.get(_SSH_KNOWN_HOSTS_PATH)
+
+    if (private_entry is None and public_entry is None
+            and config_entry is None and known_hosts_entry is None):
+        return
+
+    ssh_dir = build_dir / ".ssh"
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(ssh_dir, 0o700)
+
+    if private_entry is not None:
+        value, encrypted = private_entry
+        if value:
+            plaintext = get_encryptor().decrypt(value) if encrypted else value
+            target = ssh_dir / "id_rsa"
+            target.write_text(plaintext)
+            os.chmod(target, 0o600)
+
+    if public_entry is not None and public_entry[0]:
+        (ssh_dir / "id_rsa.pub").write_text(public_entry[0])
+
+    if config_entry is not None and config_entry[0]:
+        target = ssh_dir / "config"
+        target.write_text(config_entry[0])
+        os.chmod(target, 0o600)
+
+    if known_hosts_entry is not None and known_hosts_entry[0]:
+        (ssh_dir / "known_hosts").write_text(known_hosts_entry[0])
+
+
+def link_persistent_paths(
+    build_dir: Path,
+    state_dir: Path,
+    persistent_paths: list[str],
+) -> None:
+    """For each declared persistent path, create a relative symlink
+    ``build_dir/<rel>`` → ``state_dir/<rel>``. Existing files/dirs at the
+    build-dir path are removed first so the symlink takes their place.
+    """
+    for rel in persistent_paths:
+        build_target = build_dir / rel
+        state_target = state_dir / rel
+        build_target.parent.mkdir(parents=True, exist_ok=True)
+        if build_target.is_symlink() or build_target.exists():
+            if build_target.is_dir() and not build_target.is_symlink():
+                shutil.rmtree(build_target)
+            else:
+                build_target.unlink()
+        rel_target = os.path.relpath(state_target, build_target.parent)
+        build_target.symlink_to(rel_target)
+
+
+def _read_retention_max_builds(conn) -> int:
+    """Read workspace_build/retention/max_builds (global scope), default 10."""
+    if conn is not None:
+        try:
+            from agento.framework.scoped_config import Scope, load_scoped_db_overrides
+            global_overrides = load_scoped_db_overrides(conn, Scope.DEFAULT, 0)
+            entry = global_overrides.get("workspace_build/retention/max_builds")
+            if entry is not None and entry[0] is not None:
+                return int(entry[0])
+        except (ValueError, Exception):
+            logger.debug("Failed to read retention/max_builds from DB; using config.json")
+
+    try:
+        from agento.framework.bootstrap import get_module_config
+        cfg = get_module_config("workspace_build") or {}
+        value = cfg.get("retention/max_builds", cfg.get("retention", {}).get("max_builds") if isinstance(cfg.get("retention"), dict) else None)
+        if value is not None:
+            return int(value)
+    except Exception:
+        pass
+    return _DEFAULT_MAX_BUILDS
+
+
+def gc_old_builds(
+    base_builds_dir: Path,
+    current_build_id: int,
+    max_builds: int,
+    logger_: logging.Logger | None = None,
+) -> list[int]:
+    """Remove old build directories beyond ``max_builds`` (keeps the newest N
+    including the current one). Returns the list of removed build ids.
+    """
+    _log = logger_ or logger
+    if max_builds <= 0:
+        return []
+    if not base_builds_dir.is_dir():
+        return []
+
+    # Build IDs are numeric dir names; mtime-sort as fallback for non-numeric names.
+    entries: list[tuple[int, Path]] = []
+    for entry in base_builds_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            bid = int(entry.name)
+        except ValueError:
+            continue
+        entries.append((bid, entry))
+
+    entries.sort(key=lambda e: e[0], reverse=True)  # newest first
+    to_keep = {bid for bid, _ in entries[:max_builds]}
+    to_keep.add(current_build_id)
+
+    removed = []
+    for bid, path in entries:
+        if bid in to_keep:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(bid)
+        _log.info("Garbage-collected old build %d at %s", bid, path)
+    return removed
+
+
 def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResult:
     """Build a materialized workspace for an agent_view.
 
@@ -345,7 +506,11 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
     checksum inputs has changed (manual theme edits, external template updates).
     """
     from agento.framework.agent_view_runtime import resolve_agent_view_runtime
-    from agento.framework.config_writer import get_agent_config, get_config_writer
+    from agento.framework.config_writer import (
+        all_persistent_home_paths,
+        get_agent_config,
+        get_config_writer,
+    )
     from agento.framework.scoped_config import build_scoped_overrides
     from agento.framework.workspace import get_agent_view
 
@@ -489,6 +654,14 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         # 6. .agents/skills symlink → .claude/skills (Codex compatibility)
         _create_agents_skills_symlink(build_dir)
 
+        # 7. SSH identity (private key, pub, config, known_hosts) from DB
+        materialize_ssh_identity(build_dir, overrides)
+
+        # 8. Persistent-state symlinks for agent-declared paths (Claude/Codex sessions, etc.)
+        persistent_paths = all_persistent_home_paths()
+        state_dir = ensure_state_dir(workspace_code, agent_view.code, persistent_paths)
+        link_persistent_paths(build_dir, state_dir, persistent_paths)
+
         # Mark as ready
         with conn.cursor() as cur:
             cur.execute(
@@ -502,6 +675,10 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         if current_link.is_symlink() or current_link.exists():
             current_link.unlink()
         current_link.symlink_to(build_dir)
+
+        # 9. Retention: prune old builds
+        max_builds = _read_retention_max_builds(conn)
+        gc_old_builds(base, current_build_id=build_id, max_builds=max_builds)
 
         logger.info("Build %d ready at %s (checksum %s)", build_id, build_dir, checksum[:12])
         _dispatch("workspace_build_complete_after", WorkspaceBuildCompletedEvent(

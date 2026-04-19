@@ -41,8 +41,11 @@ The `--agent-view` and `--all` flags are mutually exclusive; `--force` can be co
    - **Instruction files** — `AGENTS.md`, `SOUL.md` from DB if set (otherwise keeps theme files), `CLAUDE.md` always written
    - **Module workspaces** — each enabled module's `workspace/` with the same `_` prefix scoping convention
    - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`); a `.agents/skills` symlink pointing to `.claude/skills` is also created for Codex compatibility
+   - **SSH identity** — decrypts `agent_view/identity/ssh_private_key`, writes it to `.ssh/id_rsa` with mode 600; also materializes `ssh_public_key`, `ssh_config`, `ssh_known_hosts` when present (see [identity docs](../config/identity.md))
+   - **Persistent-state symlinks** — each registered agent module declares relative-to-HOME paths that must survive rebuilds (e.g. `.claude/projects` for session history). Framework symlinks each to a per-agent_view `state/` directory outside the build dir.
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
+8. **Retention GC** — prunes oldest `builds/N/` directories beyond `workspace_build/retention/max_builds` (default 10). The current build is always kept. See [Retention](#retention).
 
 Theme and module workspace directories use the **`_` prefix convention**: directories starting with `_` are scope boundaries (never copied as content), while all other files and directories are content. See [workspace architecture](../architecture/workspace.md) for full details and examples.
 
@@ -71,12 +74,28 @@ Config files are only generated when the corresponding `agent_view/*` config pat
 ### Build Directory Layout
 
 ```
-/workspace/{workspace_code}/{agent_view_code}/
+/workspace/build/{workspace_code}/{agent_view_code}/
+├── state/                  # PERSISTENT per agent_view — never wipe'd on rebuild
+│   ├── .claude/
+│   │   ├── projects/       # Claude Code session history (.jsonl)
+│   │   └── todos/
+│   └── .codex/
+│       ├── sessions/
+│       └── history.jsonl
 ├── builds/
-│   ├── 1/                  # Build ID 1
+│   ├── 1/                  # IMMUTABLE — HOME for agent processes
+│   │   ├── .ssh/id_rsa                     # 0600, decrypted from DB
+│   │   ├── .ssh/id_rsa.pub
+│   │   ├── .ssh/config                     # optional
+│   │   ├── .ssh/known_hosts                # optional
 │   │   ├── .claude.json
 │   │   ├── .mcp.json
+│   │   ├── .claude/
+│   │   │   ├── settings.json
+│   │   │   ├── projects -> ../../../state/.claude/projects     # SYMLINK
+│   │   │   └── todos    -> ../../../state/.claude/todos        # SYMLINK
 │   │   ├── .codex/config.toml
+│   │   ├── .codex/sessions -> ../../../state/.codex/sessions   # SYMLINK
 │   │   ├── CLAUDE.md
 │   │   ├── AGENTS.md
 │   │   ├── SOUL.md
@@ -85,11 +104,24 @@ Config files are only generated when the corresponding `agent_view/*` config pat
 │   │   └── .agents/
 │   │       └── skills -> ../.claude/skills  # symlink (Codex compatibility)
 │   └── 2/                  # Build ID 2 (newer)
-│       └── ...
-├── current -> builds/2     # Symlink to latest ready build
-└── runs/
-    └── {job_id}/           # Per-job isolated copy (created at runtime, cleaned up after)
+└── current -> builds/2     # Symlink to latest ready build
 ```
+
+**Key design**: `builds/<id>/` is ephemeral (rebuilt on every `workspace:build`), `state/` is persistent (accumulates sessions, caches). Symlinks from the build dir into `state/` bridge them so that session history survives rebuilds while the current config always reflects the latest build.
+
+### Retention
+
+Old build directories are garbage-collected after each build. Controlled by a single global config path:
+
+| Config path | Type | Default | Notes |
+|---|---|---|---|
+| `workspace_build/retention/max_builds` | integer | 10 | Number of newest builds to keep per agent_view. The current build is always kept. |
+
+```bash
+agento config:set workspace_build/retention/max_builds 20
+```
+
+This setting is global only (`showInDefault=true`, `showInWorkspace=false`, `showInAgentView=false`).
 
 ### Events
 
@@ -136,13 +168,13 @@ The `*` in the Current column indicates the build that the `current` symlink poi
 
 At job execution time, the consumer:
 
-1. Calls `get_current_build_dir()` to find the `current` symlink target
-2. If a build exists: copies all files into the per-job run directory (`runs/{job_id}/`)
-3. If no build exists: falls back to generating configs on-the-fly via `populate_agent_configs()`
-4. The agent CLI runs in the isolated run directory
-5. The run directory is cleaned up after job completion
+1. Calls `get_current_build_dir()` to find the `current` symlink target for this agent_view
+2. Copies / symlinks build artifacts into the per-job artifacts directory (`workspace/artifacts/<ws>/<av>/<job_id>/`) which becomes the agent's **working directory**
+3. Sets `HOME=<build_dir>` on the agent subprocess — so `~/.ssh/id_rsa`, `~/.claude/`, `~/.codex/`, and `AGENTS.md` all resolve against the current build, while session directories transparently resolve (via the symlinks) to the persistent `state/` dir
+4. The agent CLI executes
+5. The artifacts directory is cleaned up after job completion; `state/` is never touched
 
-Run `workspace:build` after changing agent_view config, skills, or instruction files to ensure the next job picks up the changes.
+Run `workspace:build` after changing agent_view config, skills, identity keys, or instruction files to ensure the next job picks up the changes.
 
 ## Database
 

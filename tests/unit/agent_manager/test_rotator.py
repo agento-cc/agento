@@ -108,10 +108,9 @@ class TestSelectBestToken:
 class TestRotateTokens:
     @patch("agento.framework.agent_manager.rotator.update_active_token")
     @patch("agento.framework.agent_manager.rotator.get_usage_summaries")
-    @patch("agento.framework.agent_manager.rotator.get_token_by_path")
     @patch("agento.framework.agent_manager.rotator.resolve_active_token")
     @patch("agento.framework.agent_manager.rotator.list_tokens")
-    def test_initial_rotation(self, mock_list, mock_resolve, mock_get_by_path, mock_usage, mock_update):
+    def test_initial_rotation(self, mock_list, mock_resolve, mock_usage, mock_update):
         config = AgentManagerConfig()
         t1 = make_token(id=1)
         mock_list.return_value = [t1]
@@ -128,16 +127,14 @@ class TestRotateTokens:
 
     @patch("agento.framework.agent_manager.rotator.update_active_token")
     @patch("agento.framework.agent_manager.rotator.get_usage_summaries")
-    @patch("agento.framework.agent_manager.rotator.get_token_by_path")
     @patch("agento.framework.agent_manager.rotator.resolve_active_token")
     @patch("agento.framework.agent_manager.rotator.list_tokens")
-    def test_rotation_to_better_token(self, mock_list, mock_resolve, mock_get_by_path, mock_usage, mock_update):
+    def test_rotation_to_better_token(self, mock_list, mock_resolve, mock_usage, mock_update):
         config = AgentManagerConfig()
-        t1 = make_token(id=1, credentials_path="/etc/tokens/c1.json")
-        t2 = make_token(id=2, credentials_path="/etc/tokens/c2.json")
+        t1 = make_token(id=1)
+        t2 = make_token(id=2)
         mock_list.return_value = [t1, t2]
-        mock_resolve.return_value = "/etc/tokens/c1.json"
-        mock_get_by_path.return_value = t1
+        mock_resolve.return_value = t1
         mock_usage.return_value = [
             make_usage(1, total_tokens=90_000),
             make_usage(2, total_tokens=10_000),
@@ -152,15 +149,13 @@ class TestRotateTokens:
 
     @patch("agento.framework.agent_manager.rotator.update_active_token")
     @patch("agento.framework.agent_manager.rotator.get_usage_summaries")
-    @patch("agento.framework.agent_manager.rotator.get_token_by_path")
     @patch("agento.framework.agent_manager.rotator.resolve_active_token")
     @patch("agento.framework.agent_manager.rotator.list_tokens")
-    def test_unchanged_when_best_is_current(self, mock_list, mock_resolve, mock_get_by_path, mock_usage, mock_update):
+    def test_unchanged_when_best_is_current(self, mock_list, mock_resolve, mock_usage, mock_update):
         config = AgentManagerConfig()
-        t1 = make_token(id=1, credentials_path="/etc/tokens/c1.json")
+        t1 = make_token(id=1)
         mock_list.return_value = [t1]
-        mock_resolve.return_value = "/etc/tokens/c1.json"
-        mock_get_by_path.return_value = t1
+        mock_resolve.return_value = t1
         mock_usage.return_value = [make_usage(1, total_tokens=10_000)]
 
         result = rotate_tokens(MagicMock(), config, AgentProvider.CLAUDE)

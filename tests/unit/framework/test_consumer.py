@@ -25,7 +25,7 @@ def _mock_primary_token():
 def _mock_resolved_token():
     """Create a mock token returned by TokenResolver.resolve."""
     token = MagicMock()
-    token.credentials_path = "/etc/tokens/claude_1.json"
+    token.credentials = {"subscription_key": "sk-test"}
     return token
 
 
@@ -365,7 +365,8 @@ class TestRunJob:
             timeout_seconds=sample_consumer_config.job_timeout_seconds,
             model_override=None,
             working_dir=None,
-            credentials_path="/etc/tokens/claude_1.json",
+            home_dir=None,
+            credentials_override={"subscription_key": "sk-test"},
         )
         assert isinstance(result, _JobResult)
         assert "subtype=" in result.summary

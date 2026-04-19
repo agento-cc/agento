@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -15,7 +16,7 @@ class Token:
     id: int
     agent_type: AgentProvider
     label: str
-    credentials_path: str
+    credentials: dict | None
     model: str | None
     is_primary: bool
     token_limit: int
@@ -29,7 +30,7 @@ class Token:
             id=row["id"],
             agent_type=AgentProvider(row["agent_type"]),
             label=row["label"],
-            credentials_path=row["credentials_path"],
+            credentials=_decrypt_credentials(row.get("credentials")),
             model=row.get("model"),
             is_primary=bool(row.get("is_primary", False)),
             token_limit=row["token_limit"],
@@ -37,6 +38,20 @@ class Token:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+def _decrypt_credentials(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    from ..encryptor import get_encryptor
+    plaintext = get_encryptor().decrypt(raw)
+    return json.loads(plaintext)
+
+
+def encrypt_credentials(credentials: dict) -> str:
+    """Encrypt a plaintext credentials dict for storage in oauth_token.credentials."""
+    from ..encryptor import get_encryptor
+    return get_encryptor().encrypt(json.dumps(credentials))
 
 
 @dataclass

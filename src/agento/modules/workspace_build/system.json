@@ -22,5 +22,12 @@
       {"value": "copy", "label": "Copy files (default)"},
       {"value": "symlink", "label": "Symlink to skill sources"}
     ]
+  },
+  "retention/max_builds": {
+    "type": "integer",
+    "label": "Max builds retained per agent_view (older are garbage-collected)",
+    "showInDefault": true,
+    "showInWorkspace": false,
+    "showInAgentView": false
   }
 }
