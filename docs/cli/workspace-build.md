@@ -40,7 +40,7 @@ The `--agent-view` and `--all` flags are mutually exclusive; `--force` can be co
    - **Agent CLI configs** — `.claude.json`, `.mcp.json`, `.codex/config.toml` (via provider-specific ConfigWriter)
    - **Instruction files** — `AGENTS.md`, `SOUL.md` from DB if set (otherwise keeps theme files), `CLAUDE.md` always written
    - **Module workspaces** — each enabled module's `workspace/` with the same `_` prefix scoping convention
-   - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`)
+   - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`); a `.agents/skills` symlink pointing to `.claude/skills` is also created for Codex compatibility
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
 
@@ -80,8 +80,10 @@ Config files are only generated when the corresponding `agent_view/*` config pat
 │   │   ├── CLAUDE.md
 │   │   ├── AGENTS.md
 │   │   ├── SOUL.md
-│   │   └── .claude/skills/
-│   │       └── my_skill.md
+│   │   ├── .claude/skills/
+│   │   │   └── my_skill/
+│   │   └── .agents/
+│   │       └── skills -> ../.claude/skills  # symlink (Codex compatibility)
 │   └── 2/                  # Build ID 2 (newer)
 │       └── ...
 ├── current -> builds/2     # Symlink to latest ready build
