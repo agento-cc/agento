@@ -55,7 +55,7 @@ class TestResolvedFieldScopeFlags:
         f = fields[0]
         assert f.editable_at_scope is False
         assert f.allowed_scopes == [Scope.DEFAULT]
-        assert "[global]" in f.display_value
+        assert "[readonly]" in f.display_value
 
     def test_field_editable_at_default_when_global_only(self):
         schema = _make_schema(fields={
@@ -79,7 +79,7 @@ class TestResolvedFieldScopeFlags:
         assert len(fields) == 1
         f = fields[0]
         assert f.editable_at_scope is True
-        assert "[global]" not in f.display_value
+        assert "[readonly]" not in f.display_value
 
     def test_field_without_flags_editable_everywhere(self):
         schema = _make_schema(fields={
@@ -141,7 +141,7 @@ class TestResolvedFieldScopeFlags:
         assert f.path == "testmod/tools/mytool/api_key"
         assert f.editable_at_scope is False
         assert f.allowed_scopes == [Scope.DEFAULT]
-        assert "[global]" in f.display_value
+        assert "[readonly]" in f.display_value
 
     def test_display_value_global_suffix_on_existing_value(self):
         schema = _make_schema(fields={
@@ -172,7 +172,7 @@ class TestResolvedFieldScopeFlags:
             fields = get_resolved_fields(conn, "testmod", Scope.AGENT_VIEW, 42)
 
         assert len(fields) == 1
-        assert fields[0].display_value == "UTC [global]"
+        assert fields[0].display_value == "UTC [readonly]"
         assert fields[0].editable_at_scope is False
 
 

@@ -1,13 +1,14 @@
 """Tests for config:set scope restriction enforcement (showIn* flags)."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from agento.framework.cli.config import _validate_config_path
+from agento.framework.cli.config import ConfigSchemaCommand, _validate_config_path
 
 
 @pytest.fixture
@@ -106,3 +107,38 @@ class TestValidateConfigPathScope:
             assert _validate_config_path(
                 "testmod/tools/unknown_tool/field", scope="default"
             ) is True
+
+
+class TestConfigSchemaUnreachableWarning:
+    def test_warns_when_all_show_in_flags_are_false(self, tmp_path: Path, capsys):
+        module_dir = tmp_path / "stale_mod"
+        module_dir.mkdir()
+        (module_dir / "module.json").write_text(json.dumps({
+            "name": "stale_mod",
+            "version": "1.0.0",
+            "description": "",
+        }))
+        (module_dir / "system.json").write_text(json.dumps({
+            "unreachable_field": {
+                "type": "string",
+                "label": "Nobody can set me",
+                "showInDefault": False,
+                "showInWorkspace": False,
+                "showInAgentView": False,
+            },
+            "ok_field": {"type": "string", "label": "Fine"},
+        }))
+
+        with patch(
+            "agento.framework.bootstrap.CORE_MODULES_DIR", str(tmp_path)
+        ), patch(
+            "agento.framework.bootstrap.USER_MODULES_DIR", "/does/not/exist"
+        ):
+            cmd = ConfigSchemaCommand()
+            args = argparse.Namespace(module="stale_mod", as_json=False)
+            cmd.execute(args)
+
+        out = capsys.readouterr().out
+        assert "unreachable" in out.lower()
+        assert "stale_mod/unreachable_field" in out
+        assert "stale_mod/ok_field" not in out.split("unreachable")[1]

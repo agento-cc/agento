@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agento.framework.config_resolver import (
+    _db_path,
+    _db_path_tool,
+    _env_key,
+    _env_key_tool,
     load_db_overrides,
     read_config_defaults,
 )
@@ -336,8 +340,6 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
     if target is None:
         return []
 
-    from ..config_resolver import _db_path, _db_path_tool, _env_key, _env_key_tool
-
     if conn is not None:
         _ensure_conn(conn)
 
@@ -395,7 +397,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
         editable = is_scope_allowed(field_schema, scope)
         scopes_list = get_allowed_scopes(field_schema)
         if not editable:
-            display_value = f"{display_value} [global]" if display_value else "[global]"
+            display_value = f"{display_value} [readonly]" if display_value else "[readonly]"
         options = field_schema.get("options") if field_type in ("select", "multiselect") else None
         results.append(ResolvedField(
             path=f"{module}/{field_name}",
@@ -443,7 +445,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             editable = is_scope_allowed(field_schema, scope)
             scopes_list = get_allowed_scopes(field_schema)
             if not editable:
-                display_value = f"{display_value} [global]" if display_value else "[global]"
+                display_value = f"{display_value} [readonly]" if display_value else "[readonly]"
             options = field_schema.get("options") if field_type in ("select", "multiselect") else None
             results.append(ResolvedField(
                 path=f"{module}/tools/{tool_name}/{field_name}",
