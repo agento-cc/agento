@@ -8,8 +8,14 @@ from ..scoped_config import Scope
 from .runtime import _load_framework_config
 
 
-def _validate_config_path(path: str) -> bool:
-    """Validate config path against module system.json. Returns False if invalid."""
+def _validate_config_path(path: str, scope: str = Scope.DEFAULT) -> bool:
+    """Validate config path against module schema. Returns False if invalid.
+
+    Checks field existence plus Magento-style scope restriction flags
+    (`showInDefault` / `showInWorkspace` / `showInAgentView`) declared in
+    system.json (module fields) or module.json tool fields.
+    """
+    from ..config_schema import allowed_scopes, is_scope_allowed
     from ..core_config import _find_module_dir
 
     parts = path.split("/")
@@ -20,8 +26,17 @@ def _validate_config_path(path: str) -> bool:
         print(f"Error: Module '{module_name}' not found.")
         return False
 
-    # Tool config paths (module/tools/tool_name/field) — skip field validation
+    # Tool config paths (module/tools/tool_name/field)
     if len(parts) == 4 and parts[1] == "tools":
+        _, _, tool_name, field_name = parts
+        field_def = _load_tool_field_schema(module_dir, tool_name, field_name)
+        if field_def is None:
+            return True
+        if not is_scope_allowed(field_def, scope):
+            scopes = ", ".join(allowed_scopes(field_def)) or "none"
+            print(f"Error: Field '{field_name}' cannot be set at scope '{scope}' "
+                  f"(allowed: {scopes})")
+            return False
         return True
 
     # Module config paths (module/field) — validate against system.json
@@ -29,18 +44,39 @@ def _validate_config_path(path: str) -> bool:
         field_name = parts[1]
         system_path = module_dir / "system.json"
         if system_path.exists():
-            import json as _json
             try:
-                system = _json.loads(system_path.read_text())
-                if field_name not in system:
-                    known = ", ".join(sorted(system.keys()))
-                    print(f"Error: Field '{field_name}' not found in {module_name}/system.json")
-                    print(f"  Available fields: {known}")
-                    return False
+                system = json.loads(system_path.read_text())
             except (ValueError, OSError):
-                pass
+                return True
+            if field_name not in system:
+                known = ", ".join(sorted(system.keys()))
+                print(f"Error: Field '{field_name}' not found in {module_name}/system.json")
+                print(f"  Available fields: {known}")
+                return False
+            field_def = system[field_name]
+            if isinstance(field_def, dict) and not is_scope_allowed(field_def, scope):
+                scopes = ", ".join(allowed_scopes(field_def)) or "none"
+                print(f"Error: Field '{field_name}' cannot be set at scope '{scope}' "
+                      f"(allowed: {scopes})")
+                return False
 
     return True
+
+
+def _load_tool_field_schema(module_dir, tool_name: str, field_name: str) -> dict | None:
+    """Return schema dict for a tool field, or None if not discoverable."""
+    manifest_path = module_dir / "module.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (ValueError, OSError):
+        return None
+    for tool in manifest.get("tools", []):
+        if tool.get("name") == tool_name:
+            field = tool.get("fields", {}).get(field_name)
+            return field if isinstance(field, dict) else None
+    return None
 
 
 def _validate_config_value(path: str, value: str) -> bool:
@@ -244,7 +280,10 @@ class ConfigSetCommand:
             print(f"Error: Invalid config path '{args.path}' — expected module/field format (e.g. jira/jira_token)")
             return
 
-        if not _validate_config_path(args.path):
+        scope = getattr(args, "scope", Scope.DEFAULT)
+        scope_id = getattr(args, "scope_id", 0)
+
+        if not _validate_config_path(args.path, scope):
             return
 
         if args.value is not None and not _validate_config_value(args.path, args.value):
@@ -254,8 +293,6 @@ class ConfigSetCommand:
             print(f"Error: Missing value for '{args.path}'")
             return
 
-        scope = getattr(args, "scope", Scope.DEFAULT)
-        scope_id = getattr(args, "scope_id", 0)
         scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
 
         db_config, _, _ = _load_framework_config()

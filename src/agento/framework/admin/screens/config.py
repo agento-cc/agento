@@ -187,6 +187,14 @@ class ConfigScreen(Screen):
         if field.source == "env":
             self.notify("Cannot edit environment variable overrides", severity="warning")
             return
+        if not field.editable_at_scope:
+            allowed = ", ".join(field.allowed_scopes) or "none"
+            self.notify(
+                f"Field is read-only at scope '{self._current_scope}' "
+                f"(configurable at: {allowed})",
+                severity="warning",
+            )
+            return
         self.app.push_screen(
             ConfigFieldEditorScreen(field, self._current_scope, self._current_scope_id),
             callback=self._on_editor_dismiss,
@@ -200,6 +208,14 @@ class ConfigScreen(Screen):
         field = self._get_selected_field()
         if field is None:
             self.notify("No field selected", severity="warning")
+            return
+        if not field.editable_at_scope:
+            allowed = ", ".join(field.allowed_scopes) or "none"
+            self.notify(
+                f"Field is read-only at scope '{self._current_scope}' "
+                f"(configurable at: {allowed})",
+                severity="warning",
+            )
             return
         if field.source != "db":
             self.notify("Only DB overrides can be deleted", severity="warning")
