@@ -466,6 +466,9 @@ class ConfigSchemaCommand:
             print(json.dumps(data, indent=2))
             return
 
+        from ..config_schema import allowed_scopes
+
+        unreachable: list[str] = []
         found = False
         for m in manifests:
             if not m.config and not m.tools:
@@ -480,14 +483,24 @@ class ConfigSchemaCommand:
                 if options and isinstance(options, list):
                     vals = ", ".join(o["value"] for o in options if isinstance(o, dict) and "value" in o)
                     print(f"  {'':20s}{'':10s}options: {vals}")
+                if isinstance(field_schema, dict) and not allowed_scopes(field_schema):
+                    unreachable.append(f"{m.name}/{field_name}")
             for tool in m.tools:
                 for field_name, field_schema in tool.get("fields", {}).items():
                     ftype = field_schema.get("type", "string")
                     label = field_schema.get("label", "")
                     print(f"  tools/{tool['name']}/{field_name:<20s}{ftype:<10s}{label}")
+                    if isinstance(field_schema, dict) and not allowed_scopes(field_schema):
+                        unreachable.append(f"{m.name}/tools/{tool['name']}/{field_name}")
 
         if not found:
             print("No config schema found.")
+
+        if unreachable:
+            print()
+            print("Warning: the following fields have all showIn* flags set to false and are unreachable:")
+            for path in unreachable:
+                print(f"  - {path}")
 
 
 class ConfigResolveCommand:

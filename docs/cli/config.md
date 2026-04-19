@@ -22,6 +22,21 @@ Module name uses underscores (hyphens converted): `my-ecommerce` → `my_ecommer
 
 Fields marked as `"type": "obscure"` in module.json are automatically encrypted with AES-256-CBC. See [encryption docs](../config/encryption.md).
 
+### Scope Restrictions
+
+Fields can declare Magento-style `showInDefault` / `showInWorkspace` / `showInAgentView` flags in `system.json` to restrict which scopes allow editing. Missing flags default to `true` (editable at all scopes — backward compatible).
+
+```bash
+# Global-only field rejects lower scopes
+bin/agento config:set core/timezone UTC --scope agent_view --scope-id 1
+# Error: Field 'timezone' cannot be set at scope 'agent_view' (allowed: default)
+
+bin/agento config:set core/timezone UTC
+# Set: core/timezone
+```
+
+See [config/README.md — Scope Restrictions](../config/README.md#scope-restrictions-showin) for details.
+
 ## config:get
 
 ```bash

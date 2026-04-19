@@ -58,7 +58,7 @@ Rules:
 
 - All three flags are optional; missing flags default to `true` (editable at that scope).
 - Fields without any `showIn*` declaration remain editable on every scope — backward compatible.
-- Enforcement is in CLI (`config:set`) and in the admin TUI (edit blocked with a `[global]` badge). No DB constraint is applied.
+- Enforcement is in CLI (`config:set`) and in the admin TUI (edit blocked with a `[readonly]` badge). No DB constraint is applied.
 - Applies equally to module-level fields (`module/field`) and tool fields (`module/tools/tool/field`).
 
 ## Further Reading
