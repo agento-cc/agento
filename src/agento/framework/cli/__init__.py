@@ -200,6 +200,10 @@ def main() -> None:
     if _should_proxy(sys.argv[1:]):
         _proxy_to_docker(sys.argv[1:])
 
+    # Strip --local escape-hatch flag before argparse sees it
+    if "--local" in sys.argv:
+        sys.argv = [a for a in sys.argv if a != "--local"]
+
     # Phase 1: Bootstrap module commands (skip for local commands that don't need modules)
     cmd = _get_command(sys.argv[1:])
     if cmd not in _LOCAL_COMMANDS:

@@ -6,6 +6,7 @@ import pytest
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.config_writer import (
     all_owned_paths,
+    all_persistent_home_paths,
     clear,
     get_agent_config,
     get_config_writer,
@@ -22,6 +23,9 @@ class _DummyWriter:
 
     def owned_paths(self):
         return set(), set()
+
+    def persistent_home_paths(self):
+        return []
 
 
 @pytest.fixture(autouse=True)
@@ -65,9 +69,10 @@ class TestRegistry:
 
 
 class _WriterWithPaths:
-    def __init__(self, files, dirs):
+    def __init__(self, files, dirs, persistent=None):
         self._files = files
         self._dirs = dirs
+        self._persistent = persistent or []
 
     def prepare_workspace(self, working_dir, agent_config, *, agent_view_id=None):
         pass
@@ -77,6 +82,9 @@ class _WriterWithPaths:
 
     def owned_paths(self):
         return self._files, self._dirs
+
+    def persistent_home_paths(self):
+        return list(self._persistent)
 
 
 class TestAllOwnedPaths:
@@ -95,6 +103,28 @@ class TestAllOwnedPaths:
         files, dirs = all_owned_paths()
         assert files == set()
         assert dirs == set()
+
+
+class TestAllPersistentHomePaths:
+    def test_aggregates_across_writers_sorted_unique(self):
+        register_config_writer(
+            AgentProvider.CLAUDE,
+            _WriterWithPaths(set(), set(), persistent=[".claude/projects", ".claude/todos"]),
+        )
+        register_config_writer(
+            AgentProvider.CODEX,
+            _WriterWithPaths(set(), set(), persistent=[".codex/sessions", ".claude/projects"]),
+        )
+        assert all_persistent_home_paths() == [".claude/projects", ".claude/todos", ".codex/sessions"]
+
+    def test_empty_when_no_writers(self):
+        assert all_persistent_home_paths() == []
+
+    def test_writer_without_persistent_paths_contributes_nothing(self):
+        register_config_writer(
+            AgentProvider.CLAUDE, _WriterWithPaths(set(), {".claude"}),
+        )
+        assert all_persistent_home_paths() == []
 
 
 class TestGetAgentConfig:

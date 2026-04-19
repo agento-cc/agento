@@ -392,6 +392,7 @@ class Consumer:
             conn.close()
 
         # Per-job artifacts directory (only when agent_view is set)
+        current_build = None
         if runtime.agent_view is not None and runtime.workspace is not None:
             artifacts_dir = build_artifacts_dir(
                 runtime.workspace.code, runtime.agent_view.code, job.id,
@@ -435,7 +436,8 @@ class Consumer:
                 timeout_seconds=self._consumer_config.job_timeout_seconds,
                 model_override=model_override,
                 working_dir=str(artifacts_dir) if artifacts_dir else None,
-                credentials_path=token.credentials_path,
+                home_dir=str(current_build) if current_build else None,
+                credentials_override=token.credentials,
             )
             runner.pid_callback = lambda pid: self._save_pid(job.id, pid)
             runner.session_id_callback = lambda sid: self._save_session_id(job.id, sid)

@@ -21,7 +21,7 @@ class TokenRegisterCommand:
 
     @property
     def help(self) -> str:
-        return "Register a new token"
+        return "Register a new token (credentials stored encrypted in DB)"
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("agent_type", choices=["claude", "codex"])
@@ -33,52 +33,12 @@ class TokenRegisterCommand:
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..agent_manager import AgentProvider, register_token
-        from ..agent_manager.auth import AuthenticationError, authenticate_interactive, save_credentials
 
-        db_config, _, am_config = _load_framework_config()
+        db_config, _, _ = _load_framework_config()
         logger = get_logger("agent-manager")
 
-        credentials_path = args.credentials_path
         agent_type = AgentProvider(args.agent_type)
-
-        if credentials_path is not None:
-            if not os.path.isfile(credentials_path):
-                print(f"Error: credentials file not found: {credentials_path}", file=sys.stderr)
-                sys.exit(1)
-            try:
-                with open(credentials_path) as f:
-                    creds = json.load(f)
-            except (json.JSONDecodeError, OSError) as exc:
-                print(f"Error: cannot read credentials file: {exc}", file=sys.stderr)
-                sys.exit(1)
-            if "subscription_key" not in creds:
-                print(f"Error: credentials file missing 'subscription_key': {credentials_path}", file=sys.stderr)
-                sys.exit(1)
-            tokens_dir = am_config.tokens_dir
-            if not os.path.abspath(credentials_path).startswith(os.path.abspath(tokens_dir)):
-                print(f"Error: credentials file must be inside tokens dir ({tokens_dir}): {credentials_path}",
-                      file=sys.stderr)
-                sys.exit(1)
-
-        if credentials_path is None:
-            if not sys.stdin.isatty():
-                print("Error: interactive auth requires a TTY. "
-                      "Use: docker compose exec -it cron ...", file=sys.stderr)
-                sys.exit(1)
-
-            credentials_path = os.path.join(
-                am_config.tokens_dir,
-                f"{args.agent_type}_{args.label}.json",
-            )
-
-            try:
-                auth_result = authenticate_interactive(agent_type, logger)
-            except AuthenticationError as exc:
-                print(f"Authentication failed: {exc}", file=sys.stderr)
-                sys.exit(1)
-
-            save_credentials(auth_result, credentials_path)
-            print(f"Credentials saved to: {credentials_path}")
+        credentials = _resolve_credentials(args, agent_type, logger)
 
         conn = get_connection_or_exit(db_config)
         try:
@@ -86,7 +46,7 @@ class TokenRegisterCommand:
                 conn,
                 agent_type=agent_type,
                 label=args.label,
-                credentials_path=credentials_path,
+                credentials=credentials,
                 token_limit=args.token_limit,
                 model=args.model,
                 logger=logger,
@@ -96,6 +56,46 @@ class TokenRegisterCommand:
             print(f"Registered token: id={token.id} label={token.label}{model_info}")
         finally:
             conn.close()
+
+
+def _resolve_credentials(args: argparse.Namespace, agent_type, logger) -> dict:
+    """Read credentials from file path, or run interactive OAuth. Returns plaintext dict."""
+    from ..agent_manager.auth import AuthenticationError, authenticate_interactive
+
+    if args.credentials_path is not None:
+        if not os.path.isfile(args.credentials_path):
+            print(f"Error: credentials file not found: {args.credentials_path}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            with open(args.credentials_path) as f:
+                creds = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Error: cannot read credentials file: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if "subscription_key" not in creds:
+            print(f"Error: credentials file missing 'subscription_key': {args.credentials_path}", file=sys.stderr)
+            sys.exit(1)
+        return creds
+
+    if not sys.stdin.isatty():
+        print("Error: interactive auth requires a TTY. "
+              "Use: docker compose exec -it cron ...", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        auth_result = authenticate_interactive(agent_type, logger)
+    except AuthenticationError as exc:
+        print(f"Authentication failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    return {
+        "subscription_key": auth_result.subscription_key,
+        "refresh_token": auth_result.refresh_token,
+        "expires_at": auth_result.expires_at,
+        "subscription_type": auth_result.subscription_type,
+        "id_token": auth_result.id_token,
+        "raw_auth": auth_result.raw_auth,
+    }
 
 
 class TokenRefreshCommand:
@@ -115,11 +115,11 @@ class TokenRefreshCommand:
         parser.add_argument("token_id", type=int, help="Token ID to refresh")
 
     def execute(self, args: argparse.Namespace) -> None:
-        from ..agent_manager import update_active_token
-        from ..agent_manager.auth import AuthenticationError, authenticate_interactive, save_credentials
+        from ..agent_manager import register_token
+        from ..agent_manager.auth import AuthenticationError, authenticate_interactive
         from ..agent_manager.token_store import get_token
 
-        db_config, _, am_config = _load_framework_config()
+        db_config, _, _ = _load_framework_config()
         logger = get_logger("agent-manager")
 
         conn = get_connection_or_exit(db_config)
@@ -140,7 +140,6 @@ class TokenRefreshCommand:
             sys.exit(1)
 
         print(f"Refreshing token [{token.id}] {token.agent_type.value} {token.label}")
-        print(f"Credentials: {token.credentials_path}")
 
         try:
             auth_result = authenticate_interactive(token.agent_type, logger)
@@ -148,12 +147,29 @@ class TokenRefreshCommand:
             print(f"Authentication failed: {exc}", file=sys.stderr)
             sys.exit(1)
 
-        save_credentials(auth_result, token.credentials_path)
-        print(f"Credentials saved to: {token.credentials_path}")
+        credentials = {
+            "subscription_key": auth_result.subscription_key,
+            "refresh_token": auth_result.refresh_token,
+            "expires_at": auth_result.expires_at,
+            "subscription_type": auth_result.subscription_type,
+            "id_token": auth_result.id_token,
+            "raw_auth": auth_result.raw_auth,
+        }
 
-        if token.is_primary:
-            update_active_token(am_config, token.agent_type, token, logger)
-            print("Active symlink updated.")
+        conn = get_connection_or_exit(db_config)
+        try:
+            register_token(
+                conn,
+                agent_type=token.agent_type,
+                label=token.label,
+                credentials=credentials,
+                token_limit=token.token_limit,
+                model=token.model,
+                logger=logger,
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
         print(f"Token [{token.id}] refreshed successfully.")
 
@@ -207,7 +223,6 @@ class TokenListCommand:
                     "label": t.label,
                     "model": t.model,
                     "is_primary": t.is_primary,
-                    "credentials_path": t.credentials_path,
                     "token_limit": t.token_limit,
                     "tokens_used": used,
                     "call_count": calls,
@@ -222,7 +237,6 @@ class TokenListCommand:
             for t in tokens:
                 s = usage_map.get(t.id)
                 used = s.total_tokens if s else 0
-                calls = s.call_count if s else 0
                 model_str = f"model={t.model}" if t.model else "model=-"
                 if t.token_limit > 0:
                     pct_free = round((t.token_limit - used) / t.token_limit * 100, 1)
@@ -278,17 +292,17 @@ class TokenSetCommand:
 
     @property
     def help(self) -> str:
-        return "Set a token as primary (sticky, not overridden by rotation)"
+        return "Set a token as primary for its agent_type (sticky, not overridden by rotation)"
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("agent_type", choices=["claude", "codex"])
         parser.add_argument("token_id", type=int)
 
     def execute(self, args: argparse.Namespace) -> None:
-        from ..agent_manager import AgentProvider, update_active_token
+        from ..agent_manager import AgentProvider
         from ..agent_manager.token_store import get_token, set_primary_token
 
-        db_config, _, am_config = _load_framework_config()
+        db_config, _, _ = _load_framework_config()
         logger = get_logger("agent-manager")
         agent_type = AgentProvider(args.agent_type)
         token_id = args.token_id
@@ -301,9 +315,6 @@ class TokenSetCommand:
                 sys.exit(1)
 
             token = get_token(conn, token_id)
-            if token:
-                update_active_token(am_config, agent_type, token, logger)
-
             conn.commit()
             model_info = f" model={token.model}" if token and token.model else ""
             print(f"Set primary token: [{token_id}] {args.agent_type}{model_info}")

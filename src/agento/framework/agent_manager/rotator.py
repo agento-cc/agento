@@ -8,7 +8,7 @@ import pymysql
 from .active import resolve_active_token, update_active_token
 from .config import AgentManagerConfig
 from .models import AgentProvider, RotationResult, Token, UsageSummary
-from .token_store import get_token_by_path, list_tokens
+from .token_store import list_tokens
 from .usage_store import get_usage_summaries
 
 
@@ -51,7 +51,7 @@ def rotate_tokens(
     agent_type: AgentProvider,
     logger: logging.Logger | None = None,
 ) -> RotationResult | None:
-    """Perform rotation for a single agent type."""
+    """Perform rotation for a single agent type. Updates DB ``is_primary`` flag."""
     _log = logger or logging.getLogger(__name__)
 
     tokens = list_tokens(conn, agent_type=agent_type, enabled_only=True)
@@ -59,11 +59,8 @@ def rotate_tokens(
         _log.warning(f"No enabled tokens for agent_type={agent_type.value}")
         return None
 
-    # Current active
-    active_path = resolve_active_token(config, agent_type)
-    previous_token = get_token_by_path(conn, active_path) if active_path else None
+    previous_token = resolve_active_token(conn, agent_type)
 
-    # Usage summaries
     summaries = get_usage_summaries(conn, agent_type.value, config.usage_window_hours)
     usage_map = {s.token_id: s for s in summaries}
 
@@ -71,9 +68,8 @@ def rotate_tokens(
     if best is None:
         return None
 
-    # Update symlink if changed (or if no active token yet)
     if previous_token is None or previous_token.id != best.id:
-        update_active_token(config, agent_type, best, logger)
+        update_active_token(conn, agent_type, best, logger)
         reason = "initial" if previous_token is None else "rotation"
     else:
         reason = "unchanged"

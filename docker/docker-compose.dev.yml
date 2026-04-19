@@ -14,9 +14,7 @@ services:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
       - ../app/etc:/app/etc
-      - ../../id_rsa:/run/secrets/id_rsa:ro
       - ../logs:/app/logs
-      - ../tokens:/etc/tokens
     environment:
       - TZ=Europe/Warsaw
     stdin_open: true
@@ -87,11 +85,9 @@ services:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
       - ../app/etc:/app/etc
-      - ../../id_rsa:/run/secrets/id_rsa:ro
       - ../logs:/app/logs
       - ../src/agento:/opt/cron-agent/src/agento
       - ../pyproject.toml:/opt/cron-agent/pyproject.toml:ro
-      - ../tokens:/etc/tokens
     networks:
       - agento-net
     depends_on:

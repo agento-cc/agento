@@ -25,6 +25,10 @@ class CodexConfigWriter:
     def owned_paths(self) -> tuple[set[str], set[str]]:
         return set(), {".codex"}
 
+    def persistent_home_paths(self) -> list[str]:
+        """Codex session + history state that must survive workspace rebuilds."""
+        return [".codex/history.jsonl", ".codex/sessions"]
+
     def prepare_workspace(
         self,
         working_dir: Path,

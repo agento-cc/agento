@@ -1,5 +1,6 @@
 {
   "strategy/theme": "copy",
   "strategy/modules": "copy",
-  "strategy/skills": "copy"
+  "strategy/skills": "copy",
+  "retention/max_builds": 10
 }

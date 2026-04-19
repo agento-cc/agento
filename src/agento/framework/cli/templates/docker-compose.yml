@@ -47,7 +47,6 @@ services:
       - ../app/code:/app/code:ro
       - ../app/etc:/app/etc
       - ../logs:/app/logs
-      - ../tokens:/etc/tokens
     networks:
       - agento-net
     depends_on:

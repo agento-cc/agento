@@ -8,10 +8,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from ..runner import RunResult
-from .active import read_credentials, resolve_active_token
+from .active import resolve_active_token
 from .config import AgentManagerConfig
 from .models import AgentProvider, Token
-from .token_store import get_token_by_path
 from .usage_store import record_usage
 
 
@@ -27,20 +26,22 @@ class TokenRunner(ABC):
         self,
         *,
         working_dir: str = "/workspace",
+        home_dir: str | None = None,
         logger: logging.Logger | None = None,
         dry_run: bool = False,
         config: AgentManagerConfig | None = None,
         timeout_seconds: int = 1200,
         model_override: str | None = None,
-        credentials_path: str | None = None,
+        credentials_override: dict | None = None,
     ):
         self.working_dir = working_dir
+        self.home_dir = home_dir
         self.logger = logger or logging.getLogger(__name__)
         self.dry_run = dry_run
         self.config = config or AgentManagerConfig()
         self.timeout_seconds = timeout_seconds
         self.model_override = model_override
-        self.credentials_path = credentials_path
+        self.credentials_override = credentials_override
         self.pid_callback: Callable[[int], None] | None = None
         self.session_id_callback: Callable[[str], None] | None = None
 
@@ -99,6 +100,9 @@ class TokenRunner(ABC):
         - session_id can be detected and reported via callback immediately
         - partial output is available on timeout (not lost with the process)
         """
+        if self.home_dir is not None:
+            env = {**env, "HOME": self.home_dir}
+
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -183,21 +187,24 @@ class TokenRunner(ABC):
 
     def _resolve_env_and_model(
         self, model: str | None,
-    ) -> tuple[str, Token | None, dict[str, str], str | None]:
-        """Shared setup: resolve token, read credentials, build env, resolve model."""
-        active_path = self.credentials_path or resolve_active_token(
-            self.config, self.agent_type,
-        )
-        if active_path is None:
-            raise RuntimeError(
-                f"No active token for agent_type={self.agent_type.value}. "
-                f"Register tokens and run rotation first."
-            )
-        token = self._resolve_token(active_path)
-        credentials = read_credentials(active_path)
+    ) -> tuple[Token | None, dict[str, str], str | None]:
+        """Shared setup: resolve active token from DB, build env, resolve model."""
+        if self.credentials_override is not None:
+            token = None
+            credentials = self.credentials_override
+        else:
+            token = self._resolve_primary_token()
+            if token is None or token.credentials is None:
+                raise RuntimeError(
+                    f"No active token for agent_type={self.agent_type.value}. "
+                    f"Register a token and mark it primary: "
+                    f"bin/agento token:register {self.agent_type.value} <label> <path> "
+                    f"&& bin/agento token:set {self.agent_type.value} <id>."
+                )
+            credentials = token.credentials
         model = model or self.model_override
         env = {**os.environ, **self._build_env(credentials)}
-        return active_path, token, env, model
+        return token, env, model
 
     def _execute_and_parse(
         self, cmd: list[str], env: dict, token: Token | None, model: str | None,
@@ -235,7 +242,7 @@ class TokenRunner(ABC):
             self.logger.info(f"[DRY RUN] DISABLE_LLM is set, skipping {self.agent_type.value} run.")
             return RunResult(raw_output="[DRY RUN] skipped")
 
-        _active_path, token, env, model = self._resolve_env_and_model(model)
+        token, env, model = self._resolve_env_and_model(model)
         cmd = self._build_command(prompt, model=model)
         return self._execute_and_parse(cmd, env, token, model)
 
@@ -244,7 +251,7 @@ class TokenRunner(ABC):
             self.logger.info(f"[DRY RUN] DISABLE_LLM is set, skipping {self.agent_type.value} resume.")
             return RunResult(raw_output="[DRY RUN] skipped")
 
-        _active_path, token, env, model = self._resolve_env_and_model(model)
+        token, env, model = self._resolve_env_and_model(model)
         cmd = self._build_resume_command(session_id, model=model)
         return self._execute_and_parse(cmd, env, token, model)
 
@@ -255,16 +262,16 @@ class TokenRunner(ABC):
 
         return get_connection(DatabaseConfig.from_env_and_json())
 
-    def _resolve_token(self, credentials_path: str) -> Token | None:
-        """Look up the Token DB record for a credentials path. Best-effort."""
+    def _resolve_primary_token(self) -> Token | None:
+        """Look up the primary Token DB record for this runner's agent_type."""
         try:
             conn = self._get_db_connection()
             try:
-                return get_token_by_path(conn, credentials_path)
+                return resolve_active_token(conn, self.agent_type)
             finally:
                 conn.close()
         except Exception:
-            self.logger.exception("Failed to resolve token from DB (best-effort)")
+            self.logger.exception("Failed to resolve primary token from DB")
             return None
 
     def _record_usage(self, token: Token | None, result: RunResult) -> None:

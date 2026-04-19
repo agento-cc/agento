@@ -45,6 +45,16 @@ class ConfigWriter(Protocol):
         """
         ...
 
+    def persistent_home_paths(self) -> list[str]:
+        """Return relative-to-HOME paths that must survive workspace rebuilds.
+
+        These are session/state artifacts (e.g. ``.claude/projects``) which the
+        framework symlinks from the immutable build dir to a per-agent_view
+        persistent ``state/`` directory. Returning an empty list means the
+        agent has no persistent home state.
+        """
+        ...
+
 
 # Registry: provider -> ConfigWriter instance
 _CONFIG_WRITERS: dict[AgentProvider, ConfigWriter] = {}
@@ -82,6 +92,23 @@ def all_owned_paths() -> tuple[set[str], set[str]]:
         files |= f
         dirs |= d
     return files, dirs
+
+
+def all_persistent_home_paths() -> list[str]:
+    """Aggregate relative-to-HOME persistent paths across every registered ConfigWriter.
+
+    Returns a sorted, de-duplicated list. Writers that don't implement
+    ``persistent_home_paths()`` (or return an empty list) contribute nothing.
+    """
+    paths: set[str] = set()
+    for writer in _CONFIG_WRITERS.values():
+        getter = getattr(writer, "persistent_home_paths", None)
+        if getter is None:
+            continue
+        for p in getter():
+            if p:
+                paths.add(p)
+    return sorted(paths)
 
 
 def get_agent_config(resolved_config: dict[str, tuple[str, bool]]) -> dict[str, str]:

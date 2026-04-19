@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from agento.framework.agent_manager.active import (
-    read_credentials,
     resolve_active_token,
     update_active_token,
 )
@@ -17,90 +12,36 @@ from .conftest import make_token
 
 
 class TestResolveActiveToken:
-    def test_returns_none_when_no_symlink(self, agent_config):
-        result = resolve_active_token(agent_config, AgentProvider.CLAUDE)
+    def test_returns_none_when_no_primary(self):
+        conn = MagicMock()
+        with patch(
+            "agento.framework.agent_manager.active.get_primary_token",
+            return_value=None,
+        ):
+            assert resolve_active_token(conn, AgentProvider.CLAUDE) is None
 
-        assert result is None
-
-    def test_returns_target_path(self, agent_config):
-        # Create a credential file and symlink
-        cred_file = Path(agent_config.tokens_dir) / "claude_1.json"
-        cred_file.write_text('{"subscription_key": "sk-test"}')
-        link = Path(agent_config.active_dir) / "claude"
-        link.symlink_to(cred_file)
-
-        result = resolve_active_token(agent_config, AgentProvider.CLAUDE)
-
-        assert result == str(cred_file)
-
-    def test_returns_none_when_target_missing(self, agent_config):
-        # Symlink pointing to a non-existent file
-        link = Path(agent_config.active_dir) / "claude"
-        link.symlink_to("/nonexistent/file.json")
-
-        result = resolve_active_token(agent_config, AgentProvider.CLAUDE)
-
-        assert result is None
+    def test_returns_primary_token(self):
+        conn = MagicMock()
+        token = make_token(is_primary=True)
+        with patch(
+            "agento.framework.agent_manager.active.get_primary_token",
+            return_value=token,
+        ) as mock_get:
+            result = resolve_active_token(conn, AgentProvider.CLAUDE)
+        assert result is token
+        mock_get.assert_called_once_with(conn, AgentProvider.CLAUDE)
 
 
 class TestUpdateActiveToken:
-    def test_creates_new_symlink(self, agent_config):
-        cred_file = Path(agent_config.tokens_dir) / "claude_1.json"
-        cred_file.write_text('{"subscription_key": "sk-test"}')
-        token = make_token(credentials_path=str(cred_file))
-
-        update_active_token(agent_config, AgentProvider.CLAUDE, token)
-
-        link = Path(agent_config.active_dir) / "claude"
-        assert link.is_symlink()
-        assert link.resolve() == cred_file.resolve()
-
-    def test_replaces_existing_symlink(self, agent_config):
-        # Create two credential files
-        cred1 = Path(agent_config.tokens_dir) / "claude_1.json"
-        cred1.write_text('{"subscription_key": "sk-1"}')
-        cred2 = Path(agent_config.tokens_dir) / "claude_2.json"
-        cred2.write_text('{"subscription_key": "sk-2"}')
-
-        token1 = make_token(id=1, credentials_path=str(cred1))
-        token2 = make_token(id=2, credentials_path=str(cred2))
-
-        # Set first, then switch to second
-        update_active_token(agent_config, AgentProvider.CLAUDE, token1)
-        update_active_token(agent_config, AgentProvider.CLAUDE, token2)
-
-        link = Path(agent_config.active_dir) / "claude"
-        assert link.resolve() == cred2.resolve()
-
-    def test_atomic_replace_preserves_link(self, agent_config):
-        """After update, the symlink path still exists (not broken by rename)."""
-        cred_file = Path(agent_config.tokens_dir) / "codex_1.json"
-        cred_file.write_text('{"subscription_key": "sk-codex"}')
-        token = make_token(agent_type=AgentProvider.CODEX, credentials_path=str(cred_file))
-
-        update_active_token(agent_config, AgentProvider.CODEX, token)
-
-        link = Path(agent_config.active_dir) / "codex"
-        assert link.exists()
-        assert os.readlink(str(link)) == str(cred_file)
-
-
-class TestReadCredentials:
-    def test_reads_json(self, tmp_path):
-        cred_file = tmp_path / "creds.json"
-        cred_file.write_text(json.dumps({"subscription_key": "sk-test", "org": "my-org"}))
-
-        result = read_credentials(str(cred_file))
-
-        assert result == {"subscription_key": "sk-test", "org": "my-org"}
-
-    def test_raises_on_missing_file(self):
-        with pytest.raises(FileNotFoundError):
-            read_credentials("/nonexistent/file.json")
-
-    def test_raises_on_invalid_json(self, tmp_path):
-        bad_file = tmp_path / "bad.json"
-        bad_file.write_text("not json at all")
-
-        with pytest.raises(json.JSONDecodeError):
-            read_credentials(str(bad_file))
+    def test_sets_primary_in_db(self):
+        conn = MagicMock()
+        token = make_token(id=7, agent_type=AgentProvider.CODEX)
+        with patch(
+            "agento.framework.agent_manager.active.set_primary_token",
+        ) as mock_set:
+            update_active_token(conn, AgentProvider.CODEX, token)
+        mock_set.assert_called_once()
+        args, _kwargs = mock_set.call_args
+        assert args[0] is conn
+        assert args[1] == AgentProvider.CODEX
+        assert args[2] == 7

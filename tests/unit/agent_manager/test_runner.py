@@ -167,19 +167,17 @@ class TestTokenClaudeRunner:
         assert runner._try_parse_session_id('{"type": "init"}') is None
         assert runner._try_parse_session_id("not json") is None
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_run_executes_subprocess(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/claude_1.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-ant-test"}
-
+    def test_run_executes_subprocess(self, agent_config):
         stream_output = (
             '{"type": "result", "result": "ok", "usage": {"input_tokens": 200, "output_tokens": 100}, '
             '"total_cost_usd": 0.01, "num_turns": 2, "duration_ms": 3000, "session_id": "sess-1"}\n'
         )
 
-        runner = TokenClaudeRunner(config=agent_config, dry_run=False)
-        runner._resolve_token = MagicMock(return_value=None)
+        runner = TokenClaudeRunner(
+            config=agent_config,
+            dry_run=False,
+            credentials_override={"subscription_key": "sk-ant-test"},
+        )
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),
@@ -192,11 +190,9 @@ class TestTokenClaudeRunner:
         assert result.agent_type == "claude"
         runner._execute_process.assert_called_once()
 
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_run_raises_when_no_active_token(self, mock_resolve, agent_config):
-        mock_resolve.return_value = None
-
+    def test_run_raises_when_no_active_token(self, agent_config):
         runner = TokenClaudeRunner(config=agent_config, dry_run=False)
+        runner._resolve_primary_token = MagicMock(return_value=None)
 
         with pytest.raises(RuntimeError, match="No active token"):
             runner.run("test prompt")
@@ -288,14 +284,12 @@ class TestTokenCodexRunner:
         assert result.model is None
         assert result.input_tokens is None
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_run_executes_subprocess(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/codex_1.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-openai-test"}
-
-        runner = TokenCodexRunner(config=agent_config, dry_run=False)
-        runner._resolve_token = MagicMock(return_value=None)
+    def test_run_executes_subprocess(self, agent_config):
+        runner = TokenCodexRunner(
+            config=agent_config,
+            dry_run=False,
+            credentials_override={"subscription_key": "sk-openai-test"},
+        )
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout="codex result output"),
@@ -316,33 +310,27 @@ class TestSubprocessTimeout:
         runner = TokenClaudeRunner(dry_run=True)
         assert runner.timeout_seconds == 1200
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_timeout_expired_propagates(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/claude_1.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-ant-test"}
-
+    def test_timeout_expired_propagates(self, agent_config):
         exc = subprocess.TimeoutExpired(cmd="claude", timeout=600)
         exc.session_id = None  # type: ignore[attr-defined]
 
-        runner = TokenClaudeRunner(config=agent_config, dry_run=False, timeout_seconds=600)
-        runner._resolve_token = MagicMock(return_value=None)
+        runner = TokenClaudeRunner(
+            config=agent_config, dry_run=False, timeout_seconds=600,
+            credentials_override={"subscription_key": "sk-ant-test"},
+        )
         runner._execute_process = MagicMock(side_effect=exc)
 
         with pytest.raises(subprocess.TimeoutExpired):
             runner.run("test")
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_timeout_with_session_id(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/claude_1.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-ant-test"}
-
+    def test_timeout_with_session_id(self, agent_config):
         exc = subprocess.TimeoutExpired(cmd="claude", timeout=600)
         exc.session_id = "sess-timeout-abc"  # type: ignore[attr-defined]
 
-        runner = TokenClaudeRunner(config=agent_config, dry_run=False, timeout_seconds=600)
-        runner._resolve_token = MagicMock(return_value=None)
+        runner = TokenClaudeRunner(
+            config=agent_config, dry_run=False, timeout_seconds=600,
+            credentials_override={"subscription_key": "sk-ant-test"},
+        )
         runner._execute_process = MagicMock(side_effect=exc)
 
         with pytest.raises(subprocess.TimeoutExpired) as exc_info:
@@ -351,22 +339,18 @@ class TestSubprocessTimeout:
         assert exc_info.value.session_id == "sess-timeout-abc"  # type: ignore[attr-defined]
 
 
-class TestCredentialsPath:
-    """Verify that credentials_path takes precedence over symlink resolution."""
+class TestCredentialsOverride:
+    """Verify that credentials_override takes precedence over DB primary-token resolution."""
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_credentials_path_skips_symlink(self, mock_resolve, mock_read_creds, agent_config):
-        mock_read_creds.return_value = {"subscription_key": "sk-ant-test"}
-
+    def test_override_skips_db(self, agent_config):
         stream_output = '{"type": "result", "result": "ok", "usage": {"input_tokens": 10, "output_tokens": 5}}\n'
 
         runner = TokenClaudeRunner(
             config=agent_config,
             dry_run=False,
-            credentials_path="/etc/tokens/specific.json",
+            credentials_override={"subscription_key": "sk-override"},
         )
-        runner._resolve_token = MagicMock(return_value=None)
+        runner._resolve_primary_token = MagicMock()
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),
@@ -374,19 +358,22 @@ class TestCredentialsPath:
 
         runner.run("test")
 
-        mock_resolve.assert_not_called()
-        mock_read_creds.assert_called_once_with("/etc/tokens/specific.json")
+        runner._resolve_primary_token.assert_not_called()
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_falls_back_to_symlink_when_no_credentials_path(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/active_claude.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-ant-test"}
+    def test_falls_back_to_db_when_no_override(self, agent_config):
+        from datetime import UTC, datetime
 
+        from agento.framework.agent_manager.models import AgentProvider, Token
+
+        primary = Token(
+            id=1, agent_type=AgentProvider.CLAUDE, label="p", credentials={"subscription_key": "sk-primary"},
+            model=None, is_primary=True, token_limit=0, enabled=True,
+            created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+        )
         stream_output = '{"type": "result", "result": "ok", "usage": {"input_tokens": 10, "output_tokens": 5}}\n'
 
         runner = TokenClaudeRunner(config=agent_config, dry_run=False)
-        runner._resolve_token = MagicMock(return_value=None)
+        runner._resolve_primary_token = MagicMock(return_value=primary)
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),
@@ -394,27 +381,25 @@ class TestCredentialsPath:
 
         runner.run("test")
 
-        mock_resolve.assert_called_once()
-        mock_read_creds.assert_called_once_with("/etc/tokens/active_claude.json")
+        runner._resolve_primary_token.assert_called_once()
 
 
 class TestRecordUsageBestEffort:
     """Verify that usage recording failures don't crash the runner."""
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_continues_on_usage_recording_failure(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/claude_1.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-test"}
-
+    def test_continues_on_usage_recording_failure(self, agent_config):
         stream_output = '{"type": "result", "result": "ok", "usage": {"input_tokens": 10, "output_tokens": 5}}\n'
 
-        runner = TokenClaudeRunner(config=agent_config, dry_run=False)
+        runner = TokenClaudeRunner(
+            config=agent_config,
+            dry_run=False,
+            credentials_override={"subscription_key": "sk-test"},
+        )
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),
         )
 
-        # _resolve_token will fail because there's no DB — but run() should still return
+        # _record_usage silently swallows errors (no DB in test env) — run() should still return
         result = runner.run("test")
 
         assert result.input_tokens == 10
@@ -462,19 +447,17 @@ class TestPidAndSessionCallbacks:
 class TestResumeMethod:
     """Verify resume() calls _build_resume_command and delegates to _execute_and_parse."""
 
-    @patch("agento.framework.agent_manager.runner.read_credentials")
-    @patch("agento.framework.agent_manager.runner.resolve_active_token")
-    def test_resume_calls_resume_command(self, mock_resolve, mock_read_creds, agent_config):
-        mock_resolve.return_value = "/etc/tokens/claude_1.json"
-        mock_read_creds.return_value = {"subscription_key": "sk-ant-test"}
-
+    def test_resume_calls_resume_command(self, agent_config):
         stream_output = (
             '{"type": "result", "result": "ok", "usage": {"input_tokens": 50, "output_tokens": 30}, '
             '"session_id": "sess-resumed"}\n'
         )
 
-        runner = TokenClaudeRunner(config=agent_config, dry_run=False)
-        runner._resolve_token = MagicMock(return_value=None)
+        runner = TokenClaudeRunner(
+            config=agent_config,
+            dry_run=False,
+            credentials_override={"subscription_key": "sk-ant-test"},
+        )
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),

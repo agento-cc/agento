@@ -33,7 +33,7 @@ class TokenResolver:
         if not tokens:
             raise RuntimeError(
                 f"No enabled tokens for provider={agent_type.value}. "
-                f"Register tokens first: bin/agento token register "
+                f"Register tokens first: bin/agento token:register "
                 f"{agent_type.value} <label> <path>"
             )
         summaries = get_usage_summaries(

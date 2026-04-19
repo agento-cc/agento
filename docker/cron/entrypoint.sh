@@ -1,30 +1,10 @@
 #!/bin/bash
 set -e
 
-# Copy SSH key from read-only secret mount to writable .ssh dir with correct permissions
-if [ -f /run/secrets/id_rsa ]; then
-    mkdir -p /home/agent/.ssh
-    chown agent /home/agent/.ssh
-    chmod 700 /home/agent/.ssh
-    cp /run/secrets/id_rsa /home/agent/.ssh/id_rsa
-    chown agent /home/agent/.ssh/id_rsa
-    chmod 600 /home/agent/.ssh/id_rsa
-fi
-
-# Ensure config files/dirs exist in mounted workspace
-# .claude.json must be a file (Claude Code 2.x migration may turn it into a directory)
-if [ -d /workspace/.claude.json ]; then
-    rm -rf /workspace/.claude.json
-fi
-[ -s /workspace/.claude.json ] || echo '{}' > /workspace/.claude.json
-mkdir -p /workspace/.claude 2>/dev/null || true
-mkdir -p /workspace/.codex 2>/dev/null || true
-chown agent /workspace/.claude.json /workspace/.claude /workspace/.codex
-
-# Symlink config to home directory (remove real dirs/files first — base image creates them)
-rm -rf /home/agent/.claude.json && ln -s /workspace/.claude.json /home/agent/.claude.json
-rm -rf /home/agent/.claude && ln -s /workspace/.claude /home/agent/.claude
-rm -rf /home/agent/.codex  && ln -s /workspace/.codex  /home/agent/.codex
+# SSH keys + agent credentials are materialized per-agent_view by `workspace:build`
+# into builds/<id>/.ssh and builds/<id>/.claude/ (or .codex/). The consumer sets
+# HOME=<build_dir> when spawning the agent subprocess, so we no longer prepare
+# SSH or config symlinks at container startup.
 
 # Set timezone for cron daemon (reads /etc/localtime, not TZ)
 if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
