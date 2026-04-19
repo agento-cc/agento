@@ -12,6 +12,7 @@ from agento.modules.workspace_build.src.builder import (
     BuildResult,
     _copy_module_workspaces,
     _copy_theme,
+    _create_agents_skills_symlink,
     _read_strategy,
     _write_instruction_files,
     _write_skills_to_build,
@@ -899,6 +900,43 @@ class TestWriteSkillsToBuild:
         build.mkdir()
         _write_skills_to_build(build, [MagicMock()], registry=None, skills_dir=tmp_path / "skills")
         assert not (build / ".claude").exists()
+
+
+class TestCreateAgentsSkillsSymlink:
+    def test_creates_symlink_when_claude_skills_exists(self, tmp_path):
+        build = tmp_path / "build"
+        claude_skills = build / ".claude" / "skills"
+        claude_skills.mkdir(parents=True)
+        _create_agents_skills_symlink(build)
+        symlink = build / ".agents" / "skills"
+        assert symlink.is_symlink()
+        assert symlink.resolve() == claude_skills.resolve()
+
+    def test_no_op_when_claude_skills_missing(self, tmp_path):
+        build = tmp_path / "build"
+        build.mkdir()
+        _create_agents_skills_symlink(build)
+        assert not (build / ".agents").exists()
+
+    def test_replaces_existing_symlink(self, tmp_path):
+        build = tmp_path / "build"
+        claude_skills = build / ".claude" / "skills"
+        claude_skills.mkdir(parents=True)
+        agents_dir = build / ".agents"
+        agents_dir.mkdir()
+        old_target = tmp_path / "old"
+        old_target.mkdir()
+        (agents_dir / "skills").symlink_to(old_target)
+        _create_agents_skills_symlink(build)
+        assert (agents_dir / "skills").resolve() == claude_skills.resolve()
+
+    def test_symlink_is_relative(self, tmp_path):
+        build = tmp_path / "build"
+        claude_skills = build / ".claude" / "skills"
+        claude_skills.mkdir(parents=True)
+        _create_agents_skills_symlink(build)
+        symlink = build / ".agents" / "skills"
+        assert not symlink.readlink().is_absolute()
 
 
 class TestGetCurrentBuildDir:

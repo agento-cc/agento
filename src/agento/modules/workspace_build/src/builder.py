@@ -284,6 +284,19 @@ def _write_skills_to_build(
         apply_manifest(manifest, output_dir, strategy)
 
 
+def _create_agents_skills_symlink(build_dir: Path) -> None:
+    """Create .agents/skills → ../.claude/skills symlink for Codex compatibility."""
+    claude_skills = build_dir / ".claude" / "skills"
+    if not claude_skills.is_dir():
+        return
+    agents_dir = build_dir / ".agents"
+    agents_dir.mkdir(exist_ok=True)
+    symlink = agents_dir / "skills"
+    if symlink.is_symlink() or symlink.exists():
+        symlink.unlink()
+    symlink.symlink_to(Path("..") / ".claude" / "skills")
+
+
 def _read_strategy(conn, source: str) -> Strategy:
     """Read workspace_build/strategy/{source} from global scope only, falling back to config.json."""
     if source not in _SOURCES:
@@ -472,6 +485,9 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
             build_dir, enabled_skills, skill_registry, skills_dir,
             strategy=strategies["skills"],
         )
+
+        # 6. .agents/skills symlink → .claude/skills (Codex compatibility)
+        _create_agents_skills_symlink(build_dir)
 
         # Mark as ready
         with conn.cursor() as cur:
