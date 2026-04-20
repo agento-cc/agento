@@ -33,10 +33,12 @@ This creates `app/code/my-ecommerce/` with module.json, config.json, and knowled
 ## Set Credentials
 
 ```bash
-# Set database password (auto-encrypted in DB)
-agento config:set my_ecommerce/tools/mysql_ecom_prod/pass secret123
+# Set database password — omit the value so agento prompts instead of putting
+# the secret into your bash history. Auto-encrypted in DB (field is "obscure").
+agento config:set my_ecommerce/tools/mysql_ecom_prod/pass
+# → Paste value…  <Ctrl+D>
 
-# Set host (plain text in DB)
+# Set host (plain text) — fine to pass inline
 agento config:set my_ecommerce/tools/mysql_ecom_prod/host 10.0.0.1
 
 # Or use ENV vars (highest priority, no DB needed)

@@ -40,11 +40,13 @@ EOF
 ## 3. Set Credentials
 
 ```bash
-bin/agento config:set my_crm/tools/mysql_crm_prod/pass db-password-here
-bin/agento config:set my_crm/tools/mysql_crm_staging/pass staging-pass
+# Omit the value → agento prompts, you paste, press Ctrl+D.
+# Keeps the password out of `ps aux` and your shell history.
+bin/agento config:set my_crm/tools/mysql_crm_prod/pass
+bin/agento config:set my_crm/tools/mysql_crm_staging/pass
 ```
 
-Passwords are auto-encrypted in the database (field type = `obscure`).
+Passwords are auto-encrypted in the database (field type = `obscure`). See [docs/cli/config.md#secrets](../cli/config.md#secrets--never-pass-on-the-command-line).
 
 ## 4. Add Knowledge Base
 
@@ -204,10 +206,11 @@ cat > modules/my-crm/system.json << 'EOF'
 EOF
 ```
 
-Set sensitive values via CLI (auto-encrypted):
+Set sensitive values via CLI (auto-encrypted). Omit the value so it isn't saved in bash history:
 
 ```bash
-bin/agento config:set my_crm/api_token secret-token-here
+bin/agento config:set my_crm/api_token
+# Paste…  <Ctrl+D>
 ```
 
 Read config at runtime:

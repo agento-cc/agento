@@ -42,11 +42,18 @@ Resolution order: agent_view → workspace → default (most specific wins).
 ## CLI
 
 ```bash
-# Set a global value (auto-encrypts obscure fields)
-bin/agento config:set my_app/tools/mysql_prod/pass my-secret
+# Set a secret (omit value → agento prompts / reads stdin, nothing in bash history)
+bin/agento config:set my_app/tools/mysql_prod/pass
+# Paste…  <Ctrl+D>
+
+# Set a plain value on the command line is fine
+bin/agento config:set core/timezone UTC
 
 # Set a scoped value (per agent_view)
 bin/agento config:set core/allowed_domains "example.com" --scope=agent_view --scope-id=1
+
+# --agent-view <code> is a shortcut that resolves the scope_id for you
+bin/agento config:set core/allowed_domains "example.com" --agent-view dev_01
 
 # Set a workspace-scoped value
 bin/agento config:set core/email_whitelist "*@corp.com" --scope=workspace --scope-id=2

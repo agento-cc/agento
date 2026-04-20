@@ -51,7 +51,8 @@ Agent reads module content from per-agent_view workspace builds (`workspace/buil
 
 ```bash
 bin/agento module:add my-system --tool mysql:mysql_my_prod:"My Production DB"
-bin/agento config:set my_system/tools/mysql_my_prod/pass secret123
+# Omit the value → agento prompts, paste, Ctrl+D. Keeps the secret out of bash history.
+bin/agento config:set my_system/tools/mysql_my_prod/pass
 ```
 
 ## Further Reading

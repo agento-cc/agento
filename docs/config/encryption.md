@@ -18,9 +18,17 @@ echo "AGENTO_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> ../secrets.env
 
 ## How It Works
 
-1. `bin/agento config:set my_app/tools/mysql_prod/pass secret` — Python checks if `pass` field is `obscure` in module.json
-2. If yes → encrypts with AES-256-CBC → stores as `aes256:{iv_hex}:{ciphertext_hex}` with `encrypted=1`
-3. Toolbox reads DB at runtime → decrypts using the same `AGENTO_ENCRYPTION_KEY`
+1. You invoke `config:set` **without** a value argument (so the secret never hits `ps aux` or shell history):
+   ```bash
+   bin/agento config:set my_app/tools/mysql_prod/pass
+   # Paste value…  <Ctrl+D>
+   # or: echo -n "$SECRET" | bin/agento config:set my_app/tools/mysql_prod/pass
+   ```
+2. Python checks if `pass` field is `obscure` in module.json.
+3. If yes → encrypts with AES-256-CBC → stores as `aes256:{iv_hex}:{ciphertext_hex}` with `encrypted=1`.
+4. Toolbox reads DB at runtime → decrypts using the same `AGENTO_ENCRYPTION_KEY`.
+
+> **Don't** pass secrets as the positional `value` arg (`config:set path my-secret`). That leaks the value into `ps aux` for the duration of the command and into `~/.bash_history` / `~/.zsh_history` forever. Always omit the value so agento prompts / reads stdin. See [cli/config.md](../cli/config.md#secrets--never-pass-on-the-command-line) for the full rationale.
 
 ## Algorithm
 
