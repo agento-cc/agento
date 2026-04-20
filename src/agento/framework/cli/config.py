@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from ..db import get_connection_or_exit
 from ..scoped_config import Scope
@@ -250,6 +251,56 @@ def _format_value(value: object) -> str:
     return str(value)
 
 
+def _read_value_from_stdin(path: str) -> str:
+    """Read a config value from stdin. Prompts only if stdin is a TTY.
+
+    When TTY (interactive paste): strip a single trailing newline (the Enter
+    pressed before Ctrl+D). When piped: return verbatim to respect pipe contents.
+    """
+    is_tty = sys.stdin.isatty()
+    if is_tty:
+        print(
+            f"Paste value for {path}, then press Ctrl+D on an empty line to finish:",
+            file=sys.stderr,
+        )
+    value = sys.stdin.read()
+    if is_tty and value.endswith("\n"):
+        value = value[:-1]
+    return value
+
+
+def _resolve_scope_from_args(conn, args) -> tuple[str, int]:
+    """Resolve (scope, scope_id) from argparse args.
+
+    Supports `--agent-view <code>` as a shortcut that looks up the id. Rejects
+    conflicts between `--agent-view` and `--scope-id` / non-matching `--scope`.
+    """
+    agent_view_code = getattr(args, "agent_view", None)
+    scope = getattr(args, "scope", Scope.DEFAULT)
+    scope_id = getattr(args, "scope_id", 0)
+
+    if agent_view_code is None:
+        return scope, scope_id
+
+    if scope not in (Scope.DEFAULT, Scope.AGENT_VIEW):
+        print(
+            f"Error: --agent-view cannot be combined with --scope={scope}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if scope_id not in (0, None):
+        print("Error: --agent-view and --scope-id are mutually exclusive", file=sys.stderr)
+        sys.exit(2)
+
+    from ..workspace import get_agent_view_by_code
+
+    av = get_agent_view_by_code(conn, agent_view_code)
+    if av is None:
+        print(f"Error: agent_view '{agent_view_code}' not found", file=sys.stderr)
+        sys.exit(1)
+    return Scope.AGENT_VIEW, av.id
+
+
 class ConfigSetCommand:
     @property
     def name(self) -> str:
@@ -261,15 +312,22 @@ class ConfigSetCommand:
 
     @property
     def help(self) -> str:
-        return "Set a config value in core_config_data"
+        return "Set a config value in core_config_data (value from arg, pipe, or paste)"
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("path", help="Config path (e.g. my_app/tools/mysql_prod/pass)")
-        parser.add_argument("value", nargs="?", default=None, help="Value to set")
+        parser.add_argument(
+            "value", nargs="?", default=None,
+            help="Value to set. Omit to read from stdin (paste interactively or pipe).",
+        )
         parser.add_argument("--scope", default=Scope.DEFAULT,
                            help="Config scope: default, workspace, agent_view")
         parser.add_argument("--scope-id", type=int, default=0,
                            help="Scope ID (workspace or agent_view ID)")
+        parser.add_argument(
+            "--agent-view", dest="agent_view", default=None,
+            help="Agent view code — shortcut for --scope agent_view --scope-id <lookup>",
+        )
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..core_config import config_set_auto_encrypt
@@ -280,26 +338,22 @@ class ConfigSetCommand:
             print(f"Error: Invalid config path '{args.path}' — expected module/field format (e.g. jira/jira_token)")
             return
 
-        scope = getattr(args, "scope", Scope.DEFAULT)
-        scope_id = getattr(args, "scope_id", 0)
-
-        if not _validate_config_path(args.path, scope):
-            return
-
-        if args.value is not None and not _validate_config_value(args.path, args.value):
-            return
-
-        if args.value is None:
-            print(f"Error: Missing value for '{args.path}'")
-            return
-
-        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
+        value = args.value
+        if value is None:
+            value = _read_value_from_stdin(args.path)
 
         db_config, _, _ = _load_framework_config()
         conn = get_connection_or_exit(db_config)
         try:
+            scope, scope_id = _resolve_scope_from_args(conn, args)
+            if not _validate_config_path(args.path, scope):
+                return
+            if not _validate_config_value(args.path, value):
+                return
+
+            scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
             encrypted = config_set_auto_encrypt(
-                conn, args.path, args.value, scope=scope, scope_id=scope_id
+                conn, args.path, value, scope=scope, scope_id=scope_id
             )
             conn.commit()
             get_event_manager().dispatch(
@@ -670,17 +724,19 @@ class ConfigRemoveCommand:
                           help="Config scope: default, workspace, agent_view")
         parser.add_argument("--scope-id", type=int, default=0,
                           help="Scope ID (workspace or agent_view ID)")
+        parser.add_argument(
+            "--agent-view", dest="agent_view", default=None,
+            help="Agent view code — shortcut for --scope agent_view --scope-id <lookup>",
+        )
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..core_config import config_delete
 
-        scope = getattr(args, "scope", Scope.DEFAULT)
-        scope_id = getattr(args, "scope_id", 0)
-        scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
-
         db_config, _, _ = _load_framework_config()
         conn = get_connection_or_exit(db_config)
         try:
+            scope, scope_id = _resolve_scope_from_args(conn, args)
+            scope_label = f" [scope={scope}, scope_id={scope_id}]" if scope != Scope.DEFAULT else ""
             deleted = config_delete(conn, args.path, scope=scope, scope_id=scope_id)
             conn.commit()
             if deleted:

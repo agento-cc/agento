@@ -1,14 +1,38 @@
-"""Tests for config:set scope restriction enforcement (showIn* flags)."""
+"""Tests for config:set / config:remove CLI commands + scope restrictions."""
 from __future__ import annotations
 
 import argparse
+import io
 import json
+from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agento.framework.cli.config import ConfigSchemaCommand, _validate_config_path
+from agento.framework.cli.config import (
+    ConfigRemoveCommand,
+    ConfigSchemaCommand,
+    ConfigSetCommand,
+    _validate_config_path,
+)
+from agento.framework.workspace import AgentView
+
+
+def _mock_conn():
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    return conn, cursor
+
+
+def _make_agent_view(id=42, code="dev_01"):
+    now = datetime(2026, 1, 1)
+    return AgentView(
+        id=id, workspace_id=10, code=code, label="Dev",
+        is_active=True, created_at=now, updated_at=now,
+    )
 
 
 @pytest.fixture
@@ -142,3 +166,164 @@ class TestConfigSchemaUnreachableWarning:
         assert "unreachable" in out.lower()
         assert "stale_mod/unreachable_field" in out
         assert "stale_mod/ok_field" not in out.split("unreachable")[1]
+
+
+def _set_args(path="jira/jira_token", value=None, scope="default", scope_id=0, agent_view=None):
+    return argparse.Namespace(
+        path=path, value=value, scope=scope, scope_id=scope_id, agent_view=agent_view,
+    )
+
+
+def _remove_args(path="jira/jira_token", scope="default", scope_id=0, agent_view=None):
+    return argparse.Namespace(
+        path=path, scope=scope, scope_id=scope_id, agent_view=agent_view,
+    )
+
+
+class TestConfigSetCommand:
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    @patch("agento.framework.cli.config._validate_config_path", return_value=True)
+    @patch("agento.framework.cli.config._validate_config_value", return_value=True)
+    @patch("agento.framework.event_manager.get_event_manager")
+    @patch("agento.framework.core_config.config_set_auto_encrypt")
+    def test_reads_value_from_stdin_pipe(
+        self, mock_write, mock_events, _vv, _vp, mock_config, mock_conn_fn,
+        monkeypatch,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+        mock_write.return_value = False
+        mock_events.return_value = MagicMock()
+
+        piped = io.StringIO("the-value")
+        monkeypatch.setattr(piped, "isatty", lambda: False)
+        monkeypatch.setattr("sys.stdin", piped)
+
+        ConfigSetCommand().execute(_set_args(value=None))
+
+        mock_write.assert_called_once()
+        assert mock_write.call_args.args[2] == "the-value"
+
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    @patch("agento.framework.cli.config._validate_config_path", return_value=True)
+    @patch("agento.framework.cli.config._validate_config_value", return_value=True)
+    @patch("agento.framework.event_manager.get_event_manager")
+    @patch("agento.framework.core_config.config_set_auto_encrypt")
+    def test_reads_value_from_stdin_tty_strips_trailing_newline(
+        self, mock_write, mock_events, _vv, _vp, mock_config, mock_conn_fn,
+        monkeypatch, capsys,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+        mock_write.return_value = False
+        mock_events.return_value = MagicMock()
+
+        tty_stream = io.StringIO("the-value\n")
+        monkeypatch.setattr(tty_stream, "isatty", lambda: True)
+        monkeypatch.setattr("sys.stdin", tty_stream)
+
+        ConfigSetCommand().execute(_set_args(value=None))
+
+        assert mock_write.call_args.args[2] == "the-value"
+        # Prompt goes to stderr
+        assert "Paste value" in capsys.readouterr().err
+
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    @patch("agento.framework.cli.config._validate_config_path", return_value=True)
+    @patch("agento.framework.cli.config._validate_config_value", return_value=True)
+    @patch("agento.framework.event_manager.get_event_manager")
+    @patch("agento.framework.core_config.config_set_auto_encrypt")
+    @patch("agento.framework.workspace.get_agent_view_by_code")
+    def test_agent_view_flag_resolves_scope(
+        self, mock_av, mock_write, mock_events, _vv, _vp, mock_config, mock_conn_fn,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+        mock_write.return_value = True
+        mock_events.return_value = MagicMock()
+        mock_av.return_value = _make_agent_view(id=42, code="dev_01")
+
+        args = _set_args(value="v", agent_view="dev_01")
+        ConfigSetCommand().execute(args)
+
+        call = mock_write.call_args
+        assert call.kwargs.get("scope") == "agent_view"
+        assert call.kwargs.get("scope_id") == 42
+
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    def test_agent_view_flag_conflicts_with_scope_id(
+        self, mock_config, mock_conn_fn,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+
+        args = _set_args(value="v", agent_view="dev_01", scope_id=99)
+        with pytest.raises(SystemExit):
+            ConfigSetCommand().execute(args)
+
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    def test_agent_view_flag_conflicts_with_non_agent_view_scope(
+        self, mock_config, mock_conn_fn,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+
+        args = _set_args(value="v", agent_view="dev_01", scope="workspace")
+        with pytest.raises(SystemExit):
+            ConfigSetCommand().execute(args)
+
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    @patch("agento.framework.workspace.get_agent_view_by_code")
+    def test_agent_view_flag_unknown_code_exits(
+        self, mock_av, mock_config, mock_conn_fn,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+        mock_av.return_value = None
+
+        args = _set_args(value="v", agent_view="nope")
+        with pytest.raises(SystemExit):
+            ConfigSetCommand().execute(args)
+
+
+class TestConfigRemoveCommand:
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    @patch("agento.framework.core_config.config_delete")
+    @patch("agento.framework.workspace.get_agent_view_by_code")
+    def test_agent_view_flag_resolves_scope(
+        self, mock_av, mock_delete, mock_config, mock_conn_fn,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+        mock_delete.return_value = True
+        mock_av.return_value = _make_agent_view(id=42, code="dev_01")
+
+        args = _remove_args(agent_view="dev_01")
+        ConfigRemoveCommand().execute(args)
+
+        call = mock_delete.call_args
+        assert call.kwargs.get("scope") == "agent_view"
+        assert call.kwargs.get("scope_id") == 42
+
+    @patch("agento.framework.cli.config.get_connection_or_exit")
+    @patch("agento.framework.cli.config._load_framework_config")
+    @patch("agento.framework.core_config.config_delete")
+    def test_default_scope_passthrough(
+        self, mock_delete, mock_config, mock_conn_fn,
+    ):
+        mock_config.return_value = ({}, None, None)
+        mock_conn_fn.return_value = _mock_conn()[0]
+        mock_delete.return_value = True
+
+        ConfigRemoveCommand().execute(_remove_args())
+
+        call = mock_delete.call_args
+        assert call.kwargs.get("scope") == "default"
+        assert call.kwargs.get("scope_id") == 0

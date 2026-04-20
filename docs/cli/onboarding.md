@@ -32,7 +32,9 @@ Set the required config values before running `setup:upgrade`:
 ```bash
 agento config:set jira/jira_host https://mycompany.atlassian.net
 agento config:set jira/jira_user user@example.com
-agento config:set jira/jira_token <token>
+# Token is an obscure field — omit the value so agento prompts instead of
+# leaving it in your shell history. Paste the token, press Ctrl+D.
+agento config:set jira/jira_token
 agento config:set jira/jira_assignee_account_id <account_id>
 agento config:set jira/jira_projects '["PROJECT_KEY"]'
 agento setup:upgrade

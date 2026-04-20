@@ -2,31 +2,60 @@
 
 Each `agent_view` has its own identity: SSH private key, optional public key, optional `~/.ssh/config`, and (via `token:register`) its agent CLI credentials. All identity material is stored **encrypted in the database** and materialized on disk only at workspace-build time, inside the build directory that becomes the agent's `$HOME`.
 
+## Registering a New Agent — Quick Start
+
+Minimum viable onboarding for a fresh `agent_view`, using the interactive paste flow (no host paths leaked into Docker, no volume mounts):
+
+```bash
+# 1. Register the agent CLI credentials (Claude / Codex OAuth token)
+agento token:register claude dev_01
+agento token:set claude <id_printed_above>
+
+# 2. Paste the SSH private key into the encrypted DB field
+agento config:set agent_view/identity/ssh_private_key --agent-view dev_01
+# → "Paste value for agent_view/identity/ssh_private_key, then press Ctrl+D…"
+# <paste the key, press Enter, then Ctrl+D>
+
+# 3. Paste the matching public key (optional but recommended — enables fingerprint display)
+agento config:set agent_view/identity/ssh_public_key --agent-view dev_01
+# <paste the .pub line, Ctrl+D>
+
+# 4. Verify
+agento agent_view:identity:show dev_01
+
+# 5. Materialize the workspace (decrypts key into the build dir that becomes $HOME)
+agento workspace:build --agent-view dev_01
+```
+
+Everything below explains the mechanism.
+
 ## Why DB, Not Filesystem
 
 - **Per-agent_view isolation** — each agent_view can have its own git/SSH identity without manual file juggling
 - **3-level fallback** — identity resolves through `agent_view → workspace → default` like any other scoped config
-- **Encryption at rest** — `ssh_private_key` is stored as an obscure field (AES-256-CBC, same mechanism as other `type: "obscure"` fields in `core_config_data`)
+- **Encryption at rest** — `ssh_private_key` is marked `type: "obscure"` in `system.json` and is auto-encrypted by `config:set` (AES-256-CBC, same mechanism as other obscure fields in `core_config_data`)
 - **Backups** — your SQL backup already captures identity; no separate key-management dance
 
 ## Storing an SSH Key
 
-```bash
-agento agent_view:identity:set-ssh-key <agent_view_code> <path_to_private_key>
-```
-
-Example:
+There is no SSH-specific CLI — identity fields go through the generic `config:set`, which reads the value from the argument, a pipe, or an interactive paste (when stdin is a TTY). Because the field is declared `type: "obscure"`, the value is encrypted automatically.
 
 ```bash
-agento agent_view:identity:set-ssh-key dev_01 ~/.ssh/agent_dev_01
+# Interactive paste (recommended — no key material in shell history / ps aux)
+agento config:set agent_view/identity/ssh_private_key --agent-view dev_01
+# Paste key, press Ctrl+D
+
+# Pipe (scripts / CI)
+cat ~/.ssh/agent_dev_01 | agento config:set agent_view/identity/ssh_private_key --agent-view dev_01
+
+# Public key (plaintext — same mechanism, different field)
+cat ~/.ssh/agent_dev_01.pub | agento config:set agent_view/identity/ssh_public_key --agent-view dev_01
 ```
 
-The CLI:
-1. Reads the private-key file (must contain `PRIVATE KEY`)
-2. Encrypts it and stores under `agent_view/identity/ssh_private_key` at scope `agent_view` with `scope_id = <agent_view.id>`
-3. If a matching `<key>.pub` exists, stores it as `agent_view/identity/ssh_public_key` (plaintext)
+### Scope shortcuts
 
-Override the public-key path with `--public-key-path`. Override scope with `--scope default` / `--scope workspace` + `--scope-id <id>` (useful for a workspace-wide fallback key).
+- `--agent-view <code>` — expands to `--scope agent_view --scope-id <lookup>`; mutually exclusive with `--scope-id`.
+- `--scope default` / `--scope workspace --scope-id <id>` — for a workspace-wide or global fallback key. Plain `config:set` flags, nothing identity-specific.
 
 ## Inspecting Identity
 
@@ -38,11 +67,14 @@ Shows the public key (if stored), a fingerprint tag for the private key, and pre
 
 ## Removing Identity
 
-```bash
-agento agent_view:identity:remove-ssh-key <agent_view_code>
-```
+Identity rows are removed via generic `config:remove`:
 
-Deletes all four `agent_view/identity/*` rows for that scope.
+```bash
+agento config:remove agent_view/identity/ssh_private_key --agent-view dev_01
+agento config:remove agent_view/identity/ssh_public_key  --agent-view dev_01
+agento config:remove agent_view/identity/ssh_config      --agent-view dev_01
+agento config:remove agent_view/identity/ssh_known_hosts --agent-view dev_01
+```
 
 ## Configuration Fields
 
@@ -56,20 +88,6 @@ Defined in `src/agento/modules/agent_view/system.json`:
 | `agent_view/identity/ssh_known_hosts` | `textarea` | Optional — pre-populated trust entries. |
 
 All four support the standard 3-level scope fallback: `agent_view → workspace → default`.
-
-## Setting Other Fields Directly
-
-For `ssh_config` and `ssh_known_hosts` (not covered by the dedicated CLI), use `config:set`:
-
-```bash
-agento config:set agent_view/identity/ssh_config \
-  "Host git.my_company.com\n  IdentityFile ~/.ssh/id_rsa\n  User agent" \
-  --scope=agent_view --scope-id=<id>
-
-agento config:set agent_view/identity/ssh_known_hosts \
-  "$(ssh-keyscan github.com 2>/dev/null)" \
-  --scope=default
-```
 
 ## How It Reaches the Agent Process
 

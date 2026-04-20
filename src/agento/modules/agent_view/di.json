@@ -3,8 +3,6 @@
     {"name": "tool:list", "class": "src.commands.tool_list.ToolListCommand"},
     {"name": "tool:enable", "class": "src.commands.tool_enable.ToolEnableCommand"},
     {"name": "tool:disable", "class": "src.commands.tool_disable.ToolDisableCommand"},
-    {"name": "agent_view:identity:set-ssh-key", "class": "src.commands.identity_set_ssh_key.IdentitySetSshKeyCommand"},
-    {"name": "agent_view:identity:remove-ssh-key", "class": "src.commands.identity_remove_ssh_key.IdentityRemoveSshKeyCommand"},
     {"name": "agent_view:identity:show", "class": "src.commands.identity_show.IdentityShowCommand"}
   ]
 }

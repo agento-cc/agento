@@ -24,7 +24,7 @@ DB values support Magento-style scoping: `--scope=agent_view --scope-id=1` overr
 | Level | Use Case | Example |
 |-------|----------|---------|
 | **ENV** | Docker/K8s deployments, CI overrides | `CONFIG__JIRA__HOST=https://staging.atlassian.net` |
-| **DB** | Secrets, per-installation overrides | `bin/agento config:set jira/token my-api-token` |
+| **DB** | Secrets, per-installation overrides | `bin/agento config:set jira/token` (omit value → paste prompt; see [cli/config.md](../cli/config.md#secrets--never-pass-on-the-command-line)) |
 | **config.json** | Shared defaults across deployments | `{"tools": {"mysql_prod": {"port": 3306}}}` |
 
 ## How It Works at Runtime

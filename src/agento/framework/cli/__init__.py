@@ -22,6 +22,15 @@ _INTERACTIVE_COMMANDS = frozenset({
     "to:reg", "to:ref", "se:up",
 })
 
+# Commands that MAY want a TTY (e.g. config:set in paste mode). We forward the
+# TTY only when the host caller actually has one — otherwise pipe-through
+# (`-T`) keeps working for CI / scripts.
+_MAYBE_INTERACTIVE_COMMANDS = frozenset({
+    "config:set", "config:remove",
+    # Shortcuts
+    "co:se", "co:re",
+})
+
 
 def _get_command(argv: list[str]) -> str | None:
     """Extract command name from argv (first non-flag arg)."""
@@ -57,9 +66,12 @@ def _proxy_to_docker(argv: list[str]) -> None:
     clean_argv = [a for a in argv if a != "--local"]
     cmd = _get_command(clean_argv)
     is_interactive = cmd in _INTERACTIVE_COMMANDS
-    tty_flag = "-it" if is_interactive else "-T"
+    needs_tty = is_interactive or (
+        cmd in _MAYBE_INTERACTIVE_COMMANDS and sys.stdin.isatty()
+    )
+    tty_flag = "-it" if needs_tty else "-T"
     env_flags: list[str] = []
-    if is_interactive:
+    if needs_tty:
         term = os.environ.get("TERM", "xterm-256color")
         env_flags = ["-e", f"TERM={term}", "-e", "COLORTERM=truecolor"]
 

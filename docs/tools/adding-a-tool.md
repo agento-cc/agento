@@ -88,12 +88,19 @@ Empty `knowledge/README.md` — you'll add database documentation here later (ta
 
 ## Step 2 — Set Credentials
 
-Passwords go into the database (encrypted automatically because the field type is `obscure`):
+Passwords go into the database (encrypted automatically because the field type is `obscure`). Omit the value — agento prompts you to paste it so the secret never lands in your shell history:
 
 ```bash
-agento config:set acme/tools/mysql_acme_prod/pass s3cret-prod-pw
-agento config:set acme/tools/mysql_acme_staging/pass s3cret-staging-pw
+agento config:set acme/tools/mysql_acme_prod/pass
+# Paste…  <Ctrl+D>
+agento config:set acme/tools/mysql_acme_staging/pass
+# Paste…  <Ctrl+D>
+
+# Scripting? Pipe from a file / env var instead of typing inline:
+echo -n "$PROD_PW" | agento config:set acme/tools/mysql_acme_prod/pass
 ```
+
+See [docs/cli/config.md#secrets](../cli/config.md#secrets--never-pass-on-the-command-line) for why.
 
 You can also override any field via DB — useful when the same module is deployed with different hosts:
 
