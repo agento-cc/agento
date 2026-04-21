@@ -4,6 +4,26 @@
 name: agento
 
 services:
+  sandbox:
+    image: ghcr.io/agento-cc/agento-sandbox:${AGENTO_VERSION:-latest}
+    volumes:
+      - ../workspace:/workspace
+      - ../app/code:/app/code:ro
+      - ../app/etc:/app/etc
+      - ../logs:/app/logs
+    environment:
+      - TZ=${TZ:-UTC}
+    stdin_open: true
+    tty: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agento-net
+    depends_on:
+      toolbox:
+        condition: service_started
+    restart: unless-stopped
+
   toolbox:
     image: ghcr.io/agento-cc/agento-toolbox:${AGENTO_VERSION:-latest}
     environment:
