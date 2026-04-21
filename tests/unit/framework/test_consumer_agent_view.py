@@ -143,7 +143,7 @@ class TestRunJobWithAgentView:
 
         consumer._run_job(job)
 
-        mock_get_writer.assert_called_once_with("claude")
+        mock_get_writer.assert_any_call("claude")
         mock_writer.prepare_workspace.assert_called_once()
         call_kwargs = mock_writer.prepare_workspace.call_args
         assert call_kwargs.kwargs["agent_view_id"] == 2
@@ -319,3 +319,119 @@ class TestRunJobProviderFallback:
 
         with pytest.raises(RuntimeError, match="No agent_view/provider configured"):
             consumer._run_job(_make_job())
+
+
+class TestPostRunCredentialCapture:
+    """Tests that consumer calls capture_refreshed_credentials after execute_job."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_token_resolver(self):
+        with patch("agento.framework.consumer.TokenResolver") as MockCls:
+            mock_resolver = MagicMock()
+            token = MagicMock()
+            token.credentials = {"raw_auth": {"tokens": {"refresh_token": "old"}}}
+            mock_resolver.resolve.return_value = token
+            MockCls.return_value = mock_resolver
+            yield
+
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    @patch("agento.framework.consumer.prepare_artifacts_dir")
+    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.consumer.resolve_agent_view_runtime")
+    def test_calls_capture_after_execute_job(
+        self, mock_resolve, mock_build, mock_prepare, mock_conn,
+        MockRunner, mock_get_ch, mock_get_wf,
+        sample_db_config, sample_consumer_config,
+    ):
+        runtime = _make_runtime_with_agent_view(provider="codex")
+        mock_resolve.return_value = runtime
+        mock_conn.return_value = MagicMock()
+
+        mock_writer = MagicMock(spec=["capture_refreshed_credentials", "prepare_workspace", "owned_paths", "persistent_home_paths", "write_credentials", "inject_runtime_params", "migrate_legacy_workspace_config"])
+
+        with patch(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CODEX: mock_writer},
+        ):
+            mock_result = _make_claude_result()
+            mock_workflow = MagicMock()
+            mock_workflow.execute_job.return_value = mock_result
+            mock_get_wf.return_value.return_value = mock_workflow
+            mock_get_ch.return_value = MagicMock(name="jira")
+
+            consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+            consumer._run_job(_make_job(agent_view_id=2))
+
+        mock_writer.capture_refreshed_credentials.assert_called_once()
+        call_args = mock_writer.capture_refreshed_credentials.call_args
+        from pathlib import Path
+        assert Path(call_args[0][0]) == Path("/workspace/acme/developer/runs/42")
+
+    @patch("agento.framework.consumer.get_primary_token")
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    @patch("agento.framework.consumer.resolve_agent_view_runtime")
+    def test_skips_capture_when_no_artifacts_dir(
+        self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
+        mock_primary, sample_db_config, sample_consumer_config,
+    ):
+        mock_resolve.return_value = AgentViewRuntime()
+        mock_conn.return_value = MagicMock()
+        primary = MagicMock()
+        primary.agent_type = AgentProvider.CLAUDE
+        mock_primary.return_value = primary
+
+        mock_writer = MagicMock()
+
+        with patch(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CLAUDE: mock_writer},
+        ):
+            mock_result = _make_claude_result()
+            mock_workflow = MagicMock()
+            mock_workflow.execute_job.return_value = mock_result
+            mock_get_wf.return_value.return_value = mock_workflow
+            mock_get_ch.return_value = MagicMock(name="jira")
+
+            consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+            consumer._run_job(_make_job(agent_view_id=None))
+
+        mock_writer.capture_refreshed_credentials.assert_not_called()
+
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    @patch("agento.framework.consumer.prepare_artifacts_dir")
+    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.consumer.resolve_agent_view_runtime")
+    def test_skips_capture_when_writer_has_no_method(
+        self, mock_resolve, mock_build, mock_prepare, mock_conn,
+        MockRunner, mock_get_ch, mock_get_wf,
+        sample_db_config, sample_consumer_config,
+    ):
+        runtime = _make_runtime_with_agent_view(provider="claude")
+        mock_resolve.return_value = runtime
+        mock_conn.return_value = MagicMock()
+
+        # ClaudeConfigWriter without capture_refreshed_credentials
+        mock_writer = MagicMock(spec=["prepare_workspace", "owned_paths"])
+
+        with patch(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CLAUDE: mock_writer},
+        ):
+            mock_result = _make_claude_result()
+            mock_workflow = MagicMock()
+            mock_workflow.execute_job.return_value = mock_result
+            mock_get_wf.return_value.return_value = mock_workflow
+            mock_get_ch.return_value = MagicMock(name="jira")
+
+            consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+            # Should not raise
+            consumer._run_job(_make_job(agent_view_id=2))
