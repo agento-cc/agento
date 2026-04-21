@@ -92,7 +92,7 @@ All four support the standard 3-level scope fallback: `agent_view → workspace 
 ## How It Reaches the Agent Process
 
 1. `agento workspace:build --agent-view <code>` resolves scoped overrides, decrypts the SSH private key, and writes identity files into `workspace/build/<ws>/<av>/builds/<id>/.ssh/` with correct permissions.
-2. When the consumer spawns the agent subprocess, it sets `HOME=<build_dir>`. Standard SSH / git tooling picks up `~/.ssh/id_rsa` naturally — no `GIT_SSH_COMMAND` wrapper required.
+2. `agento run` and the consumer both set `HOME=<build_dir>` on the agent subprocess **and** wrap the command with a short shell prelude that symlinks `<build_dir>/.ssh` into the process's passwd home (`/root` or `/home/agent`). This is required because OpenSSH expands `~/.ssh/` via `getpwuid(getuid())->pw_dir`, not `$HOME` — so merely setting `HOME` is not enough for `ssh` / `git` to find the materialized key. The symlink is established per-invocation by [`agento.framework.ssh_prelude`](../../src/agento/framework/ssh_prelude.py).
 
 See [workspace-build.md](../cli/workspace-build.md) for the full build flow.
 

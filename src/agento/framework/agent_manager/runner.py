@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from ..runner import RunResult
+from ..ssh_prelude import wrap_with_ssh_prelude
 from .active import resolve_active_token
 from .config import AgentManagerConfig
 from .models import AgentProvider, Token
@@ -102,9 +103,12 @@ class TokenRunner(ABC):
         """
         if self.home_dir is not None:
             env = {**env, "HOME": self.home_dir}
+            spawn_cmd = wrap_with_ssh_prelude(cmd)
+        else:
+            spawn_cmd = cmd
 
         proc = subprocess.Popen(
-            cmd,
+            spawn_cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
