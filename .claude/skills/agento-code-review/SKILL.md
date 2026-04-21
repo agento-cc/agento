@@ -63,6 +63,7 @@ Read CLAUDE.md and review the changed files against these **critical project rul
 - **Magento terminology** — observers, di.json, dispatch (not listeners, hooks)
 - **Config fallback**: ENV > DB > config.json > field defaults
 - **Module setup files**: `sql/*.sql` (schema), `data_patch.json` (data patches), `cron.json` (cron jobs)
+- **Framework must stay agent-agnostic** — adding a new agent (e.g. OpenCode, Hermes) must require **zero edits to `src/agento/framework/`**. The agent ships its own module with `src/cli.py` (CliInvoker), `src/runner.py` (Runner), `src/config.py` (ConfigWriter), `src/auth.py` (AuthStrategy) and registers them under `runtimes` / `config_writers` / `auth_strategies` / `cli_invokers` in its `di.json`. If a change introduces `if provider == "claude"` / `"codex"` branches, hardcoded CLI flag lists, or hardcoded config-file names (`.claude.json`, `.codex/config.toml`) in framework code, flag it as a **rule violation**.
 
 ### Event & extensibility rules
 - **Event naming**: `agento_<module>_<event>` for framework/core events, `<vendor>_<module>_<event>` for third-party modules
