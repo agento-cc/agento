@@ -301,3 +301,92 @@ class TestMaterializeAgentCredentials:
             materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
 
         assert "failed to write credentials" in caplog.text
+
+    def test_logs_warning_when_token_is_expired(self, tmp_path, monkeypatch, caplog):
+        import logging
+        from datetime import UTC, datetime, timedelta
+        from agento.framework.agent_manager.models import AgentProvider
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        codex_writer = MagicMock()
+
+        monkeypatch.setattr(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CODEX: codex_writer},
+        )
+
+        past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        resolver = MagicMock()
+        resolver.resolve.return_value = _token(AgentProvider.CODEX, {
+            "raw_auth": {"tokens": {"refresh_token": "r", "expiry": past}},
+        })
+        monkeypatch.setattr(
+            "agento.framework.agent_manager.token_resolver.TokenResolver",
+            lambda *a, **kw: resolver,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="agento.modules.workspace_build.src.builder"):
+            materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
+
+        assert "expired" in caplog.text.lower()
+        codex_writer.write_credentials.assert_called_once()  # Still writes despite warning
+
+    def test_no_warning_when_token_is_not_expired(self, tmp_path, monkeypatch, caplog):
+        import logging
+        from datetime import UTC, datetime, timedelta
+        from agento.framework.agent_manager.models import AgentProvider
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        codex_writer = MagicMock()
+
+        monkeypatch.setattr(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CODEX: codex_writer},
+        )
+
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        resolver = MagicMock()
+        resolver.resolve.return_value = _token(AgentProvider.CODEX, {
+            "raw_auth": {"tokens": {"refresh_token": "r", "expiry": future}},
+        })
+        monkeypatch.setattr(
+            "agento.framework.agent_manager.token_resolver.TokenResolver",
+            lambda *a, **kw: resolver,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="agento.modules.workspace_build.src.builder"):
+            materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
+
+        assert "expired" not in caplog.text.lower()
+
+    @pytest.mark.parametrize("bad_expiry", ["not-a-date", 12345, "2026-01-01T00:00:00"])
+    def test_silently_ignores_unparseable_expiry(self, bad_expiry, tmp_path, monkeypatch, caplog):
+        import logging
+        from agento.framework.agent_manager.models import AgentProvider
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        codex_writer = MagicMock()
+
+        monkeypatch.setattr(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CODEX: codex_writer},
+        )
+
+        resolver = MagicMock()
+        resolver.resolve.return_value = _token(AgentProvider.CODEX, {
+            "raw_auth": {"tokens": {"refresh_token": "r", "expiry": bad_expiry}},
+        })
+        monkeypatch.setattr(
+            "agento.framework.agent_manager.token_resolver.TokenResolver",
+            lambda *a, **kw: resolver,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="agento.modules.workspace_build.src.builder"):
+            materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
+
+        # Unparseable/naive expiry must: not warn, not raise, still call write_credentials
+        assert "expired" not in caplog.text.lower()
+        codex_writer.write_credentials.assert_called_once()

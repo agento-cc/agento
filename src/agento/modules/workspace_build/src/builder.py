@@ -478,6 +478,19 @@ def materialize_agent_credentials(conn, build_dir: Path) -> None:
             continue
         if token is None or token.credentials is None:
             continue
+        _expiry = (token.credentials.get("raw_auth") or {}).get("tokens", {}).get("expiry")
+        if _expiry is not None:
+            try:
+                from datetime import UTC, datetime
+                exp_dt = datetime.fromisoformat(str(_expiry).replace("Z", "+00:00"))
+                if exp_dt < datetime.now(UTC):
+                    logger.warning(
+                        "Token for provider=%s is expired (expiry=%s); "
+                        "re-register token after next run or run setup:upgrade",
+                        provider, _expiry,
+                    )
+            except Exception:
+                pass
         try:
             writer.write_credentials(build_dir, token.credentials)
         except Exception:
