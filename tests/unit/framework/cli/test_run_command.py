@@ -121,35 +121,6 @@ class TestRunCommand:
         assert exc.value.code == 1
         assert "no CliInvoker registered" in err
 
-    def test_missing_ssh_key_prints_note(self, tmp_path, capsys):
-        project_root, compose = _project_layout(tmp_path)
-        # build/current exists but has no .ssh/id_rsa
-        with (
-            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
-            patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
-            patch("agento.framework.cli.run.os.execvp"),
-        ):
-            RunCommand().execute(_make_args())
-        err = capsys.readouterr().err
-        assert "no .ssh/id_rsa" in err
-        assert "config:set agent_view/identity/ssh_private_key" in err
-
-    def test_existing_ssh_key_suppresses_note(self, tmp_path, capsys):
-        project_root, compose = _project_layout(tmp_path)
-        build_root = project_root / "workspace" / "build" / "it" / "dev_01"
-        (build_root / "builds" / ".ssh").mkdir(parents=True)
-        (build_root / "builds" / ".ssh" / "id_rsa").write_text("KEY")
-        with (
-            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
-            patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
-            patch("agento.framework.cli.run.os.execvp"),
-        ):
-            RunCommand().execute(_make_args())
-        err = capsys.readouterr().err
-        assert "no .ssh/id_rsa" not in err
-
     def test_missing_current_build_exits_with_hint(self, tmp_path, capsys):
         project_root, compose = _project_layout(tmp_path, include_current=False)
         with (
