@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING
 from agento.framework.agent_manager.token_store import register_token
 
 if TYPE_CHECKING:
-    from agento.framework.agent_manager.models import Token
     import pymysql
+
+    from agento.framework.agent_manager.models import Token
 
 logger = logging.getLogger(__name__)
 
@@ -233,12 +234,11 @@ class CodexConfigWriter:
 
     def capture_refreshed_credentials(
         self,
-        artifacts_dir: Path,
+        home_dir: Path,
         token: Token,
         conn: pymysql.Connection,
-        build_dir: Path | None = None,
     ) -> None:
-        auth_path = artifacts_dir / ".codex" / "auth.json"
+        auth_path = home_dir / ".codex" / "auth.json"
         if not auth_path.is_file():
             return
 
@@ -264,6 +264,3 @@ class CodexConfigWriter:
 
         register_token(conn, token.agent_type, token.label, new_creds,
                        token_limit=token.token_limit, model=token.model, logger=logger)
-
-        if build_dir is not None:
-            self.write_credentials(build_dir, new_creds)

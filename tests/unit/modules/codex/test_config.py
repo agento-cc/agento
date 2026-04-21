@@ -212,6 +212,7 @@ class TestMigrateLegacyWorkspaceConfig:
 class TestCaptureRefreshedCredentials:
     def _make_token(self, refresh_token="tok-A", access_token="acc-A"):
         from unittest.mock import MagicMock
+
         from agento.framework.agent_manager.models import AgentProvider
         token = MagicMock()
         token.credentials = {
@@ -249,6 +250,7 @@ class TestCaptureRefreshedCredentials:
     def test_upserts_db_when_refresh_token_changed(self, writer, work_dir):
         import json
         from unittest.mock import MagicMock, patch
+
         from agento.framework.agent_manager.models import AgentProvider
 
         codex_dir = work_dir / ".codex"
@@ -272,38 +274,3 @@ class TestCaptureRefreshedCredentials:
         assert saved_creds["refresh_token"] == "tok-B"
         assert saved_creds["subscription_key"] == "acc-B"
 
-    def test_updates_build_dir_auth_json_when_provided(self, writer, work_dir, tmp_path):
-        import json
-        from unittest.mock import MagicMock, patch
-
-        codex_dir = work_dir / ".codex"
-        codex_dir.mkdir(parents=True)
-        refreshed = {"tokens": {"refresh_token": "tok-B", "access_token": "acc-B"}}
-        (codex_dir / "auth.json").write_text(json.dumps(refreshed))
-
-        build_dir = tmp_path / "build"
-        build_dir.mkdir()
-
-        token = self._make_token(refresh_token="tok-A")
-
-        with patch("agento.modules.codex.src.config.register_token"):
-            writer.capture_refreshed_credentials(work_dir, token, MagicMock(), build_dir)
-
-        build_auth = build_dir / ".codex" / "auth.json"
-        assert build_auth.is_file()
-        assert json.loads(build_auth.read_text()) == refreshed
-
-    def test_skips_build_dir_update_when_build_dir_is_none(self, writer, work_dir):
-        import json
-        from unittest.mock import MagicMock, patch
-
-        codex_dir = work_dir / ".codex"
-        codex_dir.mkdir(parents=True)
-        refreshed = {"tokens": {"refresh_token": "tok-B", "access_token": "acc-B"}}
-        (codex_dir / "auth.json").write_text(json.dumps(refreshed))
-
-        token = self._make_token(refresh_token="tok-A")
-
-        with patch("agento.modules.codex.src.config.register_token"):
-            writer.capture_refreshed_credentials(work_dir, token, MagicMock(), None)
-        # No assertion needed — just verifies no AttributeError on None

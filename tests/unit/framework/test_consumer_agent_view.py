@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -334,6 +335,8 @@ class TestPostRunCredentialCapture:
             MockCls.return_value = mock_resolver
             yield
 
+    @patch("agento.framework.consumer.copy_build_to_artifacts_dir")
+    @patch("agento.framework.consumer.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
@@ -343,7 +346,7 @@ class TestPostRunCredentialCapture:
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_calls_capture_after_execute_job(
         self, mock_resolve, mock_build, mock_prepare, mock_conn,
-        MockRunner, mock_get_ch, mock_get_wf,
+        MockRunner, mock_get_ch, mock_get_wf, mock_get_current_build, mock_copy_build,
         sample_db_config, sample_consumer_config,
     ):
         runtime = _make_runtime_with_agent_view(provider="codex")
@@ -367,8 +370,7 @@ class TestPostRunCredentialCapture:
 
         mock_writer.capture_refreshed_credentials.assert_called_once()
         call_args = mock_writer.capture_refreshed_credentials.call_args
-        from pathlib import Path
-        assert Path(call_args[0][0]) == Path("/workspace/acme/developer/runs/42")
+        assert Path(call_args[0][0]) == Path("/workspace/acme/developer/current")
 
     @patch("agento.framework.consumer.get_primary_token")
     @patch("agento.framework.consumer.get_workflow_class")
@@ -403,6 +405,8 @@ class TestPostRunCredentialCapture:
 
         mock_writer.capture_refreshed_credentials.assert_not_called()
 
+    @patch("agento.framework.consumer.copy_build_to_artifacts_dir")
+    @patch("agento.framework.consumer.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
@@ -412,7 +416,7 @@ class TestPostRunCredentialCapture:
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_skips_capture_when_writer_has_no_method(
         self, mock_resolve, mock_build, mock_prepare, mock_conn,
-        MockRunner, mock_get_ch, mock_get_wf,
+        MockRunner, mock_get_ch, mock_get_wf, mock_get_current_build, mock_copy_build,
         sample_db_config, sample_consumer_config,
     ):
         runtime = _make_runtime_with_agent_view(provider="claude")

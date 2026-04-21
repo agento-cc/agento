@@ -473,18 +473,21 @@ class Consumer:
             )
             result = workflow.execute_job(channel, job, context)
 
-            if artifacts_dir is not None:
+            if current_build is not None:
                 try:
                     from .config_writer import get_config_writer
                     capture = getattr(get_config_writer(agent_type), "capture_refreshed_credentials", None)
                     if capture is not None:
                         _conn = get_connection(self._db_config)
                         try:
-                            capture(artifacts_dir, token, _conn, current_build)
+                            capture(current_build, token, _conn)
                         finally:
                             _conn.close()
                 except Exception:
-                    self.logger.warning("post-run credential capture failed", exc_info=True)
+                    self.logger.warning(
+                        "post-run credential capture failed for job_id=%s provider=%s",
+                        job.id, agent_type.value, exc_info=True,
+                    )
 
             summary = (
                 result.raw_output
