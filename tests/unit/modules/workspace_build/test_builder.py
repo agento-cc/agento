@@ -1112,6 +1112,46 @@ class TestExecuteBuild:
         with pytest.raises(ValueError, match="workspace 10 not found"):
             execute_build(conn, 1)
 
+    @patch("agento.modules.workspace_build.src.builder.materialize_agent_credentials")
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.workspace.get_agent_view")
+    def test_migrates_legacy_workspace_codex_config_into_per_agent_build(
+        self,
+        mock_get_av,
+        mock_overrides,
+        mock_resolve,
+        mock_get_writer,
+        mock_materialize_credentials,
+        tmp_path,
+    ):
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        from agento.modules.codex.src.config import CodexConfigWriter
+
+        mock_get_av.return_value = _make_agent_view()
+        mock_overrides.return_value = {"agent_view/provider": ("codex", False)}
+        mock_resolve.return_value = AgentViewRuntime(provider="codex")
+        mock_get_writer.return_value = CodexConfigWriter()
+        mock_materialize_credentials.return_value = None
+
+        legacy_codex = tmp_path / ".codex"
+        legacy_codex.mkdir(parents=True)
+        (legacy_codex / "config.toml").write_text(
+            "\n[mcp_servers.toolbox]\n"
+            'type = "streamable_http"\n'
+            'url = "http://toolbox:3001/mcp?agent_view_id=2"\n'
+        )
+
+        conn, _ = self._mock_conn()
+
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path / "build")):
+            result = execute_build(conn, 1)
+
+        build_config = tmp_path / "build" / "testws" / "dev" / "builds" / str(result.build_id) / ".codex" / "config.toml"
+        assert build_config.is_file()
+        assert "toolbox:3001/mcp?agent_view_id=2" in build_config.read_text()
+
 
 class TestValidateCode:
     """Tests for workspace/agent_view code validation."""

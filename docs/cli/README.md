@@ -13,6 +13,7 @@
 | `up` | Start Docker Compose runtime |
 | `down` | Stop Docker Compose runtime |
 | `logs [service]` | Show container logs |
+| `run <agent_view_code> [prompt]` | Run the configured agent CLI — interactive without a prompt, headless with one ([details](run.md)) |
 | **Setup** | |
 | `setup:upgrade [--dry-run] [--skip-onboarding]` | Apply migrations, data patches, install crontab, run onboarding ([onboarding details](onboarding.md)) |
 | **Modules** | |

@@ -11,8 +11,9 @@ _LOCAL_COMMANDS = frozenset({
     "doctor", "install", "upgrade", "up", "down", "logs",
     "module:list", "module:enable", "module:disable", "module:validate",
     "make:module",
+    "run",
     # Shortcuts for local commands
-    "mo:li", "mo:en", "mo:di", "mo:va", "ma:mo",
+    "mo:li", "mo:en", "mo:di", "mo:va", "ma:mo", "ru",
 })
 
 # Commands that need an interactive TTY (OAuth flows, onboarding prompts)
@@ -111,6 +112,7 @@ def _register_framework_commands() -> None:
         ModuleListCommand,
         ModuleValidateCommand,
     )
+    from .run import RunCommand
     from .runtime import (
         ConsumerCommand,
         E2eCommand,
@@ -137,6 +139,7 @@ def _register_framework_commands() -> None:
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
         ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSchemaCommand, ConfigResolveCommand,
         ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, PauseCommand, ResumeCommand, E2eCommand,
+        RunCommand,
         TokenRegisterCommand, TokenRefreshCommand, TokenListCommand, TokenDeregisterCommand, TokenSetCommand, TokenUsageCommand,
     ]:
         register_command(cmd_cls())
@@ -157,6 +160,7 @@ _STANDALONE_GROUPS = {
     "admin": "project",
     "doctor": "project", "install": "project", "up": "project",
     "down": "project", "logs": "project",
+    "run": "project",
     "consumer": "job", "publish": "job", "replay": "job", "rotate": "job",
     "e2e": "test",
 }

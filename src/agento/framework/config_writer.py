@@ -55,6 +55,28 @@ class ConfigWriter(Protocol):
         """
         ...
 
+    def write_credentials(self, build_dir: Path, credentials: dict) -> None:
+        """Materialize provider-specific OAuth credential files into ``build_dir``.
+
+        The ``credentials`` dict is the decrypted payload from ``oauth_token.credentials``
+        (flat fields: ``subscription_key``, ``refresh_token``, ``expires_at``,
+        ``subscription_type``, ``id_token``, ``raw_auth``). Each provider rewrites
+        it into the format its CLI expects (e.g. Claude's ``.claude/.credentials.json``
+        with the ``claudeAiOauth`` nested structure, or Codex's ``.codex/auth.json``).
+        Default: no-op (agent doesn't need on-disk credentials).
+        """
+        ...
+
+    def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
+        """Best-effort migration of legacy shared-HOME config from ``workspace_root``.
+
+        This is used when the runtime moved from a shared ``/workspace`` HOME to
+        per-agent build directories. Implementations may copy or merge their old
+        config files (for example MCP settings) into the new build layout.
+        Default: no-op.
+        """
+        ...
+
 
 # Registry: provider -> ConfigWriter instance
 _CONFIG_WRITERS: dict[AgentProvider, ConfigWriter] = {}

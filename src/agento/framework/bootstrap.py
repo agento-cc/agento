@@ -10,6 +10,8 @@ from .agent_manager.auth import AuthStrategy, clear_auth_strategies, register_au
 from .agent_manager.models import AgentProvider
 from .channels import registry as channel_registry
 from .channels.base import Channel
+from .cli_invoker import CliInvoker, register_cli_invoker
+from .cli_invoker import clear as clear_cli_invokers
 from .commands import Command, register_command
 from .commands import clear as clear_commands
 from .config_resolver import load_db_overrides, read_config_defaults, resolve_module_config
@@ -90,6 +92,7 @@ def bootstrap(
     clear_workflows()
     clear_runners()
     clear_config_writers()
+    clear_cli_invokers()
     clear_auth_strategies()
     clear_commands()
     clear_onboardings()
@@ -141,6 +144,7 @@ def bootstrap(
         _load_workflows(m)
         _load_runtimes(m)
         _load_config_writers(m)
+        _load_cli_invokers(m)
         _load_auth_strategies(m)
         _load_commands(m)
         _load_onboarding(m)
@@ -268,6 +272,24 @@ def _load_config_writers(m: ModuleManifest) -> None:
             logger.debug("Registered config writer %r from module %s", decl["provider"], m.name)
         except Exception:
             logger.exception("Failed to load config writer %r from module %s", decl.get("provider"), m.name)
+
+
+def _load_cli_invokers(m: ModuleManifest) -> None:
+    for decl in m.provides.get("cli_invokers", []):
+        try:
+            cls = import_class(m.path, decl["class"])
+            instance = cls()
+            if not isinstance(instance, CliInvoker):
+                logger.error(
+                    "CliInvoker %r from module %s does not implement CliInvoker protocol, skipping",
+                    decl.get("provider"), m.name,
+                )
+                continue
+            provider = AgentProvider(decl["provider"])
+            register_cli_invoker(provider, instance)
+            logger.debug("Registered CLI invoker %r from module %s", decl["provider"], m.name)
+        except Exception:
+            logger.exception("Failed to load CLI invoker %r from module %s", decl.get("provider"), m.name)
 
 
 def _load_auth_strategies(m: ModuleManifest) -> None:

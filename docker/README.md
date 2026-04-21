@@ -13,23 +13,19 @@ Containerized environment for running AI coding assistants.
 
 ## Quick Start
 
+Interactive agent sessions are launched per `agent_view` via the framework CLI:
+
 ```bash
-bin/run-sandbox.sh              # Interactive bash
-bin/run-sandbox.sh claude       # Claude Code
-bin/run-sandbox.sh codex        # OpenAI Codex
+agento run <agent_view_code>    # Runs the configured agent (claude/codex) in sandbox
 ```
+
+The command resolves the agent_view's provider + HOME (from the materialized workspace build) and spawns an interactive session in the `sandbox` container. See [docs/cli/run.md](../docs/cli/run.md) for details.
 
 ## Build
 
-The `bin/run-sandbox.sh` script automatically detects your UID/GID and builds the image accordingly.
-This ensures file permissions work correctly across different systems (macOS, Linux VPS, etc.).
-
 ```bash
-# Automatic build (recommended) - uses your current user's UID/GID
-bin/run-sandbox.sh
-
-# Manual build with explicit UID/GID
-cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build sandbox
+# Build images (dev mode) — uses your current user's UID/GID
+cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f docker-compose.dev.yml build
 ```
 
 ### Rebuilding for a Different User
@@ -37,50 +33,9 @@ cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build sandbox
 If you switch users or deploy to a new server, force a rebuild:
 
 ```bash
-docker rmi agento-sandbox:latest agento-sandbox:uid-*
-bin/run-sandbox.sh
+docker rmi agento-sandbox:latest
+cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f docker-compose.dev.yml build sandbox
 ```
-
-## Usage Examples
-
-### Claude Code
-
-```bash
-bin/run-sandbox.sh claude                                    # Interactive
-bin/run-sandbox.sh claude -p "explain this code"             # One-shot prompt
-bin/run-sandbox.sh claude --allowedTools "Bash,Read,Edit"    # Skip approvals
-bin/run-sandbox.sh claude --dangerously-skip-permissions     # Full auto mode
-```
-
-### OpenAI Codex
-
-```bash
-bin/run-sandbox.sh codex                                     # Interactive
-bin/run-sandbox.sh codex "refactor this function"            # With prompt
-bin/run-sandbox.sh codex --dangerously-bypass-approvals-and-sandbox  # Auto mode
-```
-
-### General Commands
-
-```bash
-bin/run-sandbox.sh echo "hello"                              # Run any command
-bin/run-sandbox.sh git status                                # Git in workspace
-bin/run-sandbox.sh ls -la bin/                               # List files
-```
-
-## Direct Docker Compose
-
-Alternative without the wrapper script (must export UID/GID first):
-
-```bash
-cd docker
-export HOST_UID=$(id -u) HOST_GID=$(id -g)
-docker compose build sandbox   # Only needed once per user
-docker compose run --rm sandbox claude
-docker compose run --rm sandbox codex
-```
-
-**Note:** Using `bin/run-sandbox.sh` is recommended as it handles UID/GID automatically.
 
 ## Jira Agent
 

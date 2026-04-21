@@ -7,5 +7,8 @@
   ],
   "config_writers": [
     {"provider": "codex", "class": "src.config.CodexConfigWriter"}
+  ],
+  "cli_invokers": [
+    {"provider": "codex", "class": "src.cli.CodexCliInvoker"}
   ]
 }
