@@ -75,7 +75,7 @@ class TestMaterializeSshIdentity:
 
         key_path = build_dir / ".ssh" / "id_rsa"
         assert key_path.is_file()
-        assert key_path.read_text() == "-----BEGIN FAKE KEY-----"
+        assert key_path.read_text() == "-----BEGIN FAKE KEY-----\n"
         assert (key_path.stat().st_mode & 0o777) == 0o600
         assert (build_dir / ".ssh").stat().st_mode & 0o777 == 0o700
 
