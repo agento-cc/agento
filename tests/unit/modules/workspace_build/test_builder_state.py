@@ -305,6 +305,7 @@ class TestMaterializeAgentCredentials:
     def test_logs_warning_when_token_is_expired(self, tmp_path, monkeypatch, caplog):
         import logging
         from datetime import UTC, datetime, timedelta
+
         from agento.framework.agent_manager.models import AgentProvider
 
         build_dir = tmp_path / "build"
@@ -335,6 +336,7 @@ class TestMaterializeAgentCredentials:
     def test_no_warning_when_token_is_not_expired(self, tmp_path, monkeypatch, caplog):
         import logging
         from datetime import UTC, datetime, timedelta
+
         from agento.framework.agent_manager.models import AgentProvider
 
         build_dir = tmp_path / "build"
@@ -364,6 +366,7 @@ class TestMaterializeAgentCredentials:
     @pytest.mark.parametrize("bad_expiry", ["not-a-date", 12345, "2026-01-01T00:00:00"])
     def test_silently_ignores_unparseable_expiry(self, bad_expiry, tmp_path, monkeypatch, caplog):
         import logging
+
         from agento.framework.agent_manager.models import AgentProvider
 
         build_dir = tmp_path / "build"

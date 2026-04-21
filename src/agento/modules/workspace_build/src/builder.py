@@ -486,8 +486,8 @@ def materialize_agent_credentials(conn, build_dir: Path) -> None:
                 if exp_dt < datetime.now(UTC):
                     logger.warning(
                         "Token for provider=%s is expired (expiry=%s); "
-                        "re-register token after next run or run setup:upgrade",
-                        provider, _expiry,
+                        "re-authenticate via `agento token:register %s <label>`",
+                        provider, _expiry, provider.value,
                     )
             except Exception:
                 pass
