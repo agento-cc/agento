@@ -457,6 +457,52 @@ def _read_retention_max_builds(conn) -> int:
     return _DEFAULT_MAX_BUILDS
 
 
+def materialize_agent_credentials(conn, build_dir: Path) -> None:
+    """For every registered ConfigWriter, resolve the active OAuth token for that
+    provider (same selection logic as the consumer: primary first, else best-by-capacity)
+    and let the writer materialize it as a provider-specific credentials file in
+    ``build_dir`` (e.g. ``.claude/.credentials.json`` or ``.codex/auth.json``).
+
+    Providers without any enabled token, or with tokens missing the expected payload,
+    are silently skipped — the agent will need to run ``/login`` on first use.
+    """
+    from agento.framework.agent_manager.token_resolver import TokenResolver
+    from agento.framework.config_writer import _CONFIG_WRITERS
+
+    resolver = TokenResolver()
+    for provider, writer in _CONFIG_WRITERS.items():
+        try:
+            token = resolver.resolve(conn, provider)
+        except Exception:
+            logger.debug("No enabled token for provider=%s; skipping", provider, exc_info=True)
+            continue
+        if token is None or token.credentials is None:
+            continue
+        try:
+            writer.write_credentials(build_dir, token.credentials)
+        except Exception:
+            logger.warning(
+                "ConfigWriter for %s failed to write credentials",
+                provider, exc_info=True,
+            )
+
+
+def migrate_legacy_workspace_config(writer, build_dir: Path) -> None:
+    """Let the provider ConfigWriter bridge legacy shared-HOME config into the build."""
+    migrate = getattr(writer, "migrate_legacy_workspace_config", None)
+    if migrate is None:
+        return
+    workspace_root = Path(BUILD_DIR).parent
+    try:
+        migrate(build_dir, workspace_root)
+    except Exception:
+        logger.warning(
+            "ConfigWriter %s failed to migrate legacy workspace config",
+            writer.__class__.__name__,
+            exc_info=True,
+        )
+
+
 def gc_old_builds(
     base_builds_dir: Path,
     current_build_id: int,
@@ -635,6 +681,7 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
             if agent_config:
                 writer = get_config_writer(runtime.provider)
                 writer.prepare_workspace(build_dir, agent_config, agent_view_id=agent_view_id)
+                migrate_legacy_workspace_config(writer, build_dir)
 
         # 3. Instruction files (AGENTS.md, SOUL.md, CLAUDE.md)
         _write_instruction_files(build_dir, overrides)
@@ -662,6 +709,9 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         state_dir = ensure_state_dir(workspace_code, agent_view.code, persistent_paths)
         link_persistent_paths(build_dir, state_dir, persistent_paths)
 
+        # 9. Materialize agent OAuth credentials files per registered ConfigWriter
+        materialize_agent_credentials(conn, build_dir)
+
         # Mark as ready
         with conn.cursor() as cur:
             cur.execute(
@@ -676,7 +726,7 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
             current_link.unlink()
         current_link.symlink_to(build_dir)
 
-        # 9. Retention: prune old builds
+        # 10. Retention: prune old builds
         max_builds = _read_retention_max_builds(conn)
         gc_old_builds(base, current_build_id=build_id, max_builds=max_builds)
 

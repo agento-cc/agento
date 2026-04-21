@@ -124,8 +124,68 @@ class TestInjectRuntimeParams:
         assert "job_id=5" in data["mcpServers"]["toolbox"]["url"]
 
 
+class TestWriteCredentials:
+    def test_writes_credentials_json_in_claude_ai_oauth_format(self, writer, work_dir):
+        creds = {
+            "subscription_key": "sk-ant-oat01-xyz",
+            "refresh_token": "rt-123",
+            "expires_at": 1799999999,
+            "subscription_type": "team",
+            "id_token": "ignored",
+            "raw_auth": "ignored",
+        }
+        writer.write_credentials(work_dir, creds)
+
+        path = work_dir / ".claude" / ".credentials.json"
+        assert path.is_file()
+        data = json.loads(path.read_text())
+        assert data == {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-xyz",
+                "refreshToken": "rt-123",
+                "expiresAt": 1799999999,
+                "subscriptionType": "team",
+            }
+        }
+        assert (path.stat().st_mode & 0o777) == 0o600
+
+    def test_skips_when_no_subscription_key(self, writer, work_dir):
+        writer.write_credentials(work_dir, {"refresh_token": "x"})
+        assert not (work_dir / ".claude" / ".credentials.json").exists()
+
+    def test_optional_fields_become_null(self, writer, work_dir):
+        writer.write_credentials(work_dir, {"subscription_key": "sk-x"})
+        data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
+        oauth = data["claudeAiOauth"]
+        assert oauth["accessToken"] == "sk-x"
+        assert oauth["refreshToken"] is None
+        assert oauth["expiresAt"] is None
+        assert oauth["subscriptionType"] is None
+
+
 class TestOwnedPaths:
     def test_returns_claude_files_and_dir(self, writer):
         files, dirs = writer.owned_paths()
         assert files == {".claude.json", ".mcp.json"}
         assert dirs == {".claude"}
+
+
+class TestMigrateLegacyWorkspaceConfig:
+    def test_merges_enabled_mcp_servers_from_legacy_settings_local(self, writer, work_dir, tmp_path):
+        build_settings_dir = work_dir / ".claude"
+        build_settings_dir.mkdir(parents=True)
+        (build_settings_dir / "settings.local.json").write_text(
+            json.dumps({"enabledMcpjsonServers": ["other"]})
+        )
+
+        workspace_root = tmp_path / "workspace"
+        legacy_settings_dir = workspace_root / ".claude"
+        legacy_settings_dir.mkdir(parents=True)
+        (legacy_settings_dir / "settings.local.json").write_text(
+            json.dumps({"enabledMcpjsonServers": ["toolbox"]})
+        )
+
+        writer.migrate_legacy_workspace_config(work_dir, workspace_root)
+
+        data = json.loads((build_settings_dir / "settings.local.json").read_text())
+        assert data["enabledMcpjsonServers"] == ["toolbox", "other"]

@@ -25,6 +25,19 @@ log_info()  { echo -e "${GREEN}[agento]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[agento]${NC} $*"; }
 log_error() { echo -e "${RED}[agento]${NC} $*" >&2; }
 
+run_local_cli() {
+  local -a cmd
+  if [ -x "$PROJECT_DIR/.venv/bin/python" ]; then
+    cmd=("$PROJECT_DIR/.venv/bin/python")
+  else
+    cmd=(uv run python)
+  fi
+
+  PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" \
+    "${cmd[@]}" -c 'from agento.framework.cli import main; main()' "$@"
+}
+
 # ─── Template rendering ───
 
 render_template() {
@@ -184,7 +197,7 @@ CRONENV
 
   # Step 4: Generate AGENTS.md
   log_info "Generating workspace/AGENTS.md..."
-  uv run agento _generate-agents-md 2>/dev/null || true
+  run_local_cli _generate-agents-md 2>/dev/null || true
 
   # Step 5: Check secrets.env
   local secrets_path="$PROJECT_DIR/../secrets.env"
@@ -253,7 +266,7 @@ CRONENV
 
   # Step 13: Reindex modules
   log_info "Running reindex..."
-  uv run agento reindex 2>/dev/null || true
+  run_local_cli reindex 2>/dev/null || true
 
   # Done!
   echo ""
@@ -290,7 +303,8 @@ CRONENV
 
 if [ $# -eq 0 ]; then
   # Delegate to Python CLI help
-  exec uv run agento --help
+  run_local_cli --help
+  exit $?
 fi
 
 command="$1"
@@ -302,6 +316,7 @@ case "$command" in
     ;;
   *)
     # Delegate everything to Python CLI
-    exec uv run agento "$@"
+    run_local_cli "$@"
+    exit $?
     ;;
 esac

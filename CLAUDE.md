@@ -12,7 +12,7 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
     - Event-observers
     - 3-level system config fallback
     - (more in docs/)
-6. **Framework is agent-agnostic.** A new agent (OpenCode, Hermes, etc.) must be added without editing framework code — framework defines protocols (Runner, ConfigWriter, AuthStrategy), agent modules provide implementations and register them via `di.json`. No `if provider == "claude"` branches, no hardcoded `.claude.json` / `.codex/config.toml` logic in `src/agento/framework/`.
+6. **Framework is agent-agnostic.** A new agent (OpenCode, Hermes, etc.) must be added without editing framework code — framework defines protocols (Runner, ConfigWriter, AuthStrategy, CliInvoker), agent modules provide implementations and register them via `di.json`. No `if provider == "claude"` branches, no hardcoded `.claude.json` / `.codex/config.toml` logic in `src/agento/framework/`, and no hardcoded CLI flag lists for `claude`/`codex` in `agento run`.
 
 ## Key Conventions
 
@@ -56,6 +56,8 @@ agento up                                              # Start Docker Compose
 agento down                                            # Stop containers
 agento logs [service]                                  # View container logs
 agento admin                                           # Launch admin TUI (runs inside Docker)
+agento run <agent_view_code>                           # Interactive agent CLI in sandbox (TTY) — CLI command is supplied by the provider's registered CliInvoker (framework stays agent-agnostic)
+agento run <agent_view_code> "<prompt>"                 # Headless one-shot with the given prompt; propagates agent exit code
 
 # Restart after code changes (dev compose)
 cd docker && docker compose -f docker-compose.dev.yml restart cron toolbox

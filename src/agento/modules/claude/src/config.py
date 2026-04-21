@@ -3,10 +3,36 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        logger.warning("Failed to parse JSON config at %s", path, exc_info=True)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _merge_json(legacy: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(legacy)
+    for key, value in current.items():
+        if key == "enabledMcpjsonServers":
+            legacy_list = legacy.get(key, [])
+            current_list = value
+            if isinstance(legacy_list, list) and isinstance(current_list, list):
+                merged[key] = list(dict.fromkeys([*legacy_list, *current_list]))
+                continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_json(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 class ClaudeConfigWriter:
@@ -18,6 +44,46 @@ class ClaudeConfigWriter:
     def persistent_home_paths(self) -> list[str]:
         """Claude Code session + todo state that must survive workspace rebuilds."""
         return [".claude/projects", ".claude/todos"]
+
+    def write_credentials(self, build_dir: Path, credentials: dict) -> None:
+        """Write Claude Code's ``.claude/.credentials.json`` in the ``claudeAiOauth`` format."""
+        access_token = credentials.get("subscription_key")
+        if not access_token:
+            return
+        data = {
+            "claudeAiOauth": {
+                "accessToken": access_token,
+                "refreshToken": credentials.get("refresh_token"),
+                "expiresAt": credentials.get("expires_at"),
+                "subscriptionType": credentials.get("subscription_type"),
+            }
+        }
+        claude_dir = build_dir / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        path = claude_dir / ".credentials.json"
+        path.write_text(json.dumps(data, indent=2))
+        os.chmod(path, 0o600)
+        logger.debug("Wrote Claude credentials to %s", path)
+
+    def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
+        """Merge legacy shared-HOME Claude config into the per-agent build."""
+        legacy_files = [
+            ".claude.json",
+            ".mcp.json",
+            ".claude/settings.json",
+            ".claude/settings.local.json",
+        ]
+        for rel in legacy_files:
+            legacy_path = workspace_root / rel
+            if not legacy_path.is_file():
+                continue
+            build_path = build_dir / rel
+            build_path.parent.mkdir(parents=True, exist_ok=True)
+            if not build_path.is_file():
+                build_path.write_text(legacy_path.read_text())
+                continue
+            merged = _merge_json(_load_json(legacy_path), _load_json(build_path))
+            build_path.write_text(json.dumps(merged, indent=2) + "\n")
 
     def prepare_workspace(
         self,

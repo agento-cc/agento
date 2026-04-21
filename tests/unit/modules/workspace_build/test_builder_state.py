@@ -1,12 +1,17 @@
 """Tests for state dir + SSH materialization + persistent-path symlinks + retention GC."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
+
 import pytest
 
+from agento.framework.agent_manager.models import AgentProvider, Token
 from agento.modules.workspace_build.src.builder import (
     ensure_state_dir,
     gc_old_builds,
     link_persistent_paths,
+    materialize_agent_credentials,
     materialize_ssh_identity,
 )
 
@@ -209,3 +214,90 @@ class TestGcOldBuilds:
 
         # Symlink 'current' is ignored (non-numeric name)
         assert (builds / "current").exists() or (builds / "current").is_symlink()
+
+
+def _token(agent_type, credentials):
+    now = datetime.now(UTC)
+    return Token(
+        id=1, agent_type=agent_type, label="t", credentials=credentials,
+        model=None, is_primary=True, token_limit=0, enabled=True,
+        created_at=now, updated_at=now,
+    )
+
+
+class TestMaterializeAgentCredentials:
+    def test_delegates_per_provider_to_config_writer(self, tmp_path, monkeypatch):
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        claude_writer = MagicMock()
+        codex_writer = MagicMock()
+
+        monkeypatch.setattr(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CLAUDE: claude_writer, AgentProvider.CODEX: codex_writer},
+        )
+
+        resolver = MagicMock()
+        def fake_resolve(conn, provider):
+            if provider == AgentProvider.CLAUDE:
+                return _token(AgentProvider.CLAUDE, {"subscription_key": "claude-tok"})
+            return _token(AgentProvider.CODEX, {"raw_auth": {"x": 1}})
+        resolver.resolve.side_effect = fake_resolve
+        monkeypatch.setattr(
+            "agento.framework.agent_manager.token_resolver.TokenResolver",
+            lambda *a, **kw: resolver,
+        )
+
+        materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
+
+        claude_writer.write_credentials.assert_called_once_with(
+            build_dir, {"subscription_key": "claude-tok"},
+        )
+        codex_writer.write_credentials.assert_called_once_with(
+            build_dir, {"raw_auth": {"x": 1}},
+        )
+
+    def test_skips_provider_without_enabled_token(self, tmp_path, monkeypatch):
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        claude_writer = MagicMock()
+
+        monkeypatch.setattr(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CLAUDE: claude_writer},
+        )
+
+        resolver = MagicMock()
+        resolver.resolve.side_effect = RuntimeError("no enabled tokens")
+        monkeypatch.setattr(
+            "agento.framework.agent_manager.token_resolver.TokenResolver",
+            lambda *a, **kw: resolver,
+        )
+
+        materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
+
+        claude_writer.write_credentials.assert_not_called()
+
+    def test_swallows_write_errors(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        claude_writer = MagicMock()
+        claude_writer.write_credentials.side_effect = RuntimeError("boom")
+
+        monkeypatch.setattr(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CLAUDE: claude_writer},
+        )
+        resolver = MagicMock()
+        resolver.resolve.return_value = _token(AgentProvider.CLAUDE, {"subscription_key": "x"})
+        monkeypatch.setattr(
+            "agento.framework.agent_manager.token_resolver.TokenResolver",
+            lambda *a, **kw: resolver,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="agento.modules.workspace_build.src.builder"):
+            materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
+
+        assert "failed to write credentials" in caplog.text

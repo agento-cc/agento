@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from agento.framework.workspace import AgentView
 from agento.modules.agent_view.src.commands.identity_show import IdentityShowCommand
 
-
 _PRIVATE_KEY_PEM = """-----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZWQy
 NTUxOQAAACAvalidFakeKey0123456789abcdef0123456789abcdef0123

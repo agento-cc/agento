@@ -7,5 +7,8 @@
   ],
   "config_writers": [
     {"provider": "claude", "class": "src.config.ClaudeConfigWriter"}
+  ],
+  "cli_invokers": [
+    {"provider": "claude", "class": "src.cli.ClaudeCliInvoker"}
   ]
 }
