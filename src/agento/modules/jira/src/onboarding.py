@@ -55,11 +55,11 @@ class JiraOnboarding:
         return "Configure Jira connection, agent identity, and project keys"
 
     def run(self, conn: pymysql.Connection, config: dict, logger: logging.Logger) -> None:
-        # 1. Check toolbox_url
+        # 1. Check toolbox_url (sourced from core/toolbox/url)
         jira_config = get_module_config("jira")
         toolbox_url = jira_config.get("toolbox_url") if isinstance(jira_config, dict) else getattr(jira_config, "toolbox_url", None)
         if not toolbox_url:
-            print("  Error: jira module toolbox_url not configured. Set CONFIG__JIRA__TOOLBOX_URL env var.")
+            print("  Error: core/toolbox/url not configured. Run 'agento config:set core/toolbox/url <url>' first.")
             return
 
         toolbox = ToolboxClient(toolbox_url)

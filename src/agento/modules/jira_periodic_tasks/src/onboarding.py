@@ -28,7 +28,7 @@ class PeriodicTasksOnboarding:
         jira_config = get_module_config("jira")
         toolbox_url = jira_config.get("toolbox_url") if isinstance(jira_config, dict) else getattr(jira_config, "toolbox_url", None)
         if not toolbox_url:
-            print("  Error: jira module toolbox_url not configured. Run 'agento config:set jira/toolbox_url <url>' first.")
+            print("  Error: core/toolbox/url not configured. Run 'agento config:set core/toolbox/url <url>' first.")
             return
 
         toolbox = ToolboxClient(toolbox_url)

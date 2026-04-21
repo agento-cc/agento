@@ -15,7 +15,7 @@ Toolbox is the **only** container with access to secrets. The AI agent has no cr
 │  database passwords, API tokens    │
 │  (except its own OAuth)            │
 └───────────┬────────────────────────┘
-            │ MCP/SSE (no credentials in request)
+            │ MCP over SSE (Claude) or streamable HTTP (Codex) — no credentials in request
             ▼
 ┌────────────────────────────────────┐
 │  Toolbox                           │

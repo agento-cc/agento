@@ -54,6 +54,6 @@ Four containers on the `agento-net` bridge network.
 
 All containers communicate on `agento-net` (bridge). DNS names match service names: `toolbox`, `mysql`.
 
-Agent connects to Toolbox via MCP/SSE at `http://toolbox:3001/sse` (configured in `workspace/.mcp.json`).
+Agent connects to Toolbox via MCP. Claude uses SSE at `http://toolbox:3001/sse` (written to `.mcp.json`); Codex uses streamable HTTP at `http://toolbox:3001/mcp` (written to `.codex/config.toml`). Each agent's `ConfigWriter` constructs the URL from the shared `core/toolbox/url` base value.
 
 Source: [docker/docker-compose.yml](../../docker/docker-compose.yml)

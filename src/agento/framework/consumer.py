@@ -388,6 +388,11 @@ class Consumer:
 
             # Resolve token via TokenResolver
             token = self._token_resolver.resolve(conn, agent_type)
+
+            # Resolve shared toolbox base URL (needed below for writer injection).
+            from .scoped_config import get_module_config as _scoped_get_module_config
+            core_cfg = _scoped_get_module_config(conn, "core") or {}
+            toolbox_url = core_cfg.get("toolbox/url") or "http://toolbox:3001"
         finally:
             conn.close()
 
@@ -411,12 +416,12 @@ class Consumer:
             elif runtime.provider:
                 from .config_writer import get_agent_config, get_config_writer
                 agent_config = get_agent_config(runtime.scoped_overrides)
-                if agent_config:
-                    writer = get_config_writer(runtime.provider)
-                    writer.prepare_workspace(
-                        artifacts_dir, agent_config,
-                        agent_view_id=job.agent_view_id,
-                    )
+                writer = get_config_writer(runtime.provider)
+                writer.prepare_workspace(
+                    artifacts_dir, agent_config,
+                    agent_view_id=job.agent_view_id,
+                    toolbox_url=toolbox_url,
+                )
 
         em.dispatch("agent_view_run_start_before", AgentViewRunStartedEvent(
             job=job,

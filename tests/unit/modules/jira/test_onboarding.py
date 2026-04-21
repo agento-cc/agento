@@ -167,7 +167,7 @@ class TestRun:
         JiraOnboarding().run(conn, {}, logging.getLogger("test"))
 
         output = capsys.readouterr().out
-        assert "toolbox_url not configured" in output
+        assert "core/toolbox/url not configured" in output
 
     @patch("agento.modules.jira.src.onboarding.ToolboxClient")
     @patch("agento.modules.jira.src.onboarding.get_module_config")

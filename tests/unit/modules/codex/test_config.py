@@ -21,59 +21,71 @@ def work_dir(tmp_path):
 
 
 class TestPrepareWorkspace:
+    TOOLBOX = "http://toolbox:3001"
+
     def test_writes_model(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "o3"})
+        writer.prepare_workspace(work_dir, {"model": "o3"}, toolbox_url=self.TOOLBOX)
         content = (work_dir / ".codex" / "config.toml").read_text()
         assert 'model = "o3"' in content
 
     def test_writes_approval_mode(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "o3", "codex/approval_mode": "full-auto"})
+        writer.prepare_workspace(
+            work_dir, {"model": "o3", "codex/approval_mode": "full-auto"},
+            toolbox_url=self.TOOLBOX,
+        )
         content = (work_dir / ".codex" / "config.toml").read_text()
         assert 'approval_mode = "full-auto"' in content
 
-    def test_writes_mcp_servers_sse(self, writer, work_dir):
-        servers = '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}'
+    def test_user_can_shadow_toolbox_entry(self, writer, work_dir):
+        servers = '{"toolbox": {"url": "http://toolbox:3001/sse"}}'
         writer.prepare_workspace(
-            work_dir, {"model": "o3", "mcp/servers": servers}, agent_view_id=2,
+            work_dir, {"model": "o3", "mcp/servers": servers},
+            agent_view_id=2, toolbox_url=self.TOOLBOX,
         )
-        config_path = work_dir / ".codex" / "config.toml"
-        data = tomllib.loads(config_path.read_text())
+        data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
         assert data["mcp_servers"]["toolbox"]["type"] == "sse"
         assert "agent_view_id=2" in data["mcp_servers"]["toolbox"]["url"]
 
-    def test_writes_mcp_servers_streamable_http(self, writer, work_dir):
-        servers = '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/mcp"}}'
+    def test_auto_injects_toolbox_streamable_http(self, writer, work_dir):
         writer.prepare_workspace(
-            work_dir, {"model": "o3", "mcp/servers": servers}, agent_view_id=3,
+            work_dir, {"model": "o3"},
+            agent_view_id=3, toolbox_url=self.TOOLBOX,
         )
         data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
         assert data["mcp_servers"]["toolbox"]["type"] == "streamable_http"
+        assert data["mcp_servers"]["toolbox"]["url"].startswith("http://toolbox:3001/mcp")
         assert "agent_view_id=3" in data["mcp_servers"]["toolbox"]["url"]
 
     def test_no_agent_view_id_leaves_url_unchanged(self, writer, work_dir):
-        servers = '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}'
-        writer.prepare_workspace(work_dir, {"model": "o3", "mcp/servers": servers})
+        writer.prepare_workspace(work_dir, {"model": "o3"}, toolbox_url=self.TOOLBOX)
         data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
-        assert data["mcp_servers"]["toolbox"]["url"] == "http://toolbox:3001/sse"
+        assert data["mcp_servers"]["toolbox"]["url"] == "http://toolbox:3001/mcp"
 
-    def test_no_config_no_files(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {})
-        assert not (work_dir / ".codex" / "config.toml").exists()
+    def test_empty_config_still_writes_toolbox_entry(self, writer, work_dir):
+        writer.prepare_workspace(work_dir, {}, toolbox_url=self.TOOLBOX)
+        data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
+        assert data["mcp_servers"]["toolbox"]["type"] == "streamable_http"
 
-    def test_skips_invalid_servers_json(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "o3", "mcp/servers": "not-json{"})
-        content = (work_dir / ".codex" / "config.toml").read_text()
-        assert "mcp_servers" not in content
+    def test_ignores_invalid_extras_json(self, writer, work_dir):
+        writer.prepare_workspace(
+            work_dir, {"model": "o3", "mcp/servers": "not-json{"},
+            toolbox_url=self.TOOLBOX,
+        )
+        data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
+        # Toolbox is still auto-injected; bad extras are ignored.
+        assert list(data["mcp_servers"].keys()) == ["toolbox"]
 
-    def test_multiple_servers(self, writer, work_dir):
+    def test_extras_merge_with_toolbox(self, writer, work_dir):
         import json
-        servers = json.dumps({
-            "toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"},
-            "other": {"type": "sse", "url": "http://other:4000/mcp"},
+        extras = json.dumps({
+            "other": {"url": "http://other:4000/mcp"},
         })
-        writer.prepare_workspace(work_dir, {"mcp/servers": servers}, agent_view_id=1)
+        writer.prepare_workspace(
+            work_dir, {"mcp/servers": extras},
+            agent_view_id=1, toolbox_url=self.TOOLBOX,
+        )
         data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
-        assert data["mcp_servers"]["toolbox"]["type"] == "sse"
+        assert data["mcp_servers"]["toolbox"]["type"] == "streamable_http"
         assert data["mcp_servers"]["other"]["type"] == "streamable_http"
 
 

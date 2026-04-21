@@ -218,7 +218,9 @@ class TestRunJobWithAgentView:
         wd.mkdir(parents=True)
         agent_config = get_agent_config(runtime.scoped_overrides)
         writer = ClaudeConfigWriter()
-        writer.prepare_workspace(wd, agent_config, agent_view_id=5)
+        writer.prepare_workspace(
+            wd, agent_config, agent_view_id=5, toolbox_url="http://toolbox:3001",
+        )
 
         mcp_config = json.loads((wd / ".mcp.json").read_text())
         url = mcp_config["mcpServers"]["toolbox"]["url"]

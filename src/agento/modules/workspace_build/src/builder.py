@@ -557,7 +557,7 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         get_agent_config,
         get_config_writer,
     )
-    from agento.framework.scoped_config import build_scoped_overrides
+    from agento.framework.scoped_config import build_scoped_overrides, get_module_config
     from agento.framework.workspace import get_agent_view
 
     agent_view = get_agent_view(conn, agent_view_id)
@@ -678,10 +678,15 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         runtime = resolve_agent_view_runtime(conn, agent_view_id)
         if runtime.provider:
             agent_config = get_agent_config(overrides)
-            if agent_config:
-                writer = get_config_writer(runtime.provider)
-                writer.prepare_workspace(build_dir, agent_config, agent_view_id=agent_view_id)
-                migrate_legacy_workspace_config(writer, build_dir)
+            core_cfg = get_module_config(conn, "core") or {}
+            toolbox_url = core_cfg.get("toolbox/url") or "http://toolbox:3001"
+            writer = get_config_writer(runtime.provider)
+            writer.prepare_workspace(
+                build_dir, agent_config,
+                agent_view_id=agent_view_id,
+                toolbox_url=toolbox_url,
+            )
+            migrate_legacy_workspace_config(writer, build_dir)
 
         # 3. Instruction files (AGENTS.md, SOUL.md, CLAUDE.md)
         _write_instruction_files(build_dir, overrides)

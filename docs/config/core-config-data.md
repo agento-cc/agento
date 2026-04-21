@@ -94,6 +94,7 @@ The `core` module provides these framework-level config paths:
 | `core/sql_timeout_seconds` | integer | `300` | SQL query timeout |
 | `core/email_whitelist` | string | — | Allowed email recipients (comma-separated) |
 | `core/allowed_domains` | string | — | Allowed browser domains (comma-separated) |
+| `core/toolbox/url` | string | `"http://toolbox:3001"` | Toolbox base URL. Agent `ConfigWriter` implementations append their transport path (`/mcp` for Codex, `/sse` for Claude). Jira also reads this for REST calls. |
 
 All DB timestamps are stored in UTC. The `core/timezone` setting is for code that needs to reason in local time (e.g., idempotency key bucketing, future display). ENV override: `CONFIG__CORE__TIMEZONE`.
 

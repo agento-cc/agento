@@ -8,7 +8,7 @@ Agento runs as Docker containers with strict security separation between the AI 
 │             │     REST API v2      │  (MCP+REST) │    credentials     │ cron_db  │
 └─────────────┘                      │  port 3001  │                    └──────────┘
        ▲                             └──────┬──────┘                         ▲
-       │ @mention, comment                  │ MCP (SSE)                      │ jobs table
+       │ @mention, comment                  │ MCP (SSE/streamable_http)      │ jobs table
        │                                    ▼                                │
 ┌──────┴──────┐                      ┌─────────────┐    publish/consume  ┌──────────┐
 │   Human     │                      │  Agent      │                    │   Cron   │

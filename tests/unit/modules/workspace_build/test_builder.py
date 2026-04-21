@@ -1137,10 +1137,12 @@ class TestExecuteBuild:
 
         legacy_codex = tmp_path / ".codex"
         legacy_codex.mkdir(parents=True)
+        # Legacy config carries a user-added custom MCP server beyond toolbox.
+        # The toolbox entry itself is re-derived by the writer from core/toolbox/url.
         (legacy_codex / "config.toml").write_text(
-            "\n[mcp_servers.toolbox]\n"
+            "\n[mcp_servers.custom_extra]\n"
             'type = "streamable_http"\n'
-            'url = "http://toolbox:3001/mcp?agent_view_id=2"\n'
+            'url = "http://legacy-extra:9999/mcp"\n'
         )
 
         conn, _ = self._mock_conn()
@@ -1150,7 +1152,11 @@ class TestExecuteBuild:
 
         build_config = tmp_path / "build" / "testws" / "dev" / "builds" / str(result.build_id) / ".codex" / "config.toml"
         assert build_config.is_file()
-        assert "toolbox:3001/mcp?agent_view_id=2" in build_config.read_text()
+        content = build_config.read_text()
+        # Fresh toolbox entry auto-injected by writer
+        assert "toolbox:3001/mcp" in content
+        # Legacy-only entries preserved via migrate_legacy_workspace_config
+        assert "legacy-extra:9999/mcp" in content
 
 
 class TestValidateCode:

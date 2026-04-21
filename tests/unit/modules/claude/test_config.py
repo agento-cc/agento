@@ -21,79 +21,107 @@ def work_dir(tmp_path):
 
 
 class TestPrepareWorkspace:
+    TOOLBOX = "http://toolbox:3001"
+
     def test_generates_claude_json_with_model(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "opus-4"})
+        writer.prepare_workspace(work_dir, {"model": "opus-4"}, toolbox_url=self.TOOLBOX)
         data = json.loads((work_dir / ".claude.json").read_text())
         assert data["model"] == "opus-4"
 
     def test_generates_system_prompt(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "sonnet", "claude/personality": "Be concise."})
+        writer.prepare_workspace(
+            work_dir, {"model": "sonnet", "claude/personality": "Be concise."},
+            toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".claude.json").read_text())
         assert data["systemPrompt"] == "Be concise."
 
     def test_generates_permissions(self, writer, work_dir):
         perms = '{"allow": ["Read", "Write"]}'
-        writer.prepare_workspace(work_dir, {"claude/permissions": perms})
+        writer.prepare_workspace(
+            work_dir, {"claude/permissions": perms}, toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".claude.json").read_text())
         assert data["permissions"] == {"allow": ["Read", "Write"]}
 
     def test_skips_invalid_permissions_json(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "opus", "claude/permissions": "not-json{"})
+        writer.prepare_workspace(
+            work_dir, {"model": "opus", "claude/permissions": "not-json{"},
+            toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".claude.json").read_text())
         assert "permissions" not in data
 
     def test_generates_settings_json_full_trust(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"claude/trust_level": "full"})
+        writer.prepare_workspace(
+            work_dir, {"claude/trust_level": "full"}, toolbox_url=self.TOOLBOX,
+        )
         settings_path = work_dir / ".claude" / "settings.json"
         assert settings_path.exists()
         data = json.loads(settings_path.read_text())
         assert data["permissions"]["dangerouslySkipPermissions"] is True
 
     def test_trust_level_not_full(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"claude/trust_level": "limited"})
+        writer.prepare_workspace(
+            work_dir, {"claude/trust_level": "limited"}, toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".claude" / "settings.json").read_text())
         assert data["permissions"]["dangerouslySkipPermissions"] is False
 
-    def test_no_config_no_files(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {})
+    def test_empty_config_still_writes_toolbox_mcp(self, writer, work_dir):
+        writer.prepare_workspace(work_dir, {}, toolbox_url=self.TOOLBOX)
         assert not (work_dir / ".claude.json").exists()
         assert not (work_dir / ".claude" / "settings.json").exists()
-
-    def test_generates_mcp_json(self, writer, work_dir):
-        servers = '{"toolbox": {"command": "npx", "args": ["-y", "server"]}}'
-        writer.prepare_workspace(work_dir, {"mcp/servers": servers})
         data = json.loads((work_dir / ".mcp.json").read_text())
-        assert "toolbox" in data["mcpServers"]
+        assert data["mcpServers"]["toolbox"]["url"] == "http://toolbox:3001/sse"
 
-    def test_skips_mcp_when_no_servers(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"model": "opus"})
-        assert not (work_dir / ".mcp.json").exists()
+    def test_extras_merge_with_toolbox_mcp(self, writer, work_dir):
+        extras = '{"other": {"command": "npx", "args": ["-y", "server"]}}'
+        writer.prepare_workspace(
+            work_dir, {"mcp/servers": extras}, toolbox_url=self.TOOLBOX,
+        )
+        data = json.loads((work_dir / ".mcp.json").read_text())
+        assert set(data["mcpServers"].keys()) == {"toolbox", "other"}
 
-    def test_skips_mcp_invalid_json(self, writer, work_dir):
-        writer.prepare_workspace(work_dir, {"mcp/servers": "not-json{"})
-        assert not (work_dir / ".mcp.json").exists()
+    def test_always_writes_toolbox_when_no_extras(self, writer, work_dir):
+        writer.prepare_workspace(work_dir, {"model": "opus"}, toolbox_url=self.TOOLBOX)
+        data = json.loads((work_dir / ".mcp.json").read_text())
+        assert data["mcpServers"]["toolbox"]["url"] == "http://toolbox:3001/sse"
 
-    def test_appends_agent_view_id_to_sse_url(self, writer, work_dir):
-        servers = '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}'
-        writer.prepare_workspace(work_dir, {"mcp/servers": servers}, agent_view_id=2)
+    def test_ignores_invalid_extras_json(self, writer, work_dir):
+        writer.prepare_workspace(
+            work_dir, {"mcp/servers": "not-json{"}, toolbox_url=self.TOOLBOX,
+        )
+        data = json.loads((work_dir / ".mcp.json").read_text())
+        assert list(data["mcpServers"].keys()) == ["toolbox"]
+
+    def test_appends_agent_view_id_to_toolbox_sse_url(self, writer, work_dir):
+        writer.prepare_workspace(
+            work_dir, {}, agent_view_id=2, toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".mcp.json").read_text())
         assert data["mcpServers"]["toolbox"]["url"] == "http://toolbox:3001/sse?agent_view_id=2"
 
     def test_no_agent_view_id_leaves_url_unchanged(self, writer, work_dir):
-        servers = '{"toolbox": {"type": "sse", "url": "http://toolbox:3001/sse"}}'
-        writer.prepare_workspace(work_dir, {"mcp/servers": servers})
+        writer.prepare_workspace(work_dir, {}, toolbox_url=self.TOOLBOX)
         data = json.loads((work_dir / ".mcp.json").read_text())
         assert data["mcpServers"]["toolbox"]["url"] == "http://toolbox:3001/sse"
 
     def test_does_not_modify_non_mcp_urls(self, writer, work_dir):
         servers = '{"other": {"type": "stdio", "command": "node"}}'
-        writer.prepare_workspace(work_dir, {"mcp/servers": servers}, agent_view_id=5)
+        writer.prepare_workspace(
+            work_dir, {"mcp/servers": servers},
+            agent_view_id=5, toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".mcp.json").read_text())
         assert "url" not in data["mcpServers"]["other"]
 
     def test_injects_into_any_sse_or_mcp_url(self, writer, work_dir):
         servers = '{"other": {"type": "sse", "url": "http://other:4000/sse"}}'
-        writer.prepare_workspace(work_dir, {"mcp/servers": servers}, agent_view_id=5)
+        writer.prepare_workspace(
+            work_dir, {"mcp/servers": servers},
+            agent_view_id=5, toolbox_url=self.TOOLBOX,
+        )
         data = json.loads((work_dir / ".mcp.json").read_text())
         assert "agent_view_id=5" in data["mcpServers"]["other"]["url"]
 
