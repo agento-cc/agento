@@ -155,7 +155,7 @@ Declares config fields your module needs, with types and labels. The framework r
 
 ```json
 {
-  "toolbox_url": {"type": "string", "label": "Toolbox URL"},
+  "base_url": {"type": "string", "label": "Service base URL"},
   "user": {"type": "string", "label": "AI User"},
   "api_token": {"type": "obscure", "label": "API Token"},
   "max_results": {"type": "integer", "label": "Max results"},

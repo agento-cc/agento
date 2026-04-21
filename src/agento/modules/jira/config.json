@@ -1,6 +1,5 @@
 {
   "enabled": true,
-  "toolbox_url": "http://toolbox:3001",
   "todo_statuses": ["To Do", "TODO", "Selected for Development"],
   "create_issue_limit_per_hour": 50
 }

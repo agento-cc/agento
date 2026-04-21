@@ -9,6 +9,7 @@
   },
   "model":                        {"type": "string",   "label": "Agent model"},
   "scheduling/priority":          {"type": "integer",  "label": "Job priority (0-100)"},
+  "mcp/servers":                  {"type": "textarea", "label": "Additional MCP servers (JSON dict; merged on top of auto-injected toolbox entry)"},
   "instructions/agents_md":       {"type": "textarea", "label": "AGENTS.md content (overrides theme)"},
   "instructions/soul_md":         {"type": "textarea", "label": "SOUL.md content (overrides theme)"},
   "identity/ssh_private_key": {

@@ -91,11 +91,16 @@ class ClaudeConfigWriter:
         agent_config: dict[str, str],
         *,
         agent_view_id: int | None = None,
+        toolbox_url: str,
     ) -> None:
         working_dir.mkdir(parents=True, exist_ok=True)
         self._write_claude_json(working_dir, agent_config)
         self._write_settings_json(working_dir, agent_config)
-        self._write_mcp_json(working_dir, agent_config, agent_view_id=agent_view_id)
+        self._write_mcp_json(
+            working_dir, agent_config,
+            agent_view_id=agent_view_id,
+            toolbox_url=toolbox_url,
+        )
 
     def inject_runtime_params(
         self,
@@ -163,16 +168,21 @@ class ClaudeConfigWriter:
         agent_config: dict[str, str],
         *,
         agent_view_id: int | None = None,
+        toolbox_url: str,
     ) -> None:
-        servers_raw = agent_config.get("mcp/servers")
-        if not servers_raw:
-            return
-
-        try:
-            servers = json.loads(servers_raw)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("Invalid JSON in agent_view/mcp/servers, skipping .mcp.json generation")
-            return
+        # Auto-inject the toolbox MCP entry; operators can add more (or shadow
+        # "toolbox") via agent_view/mcp/servers.
+        servers: dict[str, dict] = {
+            "toolbox": {"url": f"{toolbox_url.rstrip('/')}/sse"},
+        }
+        extra_raw = agent_config.get("mcp/servers")
+        if extra_raw:
+            try:
+                extra = json.loads(extra_raw)
+                if isinstance(extra, dict):
+                    servers.update(extra)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Invalid JSON in agent_view/mcp/servers, ignoring extras")
 
         if agent_view_id is not None:
             for server_cfg in servers.values():

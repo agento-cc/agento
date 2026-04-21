@@ -39,7 +39,12 @@ class JiraConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> JiraConfig:
-        """Build from a resolved config dict (3-level fallback output)."""
+        """Build from a resolved config dict (3-level fallback output).
+
+        ``toolbox_url`` is sourced from the shared ``core/toolbox/url`` setting
+        (falling back to the legacy ``toolbox_url`` key if the caller passed
+        one explicitly, which tests sometimes do).
+        """
         projects = data.get("jira_projects", [])
         if isinstance(projects, str):
             projects = [p.strip() for p in projects.split(",")]
@@ -52,9 +57,17 @@ class JiraConfig:
                 todo_statuses = [s.strip() for s in todo_statuses.split(",")]
         enabled_raw = data.get("enabled", True)
         enabled = enabled_raw not in (False, 0, "0", "false", "False")
+
+        toolbox_url = data.get("toolbox_url", "")
+        if not toolbox_url:
+            from agento.framework.bootstrap import get_module_config
+            core_cfg = get_module_config("core")
+            if isinstance(core_cfg, dict):
+                toolbox_url = core_cfg.get("toolbox/url", "") or ""
+
         return cls(
             enabled=enabled,
-            toolbox_url=data.get("toolbox_url", ""),
+            toolbox_url=toolbox_url,
             user=data.get("user", ""),
             jira_projects=projects,
             jira_assignee=data.get("jira_assignee", ""),

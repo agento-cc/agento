@@ -1,6 +1,6 @@
 # MCP Tools
 
-Tools are exposed to the AI agent via MCP (Model Context Protocol) over SSE. The Toolbox discovers and registers tools from modules at startup.
+Tools are exposed to the AI agent via MCP (Model Context Protocol). The Toolbox serves two transports: SSE at `/sse` (used by Claude) and streamable HTTP at `/mcp` (used by Codex). The Toolbox discovers and registers tools from modules at startup.
 
 ## Architecture
 

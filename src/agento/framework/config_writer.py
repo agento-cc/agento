@@ -28,6 +28,7 @@ class ConfigWriter(Protocol):
         agent_config: dict[str, str],
         *,
         agent_view_id: int | None = None,
+        toolbox_url: str,
     ) -> None: ...
 
     def inject_runtime_params(

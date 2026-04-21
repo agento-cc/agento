@@ -4,6 +4,7 @@
   "smtp_port": 587,
   "allow_subdomains": true,
   "allow_http": false,
+  "toolbox/url": "http://toolbox:3001",
   "toolbox/file_manager/allowed_extensions": ".pdf,.xlsx,.xls,.csv,.txt,.md,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.svg,.webp",
   "toolbox/file_manager/max_file_size": 524288000,
   "toolbox/result_offload/threshold": 20000,

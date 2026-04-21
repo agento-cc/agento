@@ -143,6 +143,7 @@ class CodexConfigWriter:
         agent_config: dict[str, str],
         *,
         agent_view_id: int | None = None,
+        toolbox_url: str,
     ) -> None:
         lines: list[str] = []
 
@@ -154,27 +155,29 @@ class CodexConfigWriter:
         if approval_mode:
             lines.append(f'approval_mode = "{approval_mode}"')
 
-        # MCP servers from agent_view/mcp/servers JSON
-        servers_raw = agent_config.get("mcp/servers")
-        if servers_raw:
+        # Auto-inject the toolbox MCP entry; operators can add more (or shadow
+        # "toolbox") via agent_view/mcp/servers.
+        servers: dict[str, dict] = {
+            "toolbox": {"url": f"{toolbox_url.rstrip('/')}/mcp"},
+        }
+        extra_raw = agent_config.get("mcp/servers")
+        if extra_raw:
             try:
-                servers = json.loads(servers_raw)
+                extra = json.loads(extra_raw)
+                if isinstance(extra, dict):
+                    servers.update(extra)
             except (json.JSONDecodeError, TypeError):
-                logger.warning("Invalid JSON in agent_view/mcp/servers, skipping MCP servers in config.toml")
-                servers = {}
+                logger.warning("Invalid JSON in agent_view/mcp/servers, ignoring extras")
 
-            for name, server_cfg in servers.items():
-                url = server_cfg.get("url", "")
-                if agent_view_id is not None and ("/sse" in url or "/mcp" in url):
-                    sep = "&" if "?" in url else "?"
-                    url = f"{url}{sep}agent_view_id={agent_view_id}"
-                mcp_type = _derive_mcp_type(url)
-                lines.append(f"\n[mcp_servers.{name}]")
-                lines.append(f'type = "{mcp_type}"')
-                lines.append(f'url = "{url}"')
-
-        if not lines:
-            return
+        for name, server_cfg in servers.items():
+            url = server_cfg.get("url", "")
+            if agent_view_id is not None and ("/sse" in url or "/mcp" in url):
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}agent_view_id={agent_view_id}"
+            mcp_type = _derive_mcp_type(url)
+            lines.append(f"\n[mcp_servers.{name}]")
+            lines.append(f'type = "{mcp_type}"')
+            lines.append(f'url = "{url}"')
 
         codex_dir = working_dir / ".codex"
         codex_dir.mkdir(parents=True, exist_ok=True)

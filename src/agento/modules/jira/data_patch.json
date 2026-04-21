@@ -1,0 +1,5 @@
+{
+    "patches": [
+        {"name": "MigrateToolboxUrlToCore", "class": "src.patches.migrate_toolbox_url_to_core.MigrateToolboxUrlToCore"}
+    ]
+}
