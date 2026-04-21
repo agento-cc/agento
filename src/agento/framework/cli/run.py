@@ -19,6 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ..ssh_prelude import wrap_with_ssh_prelude
 from ._project import find_compose_file, find_project_root
 
 
@@ -92,6 +93,17 @@ class RunCommand:
             )
             sys.exit(1)
 
+        if not _host_build_has_ssh_key(project_root, runtime):
+            print(
+                f"Note: build has no .ssh/id_rsa — SSH/git-over-SSH will not work.\n"
+                f"  If you need SSH access, set an identity and rebuild:\n"
+                f"    agento config:set agent_view/identity/ssh_private_key --agent-view {args.agent_view_code}\n"
+                f"    agento workspace:build --agent-view {args.agent_view_code} --force",
+                file=sys.stderr,
+            )
+
+        wrapped = wrap_with_ssh_prelude(list(command))
+
         if prompt:
             exec_args = [
                 "docker", "compose", "-f", str(compose_file),
@@ -99,7 +111,7 @@ class RunCommand:
                 "-e", f"HOME={home_in_container}",
                 "-w", home_in_container,
                 "sandbox",
-                *command,
+                *wrapped,
             ]
             result = subprocess.run(exec_args, stdin=subprocess.DEVNULL)
             sys.exit(result.returncode)
@@ -113,7 +125,7 @@ class RunCommand:
             "-e", "COLORTERM=truecolor",
             "-w", home_in_container,
             "sandbox",
-            *command,
+            *wrapped,
         ]
         os.execvp("docker", exec_args)
 
@@ -152,3 +164,13 @@ def _host_build_exists(project_root: Path, runtime: dict) -> bool:
         return False
     current = project_root / "workspace" / "build" / ws / av / "current"
     return current.is_symlink() or current.exists()
+
+
+def _host_build_has_ssh_key(project_root: Path, runtime: dict) -> bool:
+    """Check whether the current build materialized a usable id_rsa."""
+    ws = runtime.get("workspace_code")
+    av = runtime.get("agent_view_code")
+    if not ws or not av:
+        return False
+    key = project_root / "workspace" / "build" / ws / av / "current" / ".ssh" / "id_rsa"
+    return key.is_file()

@@ -121,6 +121,35 @@ class TestRunCommand:
         assert exc.value.code == 1
         assert "no CliInvoker registered" in err
 
+    def test_missing_ssh_key_prints_note(self, tmp_path, capsys):
+        project_root, compose = _project_layout(tmp_path)
+        # build/current exists but has no .ssh/id_rsa
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
+            patch("agento.framework.cli.run.os.execvp"),
+        ):
+            RunCommand().execute(_make_args())
+        err = capsys.readouterr().err
+        assert "no .ssh/id_rsa" in err
+        assert "config:set agent_view/identity/ssh_private_key" in err
+
+    def test_existing_ssh_key_suppresses_note(self, tmp_path, capsys):
+        project_root, compose = _project_layout(tmp_path)
+        build_root = project_root / "workspace" / "build" / "it" / "dev_01"
+        (build_root / "builds" / ".ssh").mkdir(parents=True)
+        (build_root / "builds" / ".ssh" / "id_rsa").write_text("KEY")
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
+            patch("agento.framework.cli.run.os.execvp"),
+        ):
+            RunCommand().execute(_make_args())
+        err = capsys.readouterr().err
+        assert "no .ssh/id_rsa" not in err
+
     def test_missing_current_build_exits_with_hint(self, tmp_path, capsys):
         project_root, compose = _project_layout(tmp_path, include_current=False)
         with (
@@ -186,7 +215,11 @@ class TestRunCommand:
 
         argv = mock_run.call_args.args[0]
         assert "-T" in argv and "-it" not in argv
-        assert argv[argv.index("sandbox") + 1:] == _HEADLESS_CLAUDE
+        # After "sandbox" comes the ssh-prelude wrapper: sh -c <script> -- <cmd...>
+        idx = argv.index("sandbox") + 1
+        assert argv[idx:idx + 2] == ["sh", "-c"]
+        assert argv[idx + 3] == "--"
+        assert argv[idx + 4:] == _HEADLESS_CLAUDE
         assert mock_run.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
     def test_headless_codex_uses_headless_command_from_runtime(self, tmp_path):
@@ -203,7 +236,9 @@ class TestRunCommand:
             RunCommand().execute(_make_prompt_args())
         assert exc.value.code == 0
         argv = mock_run.call_args.args[0]
-        assert argv[argv.index("sandbox") + 1:] == _HEADLESS_CODEX
+        idx = argv.index("sandbox") + 1
+        assert argv[idx:idx + 2] == ["sh", "-c"]
+        assert argv[idx + 4:] == _HEADLESS_CODEX
 
     def test_headless_propagates_exit_code(self, tmp_path):
         project_root, compose = _project_layout(tmp_path)

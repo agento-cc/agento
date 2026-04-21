@@ -397,7 +397,7 @@ def materialize_ssh_identity(
         if value:
             plaintext = get_encryptor().decrypt(value) if encrypted else value
             target = ssh_dir / "id_rsa"
-            target.write_text(plaintext)
+            target.write_text(plaintext if plaintext.endswith("\n") else plaintext + "\n")
             os.chmod(target, 0o600)
 
     if public_entry is not None and public_entry[0]:
