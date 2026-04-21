@@ -7,6 +7,13 @@ import os
 import re
 import tomllib
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from agento.framework.agent_manager.token_store import register_token
+
+if TYPE_CHECKING:
+    from agento.framework.agent_manager.models import Token
+    import pymysql
 
 logger = logging.getLogger(__name__)
 
@@ -223,3 +230,40 @@ class CodexConfigWriter:
             lines.append(f'url = "{server_cfg.get("url", "")}"')
 
         config_path.write_text("\n".join(lines) + "\n")
+
+    def capture_refreshed_credentials(
+        self,
+        artifacts_dir: Path,
+        token: Token,
+        conn: pymysql.Connection,
+        build_dir: Path | None = None,
+    ) -> None:
+        auth_path = artifacts_dir / ".codex" / "auth.json"
+        if not auth_path.is_file():
+            return
+
+        try:
+            refreshed = json.loads(auth_path.read_text())
+        except Exception:
+            logger.warning("Failed to read refreshed auth.json at %s", auth_path, exc_info=True)
+            return
+
+        old_refresh = (token.credentials or {}).get("raw_auth", {}).get("tokens", {}).get("refresh_token")
+        new_refresh = refreshed.get("tokens", {}).get("refresh_token")
+
+        if not new_refresh or new_refresh == old_refresh:
+            return
+
+        new_creds = dict(token.credentials or {})
+        new_creds["raw_auth"] = refreshed
+        tokens = refreshed.get("tokens", {})
+        if "refresh_token" in tokens:
+            new_creds["refresh_token"] = tokens["refresh_token"]
+        if "access_token" in tokens:
+            new_creds["subscription_key"] = tokens["access_token"]
+
+        register_token(conn, token.agent_type, token.label, new_creds,
+                       token_limit=token.token_limit, model=token.model, logger=logger)
+
+        if build_dir is not None:
+            self.write_credentials(build_dir, new_creds)
