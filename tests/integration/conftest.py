@@ -158,8 +158,19 @@ def int_periodic_config() -> PeriodicTasksConfig:
 
 @pytest.fixture(scope="session", autouse=True)
 def _bootstrap_registries():
-    """Populate registries from core modules (once per session)."""
-    bootstrap()
+    """Populate registries from core modules (once per session).
+
+    Stubs ``read_module_status`` so bootstrap ignores the developer's
+    ``app/etc/modules.json``. Without this, locally-disabled modules
+    (e.g. ``jira_periodic_tasks: false``) would drop their workflow /
+    runtime / observer registrations and silently fail integration tests.
+    The file is gitignored, so behavior would diverge between developer
+    machines and CI.
+    """
+    with patch(
+        "agento.framework.module_status.read_module_status", return_value={},
+    ):
+        bootstrap()
     # Override module configs with integration test values
     set_module_config("jira", JiraConfig(
         toolbox_url="http://toolbox:3001",
