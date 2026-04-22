@@ -6,10 +6,16 @@ from pathlib import Path
 
 
 def _module_dirs() -> tuple[Path, Path]:
-    """Resolve core and user module directories (Docker vs local dev)."""
-    project_root = Path(__file__).resolve().parents[4]
-    core_dir = project_root / "src" / "agento" / "modules"
-    user_dir = Path("/app/code") if Path("/app/code").is_dir() else project_root / "app" / "code"
+    """Resolve core and user module directories (Docker vs local dev).
+
+    Core modules ship with the installed package (works for both uv-tool
+    installs and source-layout checkouts). User modules live at ``/app/code``
+    inside Docker, otherwise under ``<cwd>/app/code`` for host-side CLI runs.
+    """
+    from ..bootstrap import CORE_MODULES_DIR
+
+    core_dir = Path(CORE_MODULES_DIR)
+    user_dir = Path("/app/code") if Path("/app/code").is_dir() else Path.cwd() / "app" / "code"
     return core_dir, user_dir
 
 
