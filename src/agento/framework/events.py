@@ -300,3 +300,26 @@ class SkillSyncCompletedEvent:
     new: int = 0
     updated: int = 0
     unchanged: int = 0
+
+
+# --- Token events ---
+
+
+@dataclass
+class TokenRegisteredEvent:
+    """Dispatched after ``token:register`` upserts an oauth_token row."""
+
+    agent_type: str
+    token_id: int
+    label: str
+    credentials: dict[str, Any]
+
+
+@dataclass
+class TokenRefreshedEvent:
+    """Dispatched after ``token:refresh`` re-authenticates and updates oauth_token."""
+
+    agent_type: str
+    token_id: int
+    label: str
+    credentials: dict[str, Any]
