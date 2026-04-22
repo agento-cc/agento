@@ -17,14 +17,18 @@ from .module_loader import ModuleManifest
 logger = logging.getLogger(__name__)
 
 _DOCKER_PATH = Path("/app/etc/modules.json")
-_LOCAL_PATH = Path(__file__).resolve().parents[3] / "app" / "etc" / "modules.json"
 
 
 def _resolve_path() -> Path:
-    """Docker path takes priority, falls back to local dev path."""
+    """Docker path takes priority, otherwise use <cwd>/app/etc/modules.json.
+
+    Using cwd (not a path derived from ``__file__``) keeps this correct both
+    when running from source and when running an installed package via
+    ``uv tool install``.
+    """
     if _DOCKER_PATH.parent.is_dir():
         return _DOCKER_PATH
-    return _LOCAL_PATH
+    return Path.cwd() / "app" / "etc" / "modules.json"
 
 
 def read_module_status(path: Path | None = None) -> dict[str, bool]:
