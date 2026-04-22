@@ -32,6 +32,8 @@ from ..events import (
     RoutingResolvedEvent,
     SetupBeforeEvent,
     SetupCompleteEvent,
+    TokenRefreshedEvent,
+    TokenRegisteredEvent,
 )
 from ..ingress_identity import IngressIdentity
 from ..job_models import AgentType, Job, JobStatus
@@ -83,6 +85,8 @@ __all__ = [
     "Runner",
     "SetupBeforeEvent",
     "SetupCompleteEvent",
+    "TokenRefreshedEvent",
+    "TokenRegisteredEvent",
     "WorkItem",
     "Workflow",
 ]

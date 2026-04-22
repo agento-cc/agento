@@ -1,1 +1,8 @@
-{}
+{
+  "token_refresh_after": [
+    {"name": "workspace_build_refresh_credentials", "class": "src.observers.RefreshBuildCredentialsObserver", "order": 100}
+  ],
+  "token_register_after": [
+    {"name": "workspace_build_refresh_credentials", "class": "src.observers.RefreshBuildCredentialsObserver", "order": 100}
+  ]
+}

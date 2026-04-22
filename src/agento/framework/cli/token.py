@@ -33,6 +33,8 @@ class TokenRegisterCommand:
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..agent_manager import AgentProvider, register_token
+        from ..event_manager import get_event_manager
+        from ..events import TokenRegisteredEvent
 
         db_config, _, _ = _load_framework_config()
         logger = get_logger("agent-manager")
@@ -56,6 +58,16 @@ class TokenRegisterCommand:
             print(f"Registered token: id={token.id} label={token.label}{model_info}")
         finally:
             conn.close()
+
+        get_event_manager().dispatch(
+            "token_register_after",
+            TokenRegisteredEvent(
+                agent_type=agent_type.value,
+                token_id=token.id,
+                label=token.label,
+                credentials=credentials,
+            ),
+        )
 
 
 def _resolve_credentials(args: argparse.Namespace, agent_type, logger) -> dict:
@@ -158,7 +170,7 @@ class TokenRefreshCommand:
 
         conn = get_connection_or_exit(db_config)
         try:
-            register_token(
+            refreshed = register_token(
                 conn,
                 agent_type=token.agent_type,
                 label=token.label,
@@ -170,6 +182,18 @@ class TokenRefreshCommand:
             conn.commit()
         finally:
             conn.close()
+
+        from ..event_manager import get_event_manager
+        from ..events import TokenRefreshedEvent
+        get_event_manager().dispatch(
+            "token_refresh_after",
+            TokenRefreshedEvent(
+                agent_type=token.agent_type.value,
+                token_id=refreshed.id,
+                label=refreshed.label,
+                credentials=credentials,
+            ),
+        )
 
         print(f"Token [{token.id}] refreshed successfully.")
 
