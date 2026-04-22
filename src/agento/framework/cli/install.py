@@ -233,7 +233,7 @@ def _run_post_install(project_dir: Path) -> None:
     log_info("Waiting for initial setup...")
     for _ in range(60):
         check = subprocess.run(
-            [*compose_cmd, "exec", "-T", "cron", "test", "-f", "/tmp/.setup-done"],
+            [*compose_cmd, "exec", "-u", "agent", "-T", "cron", "test", "-f", "/tmp/.setup-done"],
             capture_output=True,
         )
         if check.returncode == 0:
@@ -245,7 +245,7 @@ def _run_post_install(project_dir: Path) -> None:
 
     log_info("Running setup:upgrade...")
     result = subprocess.run(
-        [*compose_cmd, "exec", "-it", "cron", "/opt/cron-agent/run.sh", "setup:upgrade"],
+        [*compose_cmd, "exec", "-u", "agent", "-it", "cron", "/opt/cron-agent/run.sh", "setup:upgrade"],
     )
     if result.returncode != 0:
         log_warn("setup:upgrade failed. Run 'agento setup:upgrade' manually.")
@@ -274,7 +274,7 @@ def _setup_agent_provider(compose_cmd: list[str]) -> None:
     log_info(f"Registering {provider.value} token...")
 
     result = subprocess.run(
-        [*compose_cmd, "exec", "-it", "cron",
+        [*compose_cmd, "exec", "-u", "agent", "-it", "cron",
          "/opt/cron-agent/run.sh", "token:register", provider.value, "default"],
     )
     if result.returncode != 0:
@@ -283,11 +283,11 @@ def _setup_agent_provider(compose_cmd: list[str]) -> None:
 
     # Set as primary and configure provider
     subprocess.run(
-        [*compose_cmd, "exec", "-T", "cron",
+        [*compose_cmd, "exec", "-u", "agent", "-T", "cron",
          "/opt/cron-agent/run.sh", "token:set", provider.value, "1"],
     )
     subprocess.run(
-        [*compose_cmd, "exec", "-T", "cron",
+        [*compose_cmd, "exec", "-u", "agent", "-T", "cron",
          "/opt/cron-agent/run.sh", "config:set", "agent_view/provider", provider.value],
     )
     log_info(f"Agent provider set to: {provider.value}")
