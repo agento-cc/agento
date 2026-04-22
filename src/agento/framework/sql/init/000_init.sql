@@ -1,5 +1,5 @@
 -- Agento: consolidated fresh-install schema
--- Equivalent to applying migrations 001 through 016 on a blank database.
+-- Equivalent to applying migrations 001 through 019 on a blank database.
 -- This file is used ONLY for docker-entrypoint-initdb.d (fresh MySQL init).
 -- Incremental upgrades are handled by setup:upgrade using individual migration files.
 
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS job (
     output          MEDIUMTEXT NULL,
     context         TEXT NULL,
     idempotency_key VARCHAR(255) NOT NULL,
-    status          ENUM('TODO', 'RUNNING', 'SUCCESS', 'FAILED', 'DEAD') NOT NULL DEFAULT 'TODO',
+    status          ENUM('TODO', 'RUNNING', 'SUCCESS', 'FAILED', 'DEAD', 'PAUSED') NOT NULL DEFAULT 'TODO',
     attempt         TINYINT UNSIGNED NOT NULL DEFAULT 0,
     max_attempts    TINYINT UNSIGNED NOT NULL DEFAULT 3,
     scheduled_after TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS job (
     result_summary  TEXT NULL,
     error_message   TEXT NULL,
     error_class     VARCHAR(100) NULL,
+    pid             INT DEFAULT NULL,
+    session_id      VARCHAR(255) DEFAULT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
