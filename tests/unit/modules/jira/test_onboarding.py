@@ -11,17 +11,44 @@ from agento.modules.jira.src.onboarding import JiraOnboarding, _parse_jira_url
 from agento.modules.jira.src.toolbox_client import ToolboxAPIError
 
 
-def _mock_conn(db_overrides=None):
-    """Create a mock DB connection with configurable core_config_data rows."""
-    conn = MagicMock()
-    cursor = MagicMock()
+def _mock_conn(db_overrides=None, scoped_rows=None):
+    """Create a mock DB connection that simulates core_config_data queries.
 
+    db_overrides: {path: value} — rows at scope='default', scope_id=0 (legacy shorthand)
+    scoped_rows:  list of {path, value, scope, scope_id} — explicit scope control
+
+    The cursor inspects executed SQL and filters rows accordingly, so both
+    default-scope-only queries (used by load_db_overrides) and scope-agnostic
+    queries (used by the new is_complete) behave correctly.
+    """
     rows = []
     if db_overrides:
         for path, value in db_overrides.items():
-            rows.append({"path": path, "value": value, "encrypted": 0})
+            rows.append({"path": path, "value": value, "encrypted": 0, "scope": "default", "scope_id": 0})
+    if scoped_rows:
+        for r in scoped_rows:
+            rows.append({"encrypted": 0, **r})
 
-    cursor.fetchall.return_value = rows
+    conn = MagicMock()
+    cursor = MagicMock()
+    executed = {"sql": "", "params": None}
+
+    def execute(sql, params=None):
+        executed["sql"] = sql
+        executed["params"] = params
+
+    def fetchall():
+        sql = executed["sql"].lower()
+        matching = rows
+        if "scope = 'default'" in sql and "scope_id = 0" in sql:
+            matching = [r for r in matching if r["scope"] == "default" and r["scope_id"] == 0]
+        if "value is not null and value <> ''" in sql:
+            matching = [r for r in matching if r["value"] not in (None, "")]
+        # Rows carry all columns; callers pick what they need.
+        return [dict(r) for r in matching]
+
+    cursor.execute.side_effect = execute
+    cursor.fetchall.side_effect = fetchall
     conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
     conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     return conn
@@ -54,6 +81,25 @@ class TestIsComplete:
 
     def test_incomplete_when_all_missing(self):
         conn = _mock_conn({})
+        assert JiraOnboarding().is_complete(conn) is False
+
+    def test_complete_when_keys_configured_at_agent_view_scope(self):
+        # Matches real-world setup: host at default, credentials per agent_view.
+        conn = _mock_conn(scoped_rows=[
+            {"path": "jira/jira_host", "value": "https://myteam.atlassian.net", "scope": "default", "scope_id": 0},
+            {"path": "jira/jira_token", "value": "tok", "scope": "agent_view", "scope_id": 2},
+            {"path": "jira/jira_user", "value": "zyga@example.com", "scope": "agent_view", "scope_id": 2},
+            {"path": "jira/jira_projects", "value": '["AI"]', "scope": "agent_view", "scope_id": 2},
+        ])
+        assert JiraOnboarding().is_complete(conn) is True
+
+    def test_incomplete_when_required_key_empty_at_every_scope(self):
+        conn = _mock_conn(scoped_rows=[
+            {"path": "jira/jira_host", "value": "https://myteam.atlassian.net", "scope": "default", "scope_id": 0},
+            {"path": "jira/jira_token", "value": "tok", "scope": "agent_view", "scope_id": 2},
+            {"path": "jira/jira_user", "value": "", "scope": "agent_view", "scope_id": 2},
+            {"path": "jira/jira_projects", "value": '["AI"]', "scope": "agent_view", "scope_id": 2},
+        ])
         assert JiraOnboarding().is_complete(conn) is False
 
 
