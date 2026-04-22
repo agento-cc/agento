@@ -7,7 +7,6 @@ import re
 import pymysql
 
 from agento.framework.bootstrap import get_module_config
-from agento.framework.config_resolver import load_db_overrides
 from agento.framework.core_config import config_set, config_set_auto_encrypt
 from agento.modules.jira.src.toolbox_client import ToolboxAPIError, ToolboxClient
 
@@ -44,12 +43,18 @@ def _parse_jira_url(url: str) -> tuple[str, str | None]:
 
 class JiraOnboarding:
     def is_complete(self, conn: pymysql.Connection) -> bool:
-        overrides = load_db_overrides(conn)
-        for key in _REQUIRED_KEYS:
-            entry = overrides.get(key)
-            if not entry or not entry[0]:
-                return False
-        return True
+        # Jira config is legitimately per-agent_view (different tokens/projects per view),
+        # so treat a key as satisfied if it has a non-empty value at any scope.
+        placeholders = ",".join(["%s"] * len(_REQUIRED_KEYS))
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT DISTINCT path FROM core_config_data "
+                f"WHERE path IN ({placeholders}) AND value IS NOT NULL AND value <> ''",
+                _REQUIRED_KEYS,
+            )
+            rows = cur.fetchall()
+        found = {row["path"] if isinstance(row, dict) else row[0] for row in rows}
+        return set(_REQUIRED_KEYS).issubset(found)
 
     def describe(self) -> str:
         return "Configure Jira connection, agent identity, and project keys"
