@@ -78,7 +78,7 @@ def _proxy_to_docker(argv: list[str]) -> None:
 
     exec_args = [
         "docker", "compose", "-f", str(compose_file),
-        "exec", tty_flag, *env_flags, "cron",
+        "exec", "-u", "agent", tty_flag, *env_flags, "cron",
         "/opt/cron-agent/run.sh", *clean_argv,
     ]
 
