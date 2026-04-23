@@ -67,7 +67,7 @@ def copy_build_to_artifacts_dir(
     Dispatches runtime param injection to the provider's ConfigWriter.
     """
     from agento.framework.config_writer import all_owned_paths
-    owned_files, owned_dirs = all_owned_paths()
+    owned_files, owned_dirs = all_owned_paths(provider)
     copy_files = owned_files | _UNIVERSAL_COPY_FILES
 
     for item in build_dir.iterdir():

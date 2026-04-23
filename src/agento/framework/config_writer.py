@@ -106,25 +106,58 @@ def get_config_writer(provider: AgentProvider | str) -> ConfigWriter:
     return writer
 
 
-def all_owned_paths() -> tuple[set[str], set[str]]:
-    """Aggregate owned (files, dirs) across every registered ConfigWriter."""
+def _writers_for(provider: AgentProvider | str | None) -> list[ConfigWriter]:
+    """Resolve the writer(s) to aggregate over.
+
+    ``None`` → all registered writers.
+    Known provider → that single writer.
+    Unknown / unregistered provider → falls back to all writers (lenient, preserves
+    legacy discovery behavior when a writer has not been bootstrapped yet).
+    """
+    if provider is None:
+        return list(_CONFIG_WRITERS.values())
+    if isinstance(provider, str):
+        try:
+            provider = AgentProvider(provider)
+        except ValueError:
+            return list(_CONFIG_WRITERS.values())
+    writer = _CONFIG_WRITERS.get(provider)
+    if writer is None:
+        return list(_CONFIG_WRITERS.values())
+    return [writer]
+
+
+def all_owned_paths(
+    provider: AgentProvider | str | None = None,
+) -> tuple[set[str], set[str]]:
+    """Aggregate owned (files, dirs) for the given provider, or across all writers.
+
+    When ``provider`` identifies a registered writer, only that writer's paths
+    are returned — so a codex build never reports ``.claude`` as owned, and a
+    claude build never reports ``.codex``. When ``provider`` is ``None`` or
+    unknown, the union across every registered writer is returned.
+    """
     files: set[str] = set()
     dirs: set[str] = set()
-    for writer in _CONFIG_WRITERS.values():
+    for writer in _writers_for(provider):
         f, d = writer.owned_paths()
         files |= f
         dirs |= d
     return files, dirs
 
 
-def all_persistent_home_paths() -> list[str]:
-    """Aggregate relative-to-HOME persistent paths across every registered ConfigWriter.
+def all_persistent_home_paths(
+    provider: AgentProvider | str | None = None,
+) -> list[str]:
+    """Aggregate persistent HOME-relative paths for the given provider.
 
-    Returns a sorted, de-duplicated list. Writers that don't implement
-    ``persistent_home_paths()`` (or return an empty list) contribute nothing.
+    When ``provider`` identifies a registered writer, only that writer's
+    persistent paths are returned; otherwise the union across every registered
+    writer is returned. Writers that don't implement ``persistent_home_paths()``
+    (or return an empty list) contribute nothing. Result is sorted and de-duplicated.
     """
     paths: set[str] = set()
-    for writer in _CONFIG_WRITERS.values():
+    for writer in _writers_for(provider):
         getter = getattr(writer, "persistent_home_paths", None)
         if getter is None:
             continue
