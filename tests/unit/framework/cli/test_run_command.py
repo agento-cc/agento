@@ -211,6 +211,37 @@ class TestRunCommand:
         assert argv[idx:idx + 2] == ["sh", "-c"]
         assert argv[idx + 4:] == _HEADLESS_CODEX
 
+    def test_interactive_runs_as_agent_user(self, tmp_path):
+        project_root, compose = _project_layout(tmp_path)
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
+            patch("agento.framework.cli.run.os.execvp") as mock_execvp,
+        ):
+            RunCommand().execute(_make_args())
+        _, argv = mock_execvp.call_args.args
+        u_idx = argv.index("-u")
+        assert argv[u_idx + 1] == "agent"
+        assert argv.index("-u") < argv.index("sandbox")
+
+    def test_headless_runs_as_agent_user(self, tmp_path):
+        project_root, compose = _project_layout(tmp_path)
+        runtime = _base_runtime(prompt=True)
+        completed = subprocess.CompletedProcess(args=[], returncode=0)
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
+            patch("agento.framework.cli.run.subprocess.run", return_value=completed) as mock_run,
+            pytest.raises(SystemExit),
+        ):
+            RunCommand().execute(_make_prompt_args())
+        argv = mock_run.call_args.args[0]
+        u_idx = argv.index("-u")
+        assert argv[u_idx + 1] == "agent"
+        assert argv.index("-u") < argv.index("sandbox")
+
     def test_headless_propagates_exit_code(self, tmp_path):
         project_root, compose = _project_layout(tmp_path)
         runtime = _base_runtime(provider="codex", model="gpt-5.4", prompt=True)
