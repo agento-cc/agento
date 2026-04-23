@@ -22,7 +22,7 @@ packages = ["src/agento"]
 
 [project]
 name = "agento-core"
-version = "0.7.6"
+version = "0.7.7"
 description = "AI Agent Framework — automates tasks using AI agents in Docker containers"
 requires-python = ">=3.12"
 dependencies = [
