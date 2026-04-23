@@ -1,7 +1,6 @@
 """Observers for the jira module."""
 from __future__ import annotations
 
-import dataclasses
 import logging
 
 import httpx
@@ -25,13 +24,13 @@ def _resolve_account_id(toolbox_url, agent_view_id=None):
 
 
 class ResolveAccountIdObserver:
-    """Auto-resolve jira_assignee_account_id via /myself when empty."""
+    """Auto-resolve jira_assignee_account_id via /myself for agent_views only."""
 
     def execute(self, event) -> None:
         if event.name != "jira":
             return
 
-        from agento.framework.bootstrap import get_module_config, set_module_config
+        from agento.framework.bootstrap import get_module_config
 
         config = get_module_config("jira")
         if not config or not hasattr(config, "jira_assignee_account_id"):
@@ -41,39 +40,7 @@ class ResolveAccountIdObserver:
         if not toolbox_url:
             return
 
-        # 1. Resolve at default scope (global config)
-        if not config.jira_assignee_account_id:
-            self._resolve_default(config, toolbox_url, set_module_config)
-
-        # 2. Resolve at agent_view scopes
         self._resolve_agent_views(toolbox_url)
-
-    def _resolve_default(self, config, toolbox_url, set_module_config):
-        try:
-            from agento.framework.core_config import config_set
-            from agento.framework.database_config import DatabaseConfig
-            from agento.framework.db import get_connection
-
-            account_id = _resolve_account_id(toolbox_url)
-            if not account_id:
-                logger.warning("jira: /myself response missing accountId")
-                return
-
-            conn = get_connection(DatabaseConfig.from_env())
-            try:
-                config_set(conn, "jira/jira_assignee_account_id", account_id)
-                conn.commit()
-            finally:
-                conn.close()
-
-            updated = dataclasses.replace(config, jira_assignee_account_id=account_id)
-            set_module_config("jira", updated)
-            logger.info("jira: auto-resolved default account ID: %s", account_id)
-
-        except httpx.ConnectError as exc:
-            logger.info("jira: toolbox not reachable yet, skipping account ID resolve (%s)", exc)
-        except Exception:
-            logger.warning("jira: failed to auto-resolve default account ID (non-fatal)")
 
     def _resolve_agent_views(self, toolbox_url):
         try:
