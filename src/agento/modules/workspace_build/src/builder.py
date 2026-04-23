@@ -723,7 +723,8 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         materialize_ssh_identity(build_dir, overrides)
 
         # 8. Persistent-state symlinks for agent-declared paths (Claude/Codex sessions, etc.)
-        persistent_paths = all_persistent_home_paths()
+        # Scoped to runtime.provider — prevents cross-provider state leakage into the build.
+        persistent_paths = all_persistent_home_paths(runtime.provider)
         state_dir = ensure_state_dir(workspace_code, agent_view.code, persistent_paths)
         link_persistent_paths(build_dir, state_dir, persistent_paths)
 

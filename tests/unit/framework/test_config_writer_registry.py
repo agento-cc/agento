@@ -104,6 +104,47 @@ class TestAllOwnedPaths:
         assert files == set()
         assert dirs == set()
 
+    def test_filter_by_provider_enum(self):
+        register_config_writer(
+            AgentProvider.CLAUDE, _WriterWithPaths({".claude.json"}, {".claude"}),
+        )
+        register_config_writer(
+            AgentProvider.CODEX, _WriterWithPaths({".codex.toml"}, {".codex"}),
+        )
+        files, dirs = all_owned_paths(AgentProvider.CODEX)
+        assert files == {".codex.toml"}
+        assert dirs == {".codex"}
+
+    def test_filter_by_provider_string(self):
+        register_config_writer(
+            AgentProvider.CLAUDE, _WriterWithPaths({".claude.json"}, {".claude"}),
+        )
+        register_config_writer(
+            AgentProvider.CODEX, _WriterWithPaths({".codex.toml"}, {".codex"}),
+        )
+        files, dirs = all_owned_paths("claude")
+        assert files == {".claude.json"}
+        assert dirs == {".claude"}
+
+    def test_unknown_provider_string_falls_back_to_all(self):
+        register_config_writer(
+            AgentProvider.CLAUDE, _WriterWithPaths({".claude.json"}, {".claude"}),
+        )
+        register_config_writer(
+            AgentProvider.CODEX, _WriterWithPaths(set(), {".codex"}),
+        )
+        files, dirs = all_owned_paths("bogus")
+        assert files == {".claude.json"}
+        assert dirs == {".claude", ".codex"}
+
+    def test_unregistered_provider_falls_back_to_all(self):
+        register_config_writer(
+            AgentProvider.CLAUDE, _WriterWithPaths({".claude.json"}, {".claude"}),
+        )
+        files, dirs = all_owned_paths(AgentProvider.CODEX)
+        assert files == {".claude.json"}
+        assert dirs == {".claude"}
+
 
 class TestAllPersistentHomePaths:
     def test_aggregates_across_writers_sorted_unique(self):
@@ -125,6 +166,42 @@ class TestAllPersistentHomePaths:
             AgentProvider.CLAUDE, _WriterWithPaths(set(), {".claude"}),
         )
         assert all_persistent_home_paths() == []
+
+    def test_filter_by_provider_enum(self):
+        register_config_writer(
+            AgentProvider.CLAUDE,
+            _WriterWithPaths(set(), set(), persistent=[".claude/projects", ".claude/todos"]),
+        )
+        register_config_writer(
+            AgentProvider.CODEX,
+            _WriterWithPaths(set(), set(), persistent=[".codex/sessions"]),
+        )
+        assert all_persistent_home_paths(AgentProvider.CODEX) == [".codex/sessions"]
+        assert all_persistent_home_paths(AgentProvider.CLAUDE) == [
+            ".claude/projects", ".claude/todos",
+        ]
+
+    def test_filter_by_provider_string(self):
+        register_config_writer(
+            AgentProvider.CLAUDE,
+            _WriterWithPaths(set(), set(), persistent=[".claude/projects"]),
+        )
+        register_config_writer(
+            AgentProvider.CODEX,
+            _WriterWithPaths(set(), set(), persistent=[".codex/sessions"]),
+        )
+        assert all_persistent_home_paths("codex") == [".codex/sessions"]
+
+    def test_unknown_provider_string_falls_back_to_all(self):
+        register_config_writer(
+            AgentProvider.CLAUDE,
+            _WriterWithPaths(set(), set(), persistent=[".claude/projects"]),
+        )
+        register_config_writer(
+            AgentProvider.CODEX,
+            _WriterWithPaths(set(), set(), persistent=[".codex/sessions"]),
+        )
+        assert all_persistent_home_paths("bogus") == [".claude/projects", ".codex/sessions"]
 
 
 class TestGetAgentConfig:
