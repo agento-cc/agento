@@ -90,10 +90,12 @@ agento config:remove <path> [--scope=<scope>] [--scope-id=<id>]
 agento config:schema [module] [--json]                 # Show config field definitions from system.json
 agento config:resolve <module> [--scope=S] [--scope-id=N] [--json]  # Resolve effective config values with source info
 
-# Tokens
-agento token:list
-agento token:register claude <label> [path]
-agento token:set claude <id>
+# Tokens (LRU pool per provider — no sticky primary)
+agento token:list                                      # status, last_used, expires_at per row
+agento token:register claude <label> [path]            # register or refresh; resets status=ok
+agento token:refresh <id>                              # re-auth an existing token
+agento token:mark-error <id> "<msg>"                   # quarantine a token (status=error)
+agento token:reset <id>                                # clear error status without re-auth
 
 # Ingress identity binding (route inbound requests to agent_views)
 agento ingress:bind <type> <value> <agent_view_code>   # e.g. ingress:bind jira jira developer

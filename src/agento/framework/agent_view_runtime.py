@@ -39,22 +39,24 @@ class AgentViewRuntime:
 def resolve_agent_view_runtime(conn, agent_view_id: int | None) -> AgentViewRuntime:
     """Resolve the full runtime profile for a given agent_view.
 
-    Returns a default runtime if agent_view_id is None or the agent_view is not found.
+    When ``agent_view_id`` is None (or the row is not found) the runtime still
+    reads the global-scope config for ``agent_view/provider`` / ``agent_view/model`` /
+    ``agent_view/scheduling/priority`` so agent-view-less jobs (e.g. blank-source
+    tests, single-tenant deployments that run before any agent_view is created)
+    still know which provider pool to select from.
     """
-    if agent_view_id is None:
-        return AgentViewRuntime()
+    agent_view = get_agent_view(conn, agent_view_id) if agent_view_id is not None else None
+    if agent_view_id is not None and agent_view is None:
+        logger.warning("agent_view_id=%d not found, falling back to global config", agent_view_id)
 
-    agent_view = get_agent_view(conn, agent_view_id)
-    if agent_view is None:
-        logger.warning("agent_view_id=%d not found, using defaults", agent_view_id)
-        return AgentViewRuntime()
-
-    workspace = get_workspace(conn, agent_view.workspace_id)
+    workspace = (
+        get_workspace(conn, agent_view.workspace_id) if agent_view is not None else None
+    )
 
     overrides = build_scoped_overrides(
         conn,
-        agent_view_id=agent_view.id,
-        workspace_id=agent_view.workspace_id,
+        agent_view_id=agent_view.id if agent_view else None,
+        workspace_id=agent_view.workspace_id if agent_view else None,
     )
 
     runtime = AgentViewRuntime(

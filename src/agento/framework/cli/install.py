@@ -281,11 +281,9 @@ def _setup_agent_provider(compose_cmd: list[str]) -> None:
         log_warn("Token registration failed. Run 'agento token:register' manually.")
         return
 
-    # Set as primary and configure provider
-    subprocess.run(
-        [*compose_cmd, "exec", "-u", "agent", "-T", "cron",
-         "/opt/cron-agent/run.sh", "token:set", provider.value, "1"],
-    )
+    # Token selection is LRU over the healthy pool — no primary flag. We only
+    # need to bind agent_view/provider at the global scope so jobs know which
+    # pool to select from.
     subprocess.run(
         [*compose_cmd, "exec", "-u", "agent", "-T", "cron",
          "/opt/cron-agent/run.sh", "config:set", "agent_view/provider", provider.value],
