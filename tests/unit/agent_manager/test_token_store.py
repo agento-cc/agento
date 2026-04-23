@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
 
-from agento.framework.agent_manager.models import AgentProvider, Token
+from agento.framework.agent_manager.models import AgentProvider, Token, TokenStatus
 from agento.framework.agent_manager.token_store import (
+    clear_token_error,
+    count_tokens_for_provider,
     deregister_token,
-    get_primary_token,
     get_token,
     list_tokens,
+    mark_token_error,
     register_token,
-    set_primary_token,
+    select_token,
 )
 
 
@@ -28,6 +31,18 @@ def _mock_conn(fetchone_return=None, fetchall_return=None, lastrowid=1, rowcount
     return conn, cursor
 
 
+def _mock_conn_with_fetches(fetchone_seq, fetchone_seq_scalar=None):
+    """Mock connection where fetchone returns successive values from a sequence."""
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = fetchone_seq
+    cursor.lastrowid = 1
+    cursor.rowcount = 1
+    conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    return conn, cursor
+
+
 _ENCRYPTED_BLOB = "aes256:deadbeef:cafebabe"
 _PLAINTEXT_CREDS = {"subscription_key": "sk-test"}
 
@@ -37,9 +52,12 @@ _SAMPLE_ROW = {
     "label": "prod-1",
     "credentials": _ENCRYPTED_BLOB,
     "model": "claude-sonnet-4-20250514",
-    "is_primary": False,
     "token_limit": 100000,
     "enabled": True,
+    "status": "ok",
+    "error_msg": None,
+    "expires_at": None,
+    "used_at": None,
     "created_at": "2025-01-01 00:00:00",
     "updated_at": "2025-01-01 00:00:00",
 }
@@ -51,10 +69,8 @@ class _FakeEncryptor:
 
     def decrypt(self, ciphertext: str) -> str:
         import json
-        # _ENCRYPTED_BLOB decrypts to _PLAINTEXT_CREDS for test purposes
         if ciphertext == _ENCRYPTED_BLOB:
             return json.dumps(_PLAINTEXT_CREDS)
-        # Otherwise strip the "aes256:iv:" prefix
         return ciphertext.split(":", 2)[-1]
 
 
@@ -95,22 +111,44 @@ class TestRegisterToken:
         params = insert_call[0][1]
         assert params[0] == "codex"
         assert params[1] == "codex-1"
-        # Goes through encrypt() adapter — fake encryptor wraps with aes256:iv: prefix.
         assert params[2].startswith("aes256:")
         assert params[3] == 50000
 
-    def test_passes_model_param(self):
+    def test_register_resets_status_and_clears_error_on_refresh(self):
         conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW)
 
-        register_token(
-            conn, AgentProvider.CLAUDE, "prod-1", _PLAINTEXT_CREDS,
-            100000, model="claude-sonnet-4-20250514",
-        )
+        register_token(conn, AgentProvider.CLAUDE, "prod-1", _PLAINTEXT_CREDS)
 
-        insert_call = cursor.execute.call_args_list[0]
-        params = insert_call[0][1]
-        assert params[0] == "claude"
-        assert params[4] == "claude-sonnet-4-20250514"
+        insert_sql = cursor.execute.call_args_list[0][0][0]
+        assert "status = 'ok'" in insert_sql
+        assert "error_msg = NULL" in insert_sql
+
+    def test_pulls_expires_at_from_credentials_epoch(self):
+        conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW)
+
+        creds = {"subscription_key": "sk-test", "expires_at": 1893456000}
+        register_token(conn, AgentProvider.CLAUDE, "prod-1", creds)
+
+        params = cursor.execute.call_args_list[0][0][1]
+        assert params[-1] == datetime(2030, 1, 1, 0, 0, 0)
+
+    def test_pulls_expires_at_from_credentials_iso(self):
+        conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW)
+
+        creds = {"subscription_key": "sk-test", "expires_at": "2030-06-01T12:34:56Z"}
+        register_token(conn, AgentProvider.CLAUDE, "prod-1", creds)
+
+        params = cursor.execute.call_args_list[0][0][1]
+        assert params[-1] == datetime(2030, 6, 1, 12, 34, 56)
+
+    def test_malformed_expires_at_becomes_null(self):
+        conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW)
+
+        creds = {"subscription_key": "sk-test", "expires_at": "not-a-date"}
+        register_token(conn, AgentProvider.CLAUDE, "prod-1", creds)
+
+        params = cursor.execute.call_args_list[0][0][1]
+        assert params[-1] is None
 
 
 class TestDeregisterToken:
@@ -133,7 +171,9 @@ class TestDeregisterToken:
 
 class TestListTokens:
     def test_returns_all_enabled(self):
-        conn, cursor = _mock_conn(fetchall_return=[_SAMPLE_ROW, {**_SAMPLE_ROW, "id": 2, "label": "prod-2"}])
+        conn, cursor = _mock_conn(
+            fetchall_return=[_SAMPLE_ROW, {**_SAMPLE_ROW, "id": 2, "label": "prod-2"}],
+        )
 
         tokens = list_tokens(conn)
 
@@ -177,50 +217,123 @@ class TestGetToken:
         assert token is None
 
 
-class TestGetPrimaryToken:
-    def test_returns_primary(self):
-        conn, cursor = _mock_conn(fetchone_return={**_SAMPLE_ROW, "is_primary": True})
+class TestSelectToken:
+    def test_selects_lru_healthy_and_stamps_used_at(self):
+        conn, cursor = _mock_conn_with_fetches(
+            [{"id": 1}, _SAMPLE_ROW],
+        )
 
-        token = get_primary_token(conn, AgentProvider.CLAUDE)
+        token = select_token(conn, AgentProvider.CLAUDE)
 
         assert token is not None
-        assert token.is_primary is True
-        sql = cursor.execute.call_args[0][0]
-        assert "is_primary = TRUE" in sql
-        assert "agent_type" in sql
+        assert token.id == 1
+        assert cursor.execute.call_count == 3
+        select_sql = cursor.execute.call_args_list[0][0][0]
+        assert "FOR UPDATE SKIP LOCKED" in select_sql
+        assert "status = 'ok'" in select_sql
+        assert "expires_at IS NULL OR expires_at > UTC_TIMESTAMP()" in select_sql
+        update_sql = cursor.execute.call_args_list[1][0][0]
+        assert "SET used_at = UTC_TIMESTAMP()" in update_sql
+        conn.commit.assert_called()
 
-    def test_returns_none_when_missing(self):
+    def test_returns_none_when_no_healthy_token(self):
         conn, _cursor = _mock_conn(fetchone_return=None)
 
-        assert get_primary_token(conn, AgentProvider.CLAUDE) is None
+        token = select_token(conn, AgentProvider.CODEX)
 
-    def test_without_agent_type_filter(self):
-        conn, cursor = _mock_conn(fetchone_return={**_SAMPLE_ROW, "is_primary": True})
+        assert token is None
+        conn.commit.assert_called()
 
-        get_primary_token(conn)
+    def test_orders_nulls_first(self):
+        conn, _cursor = _mock_conn_with_fetches([{"id": 1}, _SAMPLE_ROW])
 
-        sql = cursor.execute.call_args[0][0]
-        assert "is_primary = TRUE" in sql
+        select_token(conn, AgentProvider.CLAUDE)
+
+        select_sql = _cursor.execute.call_args_list[0][0][0]
+        assert "ORDER BY used_at IS NULL DESC" in select_sql
+
+    def test_filters_by_agent_type(self):
+        conn, cursor = _mock_conn_with_fetches([{"id": 1}, _SAMPLE_ROW])
+
+        select_token(conn, AgentProvider.CODEX)
+
+        params = cursor.execute.call_args_list[0][0][1]
+        assert params == ("codex",)
 
 
-class TestSetPrimaryToken:
-    def test_sets_primary_when_found(self):
+class TestMarkAndClearTokenError:
+    def test_mark_token_error_sets_status_and_msg(self):
         conn, cursor = _mock_conn(rowcount=1)
 
-        result = set_primary_token(conn, AgentProvider.CLAUDE, token_id=1)
+        result = mark_token_error(conn, 7, "OAuth expired")
 
         assert result is True
-        # Should execute 2 UPDATEs: clear others, set target
-        assert cursor.execute.call_count == 2
-        clear_sql = cursor.execute.call_args_list[0][0][0]
-        assert "is_primary = FALSE" in clear_sql
-        assert "agent_type" in clear_sql
-        set_sql = cursor.execute.call_args_list[1][0][0]
-        assert "is_primary = TRUE" in set_sql
+        sql = cursor.execute.call_args[0][0]
+        assert "status = 'error'" in sql
+        params = cursor.execute.call_args[0][1]
+        assert params == ("OAuth expired", 7)
 
-    def test_returns_false_when_not_found(self):
+    def test_mark_token_error_truncates_long_message(self):
+        conn, cursor = _mock_conn(rowcount=1)
+
+        mark_token_error(conn, 7, "x" * 5000)
+
+        params = cursor.execute.call_args[0][1]
+        assert len(params[0]) == 1000
+
+    def test_mark_token_error_returns_false_when_not_found(self):
         conn, _cursor = _mock_conn(rowcount=0)
 
-        result = set_primary_token(conn, AgentProvider.CLAUDE, token_id=999)
+        assert mark_token_error(conn, 999, "msg") is False
 
-        assert result is False
+    def test_clear_token_error_resets_status(self):
+        conn, cursor = _mock_conn(rowcount=1)
+
+        result = clear_token_error(conn, 7)
+
+        assert result is True
+        sql = cursor.execute.call_args[0][0]
+        assert "status = 'ok'" in sql
+        assert "error_msg = NULL" in sql
+
+    def test_clear_token_error_returns_false_when_not_found(self):
+        conn, _cursor = _mock_conn(rowcount=0)
+
+        assert clear_token_error(conn, 999) is False
+
+
+class TestCountTokensForProvider:
+    def test_returns_total_and_healthy(self):
+        conn, cursor = _mock_conn_with_fetches([{"c": 3}, {"c": 1}])
+
+        total, healthy = count_tokens_for_provider(conn, AgentProvider.CLAUDE)
+
+        assert total == 3
+        assert healthy == 1
+        assert cursor.execute.call_count == 2
+        healthy_sql = cursor.execute.call_args_list[1][0][0]
+        assert "status = 'ok'" in healthy_sql
+        assert "expires_at IS NULL OR expires_at > UTC_TIMESTAMP()" in healthy_sql
+
+    def test_zero_when_no_tokens(self):
+        conn, _cursor = _mock_conn_with_fetches([{"c": 0}, {"c": 0}])
+
+        total, healthy = count_tokens_for_provider(conn, AgentProvider.CODEX)
+
+        assert total == 0
+        assert healthy == 0
+
+
+class TestTokenStatusMapping:
+    def test_from_row_with_ok(self):
+        conn, _cursor = _mock_conn(fetchone_return={**_SAMPLE_ROW, "status": "ok"})
+        token = get_token(conn, 1)
+        assert token.status == TokenStatus.OK
+
+    def test_from_row_with_error(self):
+        conn, _cursor = _mock_conn(
+            fetchone_return={**_SAMPLE_ROW, "status": "error", "error_msg": "expired"},
+        )
+        token = get_token(conn, 1)
+        assert token.status == TokenStatus.ERROR
+        assert token.error_msg == "expired"

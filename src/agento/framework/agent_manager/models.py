@@ -11,6 +11,11 @@ class AgentProvider(Enum):
     CODEX = "codex"
 
 
+class TokenStatus(Enum):
+    OK = "ok"
+    ERROR = "error"
+
+
 @dataclass
 class Token:
     id: int
@@ -18,9 +23,12 @@ class Token:
     label: str
     credentials: dict | None
     model: str | None
-    is_primary: bool
     token_limit: int
     enabled: bool
+    status: TokenStatus
+    error_msg: str | None
+    expires_at: datetime | None
+    used_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -32,9 +40,12 @@ class Token:
             label=row["label"],
             credentials=_decrypt_credentials(row.get("credentials")),
             model=row.get("model"),
-            is_primary=bool(row.get("is_primary", False)),
             token_limit=row["token_limit"],
             enabled=bool(row["enabled"]),
+            status=TokenStatus(row.get("status", "ok") or "ok"),
+            error_msg=row.get("error_msg"),
+            expires_at=row.get("expires_at"),
+            used_at=row.get("used_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -59,12 +70,3 @@ class UsageSummary:
     token_id: int
     total_tokens: int
     call_count: int
-
-
-@dataclass
-class RotationResult:
-    agent_type: AgentProvider
-    previous_token_id: int | None
-    new_token_id: int
-    reason: str
-    timestamp: datetime

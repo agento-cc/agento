@@ -33,8 +33,8 @@ def _make_token(
     agent_type: str = "codex",
     label: str = "codex-team",
     enabled: bool = True,
-    is_primary: bool = False,
 ) -> Token:
+    from agento.framework.agent_manager.models import TokenStatus
     return Token(
         id=id,
         agent_type=AgentProvider(agent_type),
@@ -43,7 +43,10 @@ def _make_token(
         token_limit=0,
         model=None,
         enabled=enabled,
-        is_primary=is_primary,
+        status=TokenStatus.OK,
+        error_msg=None,
+        expires_at=None,
+        used_at=None,
         created_at=_NOW,
         updated_at=_NOW,
     )

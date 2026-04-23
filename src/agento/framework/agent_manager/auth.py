@@ -19,11 +19,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .errors import AuthenticationError
 from .models import AgentProvider
 
-
-class AuthenticationError(RuntimeError):
-    """Raised when the interactive auth flow fails or is cancelled."""
+__all__ = [
+    "AuthResult",
+    "AuthStrategy",
+    "AuthenticationError",
+    "authenticate_interactive",
+    "clear_auth_strategies",
+    "get_auth_strategy",
+    "get_available_providers",
+    "register_auth_strategy",
+    "save_credentials",
+]
 
 
 @dataclass

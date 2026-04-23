@@ -91,20 +91,25 @@ CREATE TABLE IF NOT EXISTS job (
         FOREIGN KEY (agent_view_id) REFERENCES agent_view(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- OAuth token registry (credentials stored encrypted inline; see framework/crypto.py)
+-- OAuth token registry (credentials stored encrypted inline; see framework/crypto.py).
+-- Tokens form a per-provider pool; selection is LRU over healthy (status='ok') rows.
 CREATE TABLE IF NOT EXISTS oauth_token (
     id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     agent_type       VARCHAR(20)  NOT NULL,
     label            VARCHAR(100) NOT NULL,
     credentials      MEDIUMTEXT   NULL,
     model            VARCHAR(50)  NULL,
-    is_primary       TINYINT(1)   NOT NULL DEFAULT 0,
     token_limit      BIGINT UNSIGNED NOT NULL DEFAULT 0,
     enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+    status           ENUM('ok','error') NOT NULL DEFAULT 'ok',
+    error_msg        TEXT         NULL,
+    expires_at       DATETIME     NULL,
+    used_at          DATETIME     NULL,
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uq_oauth_token_label (label),
-    KEY idx_oauth_token_agent_enabled (agent_type, enabled)
+    KEY idx_oauth_token_agent_enabled (agent_type, enabled),
+    KEY idx_oauth_token_pool_select (agent_type, enabled, status, used_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Usage tracking

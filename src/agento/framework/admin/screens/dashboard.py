@@ -85,9 +85,10 @@ class DashboardScreen(Screen):
         if data.tokens:
             token_lines = []
             for t in data.tokens:
-                primary = " [primary]" if t.get("is_primary") else ""
+                status = t.get("status", "ok")
+                status_tag = " [error]" if status == "error" else ""
                 enabled = "" if t.get("enabled") else " (disabled)"
-                token_lines.append(f"{t['label']} ({t['agent_type']}){primary}{enabled}")
+                token_lines.append(f"{t['label']} ({t['agent_type']}){status_tag}{enabled}")
             self.query_one("#tokens-content", Static).update("\n".join(token_lines))
         else:
             self.query_one("#tokens-content", Static).update("No tokens registered")

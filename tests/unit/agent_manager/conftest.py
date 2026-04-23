@@ -5,7 +5,12 @@ from datetime import UTC, datetime
 import pytest
 
 from agento.framework.agent_manager.config import AgentManagerConfig
-from agento.framework.agent_manager.models import AgentProvider, Token, UsageSummary
+from agento.framework.agent_manager.models import (
+    AgentProvider,
+    Token,
+    TokenStatus,
+    UsageSummary,
+)
 
 
 @pytest.fixture
@@ -21,9 +26,12 @@ def make_token(
     label: str = "test-token",
     credentials: dict | None = None,
     model: str | None = None,
-    is_primary: bool = False,
     token_limit: int = 100_000,
     enabled: bool = True,
+    status: TokenStatus = TokenStatus.OK,
+    error_msg: str | None = None,
+    expires_at: datetime | None = None,
+    used_at: datetime | None = None,
 ) -> Token:
     """Helper to create Token instances for testing."""
     now = datetime.now(UTC)
@@ -35,9 +43,12 @@ def make_token(
         label=label,
         credentials=credentials,
         model=model,
-        is_primary=is_primary,
         token_limit=token_limit,
         enabled=enabled,
+        status=status,
+        error_msg=error_msg,
+        expires_at=expires_at,
+        used_at=used_at,
         created_at=now,
         updated_at=now,
     )

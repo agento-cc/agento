@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -10,7 +12,38 @@ from textual.widgets import DataTable, Footer, Input, Static
 from ..widgets.confirm import ConfirmScreen
 from ..widgets.sidebar import Sidebar
 
-_TOKEN_SEARCH_KEYS = ("id", "agent_type", "label", "model")
+_TOKEN_SEARCH_KEYS = ("id", "agent_type", "label", "model", "status")
+
+
+def _fmt_when(when) -> str:
+    """Format a datetime/None as a short relative string for the UI."""
+    if when is None:
+        return "never"
+    if isinstance(when, str):
+        try:
+            when = datetime.fromisoformat(when)
+        except ValueError:
+            return when
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    now = datetime.now(UTC)
+    secs = int((now - when).total_seconds())
+    if secs < 0:
+        abs_s = -secs
+        if abs_s < 60:
+            return f"in {abs_s}s"
+        if abs_s < 3600:
+            return f"in {abs_s // 60}m"
+        if abs_s < 86400:
+            return f"in {abs_s // 3600}h"
+        return f"in {abs_s // 86400}d"
+    if secs < 60:
+        return f"{secs}s ago"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
 
 
 class TokenUsageScreen(ModalScreen):
@@ -48,26 +81,33 @@ class TokenUsageScreen(ModalScreen):
                 f"Token #{t['id']} -- {t['label']}",
                 id="token-detail-title",
             )
-            primary = "yes" if t["is_primary"] else "no"
+            status = t.get("status", "ok")
             enabled = "yes" if t["enabled"] else "no"
             limit = str(t["token_limit"]) if t["token_limit"] > 0 else "unlimited"
             pct = f"{t['pct_free']:.1f}%" if t["token_limit"] > 0 else "-"
+            used_at = _fmt_when(t.get("used_at"))
+            expires_at = _fmt_when(t.get("expires_at"))
+            error_line = f"\nError:       {t.get('error_msg') or ''}" if status == "error" else ""
             yield Static(
                 f"Type:        {t['agent_type']}\n"
                 f"Model:       {t['model']}\n"
-                f"Primary:     {primary}\n"
+                f"Status:      {status}\n"
                 f"Enabled:     {enabled}\n"
+                f"Last used:   {used_at}\n"
+                f"Expires:     {expires_at}\n"
                 f"Token limit: {limit}\n"
                 f"Used (24h):  {t['tokens_used']:,}\n"
                 f"Calls (24h): {t['call_count']}\n"
                 f"Free:        {pct}"
+                f"{error_line}"
             )
+
 
 class TokensScreen(Screen):
 
     BINDINGS = [  # noqa: RUF012
         Binding("enter", "view_token", "Enter Detail", show=True),
-        Binding("s", "set_primary", "s Set Primary", show=True),
+        Binding("r", "reset_error", "r Clear Err", show=True),
         Binding("x", "deregister", "x Deregister", show=True),
         Binding("slash", "focus_search", "/ Search", show=True),
     ]
@@ -94,8 +134,8 @@ class TokensScreen(Screen):
         table = self.query_one("#tokens-table", DataTable)
         table.cursor_type = "row"
         table.add_columns(
-            "ID", "Type", "Label", "Model", "Primary", "Limit",
-            "Used (24h)", "Free%", "Enabled",
+            "ID", "Type", "Label", "Model", "Status", "Last used",
+            "Expires", "Used (24h)", "Free%", "Enabled",
         )
         self._load_data()
 
@@ -132,8 +172,7 @@ class TokensScreen(Screen):
             ]
         if filtered:
             for t in filtered:
-                primary = "*" if t["is_primary"] else ""
-                limit = str(t["token_limit"]) if t["token_limit"] > 0 else "unlimited"
+                status = t.get("status", "ok")
                 pct = f"{t['pct_free']:.1f}" if t["token_limit"] > 0 else "-"
                 enabled = "yes" if t["enabled"] else "no"
                 table.add_row(
@@ -141,15 +180,16 @@ class TokensScreen(Screen):
                     t["agent_type"],
                     t["label"],
                     t["model"],
-                    primary,
-                    limit,
+                    status,
+                    _fmt_when(t.get("used_at")),
+                    _fmt_when(t.get("expires_at")),
                     str(t["tokens_used"]),
                     pct,
                     enabled,
                     key=str(t["id"]),
                 )
         else:
-            table.add_row("--", "--", "No tokens registered", "--", "--", "--", "--", "--", "--")
+            table.add_row("--", "--", "No tokens registered", "--", "--", "--", "--", "--", "--", "--")
         self._update_detail_panel()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -168,21 +208,29 @@ class TokensScreen(Screen):
         if token is None:
             detail.update("Select a token to view details")
             return
-        primary = "yes" if token["is_primary"] else "no"
+        status = token.get("status", "ok")
         enabled = "yes" if token["enabled"] else "no"
         limit = str(token["token_limit"]) if token["token_limit"] > 0 else "unlimited"
         pct = f"{token['pct_free']:.1f}%" if token["token_limit"] > 0 else "-"
+        used_at = _fmt_when(token.get("used_at"))
+        expires_at = _fmt_when(token.get("expires_at"))
+        error_line = (
+            f"\nError:       {token.get('error_msg') or ''}" if status == "error" else ""
+        )
         detail.update(
             f"ID:          {token['id']}\n"
             f"Type:        {token['agent_type']}\n"
             f"Label:       {token['label']}\n"
             f"Model:       {token['model']}\n"
-            f"Primary:     {primary}\n"
+            f"Status:      {status}\n"
             f"Enabled:     {enabled}\n"
+            f"Last used:   {used_at}\n"
+            f"Expires:     {expires_at}\n"
             f"Token limit: {limit}\n"
             f"Used (24h):  {token['tokens_used']:,}\n"
             f"Calls (24h): {token['call_count']}\n"
             f"Free:        {pct}"
+            f"{error_line}"
         )
 
     def _get_selected_token(self) -> dict | None:
@@ -203,21 +251,24 @@ class TokensScreen(Screen):
         if token:
             self.app.push_screen(TokenUsageScreen(token))
 
-    def action_set_primary(self) -> None:
+    def action_reset_error(self) -> None:
         token = self._get_selected_token()
         if not token:
             return
+        if token.get("status") != "error":
+            self.notify(f"Token #{token['id']} is not in error state")
+            return
         self.app.push_screen(
-            ConfirmScreen(f"Set token #{token['id']} ({token['label']}) as primary for {token['agent_type']}?"),
-            callback=lambda confirmed: self._do_set_primary(token) if confirmed else None,
+            ConfirmScreen(f"Clear error status on token #{token['id']} ({token['label']})?"),
+            callback=lambda confirmed: self._do_reset_error(token) if confirmed else None,
         )
 
     @work(thread=True)
-    def _do_set_primary(self, token: dict) -> None:
-        from ..data import do_set_primary_token
+    def _do_reset_error(self, token: dict) -> None:
+        from ..data import do_reset_token_error
 
-        do_set_primary_token(self.app.conn, token["agent_type"], token["id"])
-        self.app.call_from_thread(self.notify, f"Token #{token['id']} set as primary")
+        do_reset_token_error(self.app.conn, token["id"])
+        self.app.call_from_thread(self.notify, f"Token #{token['id']} error cleared")
         self.app.call_from_thread(self._load_data)
 
     def action_deregister(self) -> None:

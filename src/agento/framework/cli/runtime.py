@@ -5,7 +5,7 @@ import json
 import logging
 
 from ..agent_manager.config import AgentManagerConfig
-from ..agent_manager.token_store import get_primary_token, get_token
+from ..agent_manager.token_store import get_token, select_token
 from ..consumer_config import ConsumerConfig
 from ..database_config import DatabaseConfig
 from ..db import get_connection_or_exit
@@ -26,8 +26,12 @@ def _load_framework_config() -> tuple[DatabaseConfig, ConsumerConfig, AgentManag
     )
 
 
-def _resolve_token(token_id: int | None = None):
-    """Resolve a Token by explicit id, or fall back to the global primary."""
+def _resolve_token(token_id: int | None = None, agent_type=None):
+    """Resolve a Token by explicit id, or pick the LRU healthy one from the pool.
+
+    When ``token_id`` is None, ``agent_type`` must be supplied; replay paths
+    derive it from the job record.
+    """
 
     db_config, _, _ = _load_framework_config()
     conn = get_connection_or_exit(db_config)
@@ -39,12 +43,18 @@ def _resolve_token(token_id: int | None = None):
             if not token.enabled:
                 raise ValueError(f"Token disabled: id={token_id}")
             return token
-        primary = get_primary_token(conn)
-        if primary is None:
+        if agent_type is None:
             raise RuntimeError(
-                "No primary token set. Run: agent token set <claude|codex> <id>"
+                "Cannot resolve a token without --oauth_token or an agent_type. "
+                "Pass --oauth_token or configure agent_view/provider."
             )
-        return primary
+        selected = select_token(conn, agent_type)
+        if selected is None:
+            raise RuntimeError(
+                f"No healthy tokens for agent_type={agent_type.value}. "
+                f"Check: bin/agento token:list --all"
+            )
+        return selected
     finally:
         conn.close()
 
@@ -179,7 +189,7 @@ class ReplayCommand:
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("job_id", type=int, help="Job ID to replay")
         parser.add_argument("--oauth_token", type=int, default=None,
-                          help="Override token id (default: primary)")
+                          help="Override token id (default: least-recently-used healthy token)")
         parser.add_argument("--model", type=str, default=None,
                           help="Override the model (e.g. claude-opus-4-20250514)")
         parser.add_argument("--exec", action="store_true",
@@ -212,8 +222,13 @@ class ReplayCommand:
 
         if args.exec:
             logger = get_logger("replay", "/app/logs/replay.log", stderr=False)
-            # Use explicit token or fall back to primary
-            run_token = token or _resolve_token()
+            # Use explicit token or pick from the pool for the job's agent_type
+            if token is None:
+                from ..agent_manager.models import AgentProvider as _AgentProvider
+                replay_agent_type = _AgentProvider(replay.agent_type)
+                run_token = _resolve_token(None, agent_type=replay_agent_type)
+            else:
+                run_token = token
             runner = create_runner(
                 run_token.agent_type, logger=logger, dry_run=consumer_config.disable_llm
             )
@@ -252,40 +267,6 @@ class ReplayCommand:
             print()
             print("Command:")
             print(f"  {replay.shell_command}")
-
-
-class RotateCommand:
-    @property
-    def name(self) -> str:
-        return "rotate"
-
-    @property
-    def shortcut(self) -> str:
-        return ""
-
-    @property
-    def help(self) -> str:
-        return "Rotate active tokens for all agent types"
-
-    def configure(self, parser: argparse.ArgumentParser) -> None:
-        pass
-
-    def execute(self, args: argparse.Namespace) -> None:
-        from ..agent_manager import rotate_all
-
-        db_config, _, am_config = _load_framework_config()
-        logger = get_logger("agent-manager")
-        conn = get_connection_or_exit(db_config)
-        try:
-            results = rotate_all(conn, am_config, logger)
-            conn.commit()
-            if not results:
-                print("No rotation results (no tokens registered?).")
-                return
-            for r in results:
-                print(f"  {r.agent_type.value:8} prev={r.previous_token_id or '-':>4} new={r.new_token_id:>4} reason={r.reason}")
-        finally:
-            conn.close()
 
 
 class PauseCommand:
@@ -388,7 +369,7 @@ class E2eCommand:
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--oauth_token", type=int, default=None,
-                          help="Override token id (default: primary)")
+                          help="Override token id (default: least-recently-used healthy token)")
         parser.add_argument("--keep", action="store_true",
                           help="Keep test jobs in DB (don't clean up)")
         parser.add_argument("--model", type=str, default=None,

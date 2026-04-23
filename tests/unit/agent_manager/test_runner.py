@@ -192,9 +192,9 @@ class TestTokenClaudeRunner:
 
     def test_run_raises_when_no_active_token(self, agent_config):
         runner = TokenClaudeRunner(config=agent_config, dry_run=False)
-        runner._resolve_primary_token = MagicMock(return_value=None)
+        runner._resolve_token_from_pool = MagicMock(return_value=None)
 
-        with pytest.raises(RuntimeError, match="No active token"):
+        with pytest.raises(RuntimeError, match="No healthy token"):
             runner.run("test prompt")
 
 
@@ -340,7 +340,7 @@ class TestSubprocessTimeout:
 
 
 class TestCredentialsOverride:
-    """Verify that credentials_override takes precedence over DB primary-token resolution."""
+    """Verify that credentials_override takes precedence over DB pool resolution."""
 
     def test_override_skips_db(self, agent_config):
         stream_output = '{"type": "result", "result": "ok", "usage": {"input_tokens": 10, "output_tokens": 5}}\n'
@@ -350,7 +350,7 @@ class TestCredentialsOverride:
             dry_run=False,
             credentials_override={"subscription_key": "sk-override"},
         )
-        runner._resolve_primary_token = MagicMock()
+        runner._resolve_token_from_pool = MagicMock()
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),
@@ -358,22 +358,21 @@ class TestCredentialsOverride:
 
         runner.run("test")
 
-        runner._resolve_primary_token.assert_not_called()
+        runner._resolve_token_from_pool.assert_not_called()
 
     def test_falls_back_to_db_when_no_override(self, agent_config):
-        from datetime import UTC, datetime
+        from .conftest import make_token
 
-        from agento.framework.agent_manager.models import AgentProvider, Token
-
-        primary = Token(
-            id=1, agent_type=AgentProvider.CLAUDE, label="p", credentials={"subscription_key": "sk-primary"},
-            model=None, is_primary=True, token_limit=0, enabled=True,
-            created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+        pool_token = make_token(
+            id=1,
+            label="p",
+            credentials={"subscription_key": "sk-primary"},
+            token_limit=0,
         )
         stream_output = '{"type": "result", "result": "ok", "usage": {"input_tokens": 10, "output_tokens": 5}}\n'
 
         runner = TokenClaudeRunner(config=agent_config, dry_run=False)
-        runner._resolve_primary_token = MagicMock(return_value=primary)
+        runner._resolve_token_from_pool = MagicMock(return_value=pool_token)
         runner._record_usage = MagicMock()
         runner._execute_process = MagicMock(
             return_value=_make_completed_process(stdout=stream_output),
@@ -381,7 +380,7 @@ class TestCredentialsOverride:
 
         runner.run("test")
 
-        runner._resolve_primary_token.assert_called_once()
+        runner._resolve_token_from_pool.assert_called_once()
 
 
 class TestRecordUsageBestEffort:

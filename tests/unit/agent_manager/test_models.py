@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 
-from agento.framework.agent_manager.models import AgentProvider, RotationResult, Token, UsageSummary
+from agento.framework.agent_manager.models import (
+    AgentProvider,
+    Token,
+    TokenStatus,
+    UsageSummary,
+)
 
 
 class _FakeEncryptor:
@@ -39,6 +44,12 @@ class TestAgentProvider:
         assert AgentProvider("codex") == AgentProvider.CODEX
 
 
+class TestTokenStatus:
+    def test_values(self):
+        assert TokenStatus.OK.value == "ok"
+        assert TokenStatus.ERROR.value == "error"
+
+
 class TestToken:
     def test_from_row(self):
         row = {
@@ -47,9 +58,12 @@ class TestToken:
             "label": "prod-1",
             "credentials": _CIPHERTEXT,
             "model": "claude-sonnet-4-20250514",
-            "is_primary": 1,
             "token_limit": 100000,
             "enabled": 1,
+            "status": "ok",
+            "error_msg": None,
+            "expires_at": datetime(2026, 1, 1),
+            "used_at": datetime(2025, 12, 31),
             "created_at": datetime(2025, 1, 1),
             "updated_at": datetime(2025, 1, 1),
         }
@@ -61,20 +75,26 @@ class TestToken:
         assert token.label == "prod-1"
         assert token.credentials == _CREDS
         assert token.model == "claude-sonnet-4-20250514"
-        assert token.is_primary is True
         assert token.token_limit == 100000
         assert token.enabled is True
+        assert token.status == TokenStatus.OK
+        assert token.error_msg is None
+        assert token.expires_at == datetime(2026, 1, 1)
+        assert token.used_at == datetime(2025, 12, 31)
 
-    def test_from_row_disabled(self):
+    def test_from_row_errored(self):
         row = {
             "id": 2,
             "agent_type": "codex",
             "label": "codex-1",
             "credentials": None,
             "model": None,
-            "is_primary": 0,
             "token_limit": 0,
             "enabled": 0,
+            "status": "error",
+            "error_msg": "OAuth token expired",
+            "expires_at": None,
+            "used_at": None,
             "created_at": datetime(2025, 1, 1),
             "updated_at": datetime(2025, 1, 1),
         }
@@ -85,10 +105,13 @@ class TestToken:
         assert token.enabled is False
         assert token.token_limit == 0
         assert token.model is None
-        assert token.is_primary is False
+        assert token.status == TokenStatus.ERROR
+        assert token.error_msg == "OAuth token expired"
+        assert token.expires_at is None
+        assert token.used_at is None
         assert token.credentials is None
 
-    def test_from_row_defaults_missing_model_and_primary(self):
+    def test_from_row_defaults_missing_health_fields(self):
         row = {
             "id": 3,
             "agent_type": "claude",
@@ -103,7 +126,10 @@ class TestToken:
         token = Token.from_row(row)
 
         assert token.model is None
-        assert token.is_primary is False
+        assert token.status == TokenStatus.OK
+        assert token.error_msg is None
+        assert token.expires_at is None
+        assert token.used_at is None
 
 
 class TestUsageSummary:
@@ -112,29 +138,3 @@ class TestUsageSummary:
         assert summary.token_id == 1
         assert summary.total_tokens == 50000
         assert summary.call_count == 10
-
-
-class TestRotationResult:
-    def test_creation(self):
-        now = datetime.now(UTC)
-        result = RotationResult(
-            agent_type=AgentProvider.CLAUDE,
-            previous_token_id=1,
-            new_token_id=2,
-            reason="rotation",
-            timestamp=now,
-        )
-        assert result.agent_type == AgentProvider.CLAUDE
-        assert result.previous_token_id == 1
-        assert result.new_token_id == 2
-        assert result.reason == "rotation"
-
-    def test_initial_rotation(self):
-        result = RotationResult(
-            agent_type=AgentProvider.CODEX,
-            previous_token_id=None,
-            new_token_id=1,
-            reason="initial",
-            timestamp=datetime.now(UTC),
-        )
-        assert result.previous_token_id is None
