@@ -46,24 +46,64 @@ class ClaudeConfigWriter:
         return [".claude/projects", ".claude/todos"]
 
     def write_credentials(self, build_dir: Path, credentials: dict) -> None:
-        """Write Claude Code's ``.claude/.credentials.json`` in the ``claudeAiOauth`` format."""
-        access_token = credentials.get("subscription_key")
-        if not access_token:
-            return
-        data = {
-            "claudeAiOauth": {
-                "accessToken": access_token,
-                "refreshToken": credentials.get("refresh_token"),
-                "expiresAt": credentials.get("expires_at"),
-                "subscriptionType": credentials.get("subscription_type"),
+        """Materialize Claude Code's full login state into ``build_dir``.
+
+        Writes ``.claude/.credentials.json`` (oauth tokens) and merges Claude's
+        captured ``~/.claude.json`` into ``build_dir/.claude.json`` (so Claude
+        sees ``oauthAccount`` and considers itself logged in on first run).
+        Preserves any agent_view-level keys already in ``.claude.json`` such as
+        ``model``/``systemPrompt``/``permissions`` written by ``prepare_workspace``.
+        """
+        raw_auth = credentials.get("raw_auth") or {}
+        raw_creds = raw_auth.get("credentials") if isinstance(raw_auth, dict) else None
+        claude_oauth = (raw_creds or {}).get("claudeAiOauth") if isinstance(raw_creds, dict) else None
+
+        if isinstance(claude_oauth, dict) and claude_oauth.get("accessToken"):
+            # Preferred: write back Claude's full payload verbatim so fields like
+            # ``scopes`` and ``rateLimitTier`` survive. Anything less trips Claude
+            # into the login picker even with a valid accessToken.
+            creds_payload = raw_creds
+        else:
+            # Backwards compat for tokens stored before raw_auth capture, and for
+            # file-based ``token:register`` using the legacy 4-field schema.
+            access_token = credentials.get("subscription_key")
+            if not access_token:
+                return
+            creds_payload = {
+                "claudeAiOauth": {
+                    "accessToken": access_token,
+                    "refreshToken": credentials.get("refresh_token"),
+                    "expiresAt": credentials.get("expires_at"),
+                    "subscriptionType": credentials.get("subscription_type"),
+                }
             }
-        }
+
         claude_dir = build_dir / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
-        path = claude_dir / ".credentials.json"
-        path.write_text(json.dumps(data, indent=2))
-        os.chmod(path, 0o600)
-        logger.debug("Wrote Claude credentials to %s", path)
+        creds_path = claude_dir / ".credentials.json"
+        creds_path.write_text(json.dumps(creds_payload, indent=2))
+        os.chmod(creds_path, 0o600)
+        logger.debug("Wrote Claude credentials to %s", creds_path)
+
+        claude_json_payload = raw_auth.get("claude_json") if isinstance(raw_auth, dict) else None
+        if isinstance(claude_json_payload, dict) and claude_json_payload:
+            claude_json_path = build_dir / ".claude.json"
+            existing: dict[str, Any] = {}
+            if claude_json_path.is_file():
+                try:
+                    parsed = json.loads(claude_json_path.read_text())
+                    if isinstance(parsed, dict):
+                        existing = parsed
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+            # Auth state wins over prior build contents for any Claude-managed
+            # keys (``oauthAccount``, ``userID``, ``numStartups``, ...); agent_view
+            # config keys like ``model`` / ``systemPrompt`` / ``permissions`` that
+            # only ``prepare_workspace`` sets survive automatically because they
+            # are not present in ``claude_json_payload``.
+            merged = {**existing, **claude_json_payload}
+            claude_json_path.write_text(json.dumps(merged, indent=2))
+            logger.debug("Wrote Claude user state to %s", claude_json_path)
 
     def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
         """Merge legacy shared-HOME Claude config into the per-agent build."""
