@@ -190,6 +190,149 @@ class TestWriteCredentials:
         assert oauth["expiresAt"] is None
         assert oauth["subscriptionType"] is None
 
+    def test_preserves_scopes_and_rate_limit_tier_from_raw_auth(self, writer, work_dir):
+        raw_creds = {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-abc",
+                "refreshToken": "sk-ant-ort01-def",
+                "expiresAt": 1776946615316,
+                "scopes": [
+                    "user:file_upload",
+                    "user:inference",
+                    "user:mcp_servers",
+                    "user:profile",
+                    "user:sessions:claude_code",
+                ],
+                "subscriptionType": "team",
+                "rateLimitTier": "default_claude_max_5x",
+            }
+        }
+        creds = {
+            "subscription_key": "sk-ant-oat01-abc",
+            "refresh_token": "sk-ant-ort01-def",
+            "expires_at": 1776946615316,
+            "subscription_type": "team",
+            "raw_auth": {"credentials": raw_creds, "claude_json": {}},
+        }
+        writer.write_credentials(work_dir, creds)
+
+        data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
+        assert data == raw_creds
+
+    def test_writes_claude_json_with_oauth_account(self, writer, work_dir):
+        claude_json = {
+            "oauthAccount": {
+                "emailAddress": "mklauza@kazar.com",
+                "organizationName": "Kazar",
+            },
+            "numStartups": 3,
+            "userID": "abc123",
+        }
+        creds = {
+            "subscription_key": "sk-x",
+            "raw_auth": {
+                "credentials": {"claudeAiOauth": {"accessToken": "sk-x"}},
+                "claude_json": claude_json,
+            },
+        }
+        writer.write_credentials(work_dir, creds)
+
+        out = json.loads((work_dir / ".claude.json").read_text())
+        assert out["oauthAccount"]["emailAddress"] == "mklauza@kazar.com"
+        assert out["numStartups"] == 3
+        assert out["userID"] == "abc123"
+
+    def test_merges_claude_json_with_existing_workspace_config(self, writer, work_dir):
+        # prepare_workspace has already run and wrote agent_view-level config
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "model": "opus-4-7",
+            "systemPrompt": "Be concise.",
+            "permissions": {"allow": ["Read"]},
+        }))
+
+        creds = {
+            "subscription_key": "sk-x",
+            "raw_auth": {
+                "credentials": {"claudeAiOauth": {"accessToken": "sk-x"}},
+                "claude_json": {
+                    "oauthAccount": {"emailAddress": "m@k.com"},
+                    "userID": "abc",
+                },
+            },
+        }
+        writer.write_credentials(work_dir, creds)
+
+        out = json.loads((work_dir / ".claude.json").read_text())
+        # agent_view config survives
+        assert out["model"] == "opus-4-7"
+        assert out["systemPrompt"] == "Be concise."
+        assert out["permissions"] == {"allow": ["Read"]}
+        # oauth state added
+        assert out["oauthAccount"] == {"emailAddress": "m@k.com"}
+        assert out["userID"] == "abc"
+
+    def test_auth_state_wins_over_stale_build_claude_json(self, writer, work_dir):
+        # Simulate Claude having written stale first-run state in a prior build
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "userID": "old-fingerprint",
+            "numStartups": 1,
+        }))
+
+        creds = {
+            "subscription_key": "sk-x",
+            "raw_auth": {
+                "credentials": {"claudeAiOauth": {"accessToken": "sk-x"}},
+                "claude_json": {
+                    "userID": "new-fingerprint",
+                    "numStartups": 5,
+                    "oauthAccount": {"emailAddress": "m@k.com"},
+                },
+            },
+        }
+        writer.write_credentials(work_dir, creds)
+
+        out = json.loads((work_dir / ".claude.json").read_text())
+        assert out["userID"] == "new-fingerprint"
+        assert out["numStartups"] == 5
+        assert out["oauthAccount"] == {"emailAddress": "m@k.com"}
+
+    def test_skips_claude_json_when_raw_auth_missing(self, writer, work_dir):
+        writer.write_credentials(work_dir, {"subscription_key": "sk-x"})
+        assert not (work_dir / ".claude.json").exists()
+
+    def test_skips_claude_json_when_claude_json_empty(self, writer, work_dir):
+        creds = {
+            "subscription_key": "sk-x",
+            "raw_auth": {
+                "credentials": {"claudeAiOauth": {"accessToken": "sk-x"}},
+                "claude_json": {},
+            },
+        }
+        writer.write_credentials(work_dir, creds)
+        assert not (work_dir / ".claude.json").exists()
+
+    def test_non_dict_raw_auth_falls_back_to_legacy_fields(self, writer, work_dir):
+        # Old rows stored before raw_auth capture: raw_auth may be a string or None.
+        creds = {
+            "subscription_key": "sk-legacy",
+            "refresh_token": "rt-legacy",
+            "expires_at": 1799999999,
+            "subscription_type": "team",
+            "raw_auth": "ignored-string",
+        }
+        writer.write_credentials(work_dir, creds)
+
+        data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
+        assert data == {
+            "claudeAiOauth": {
+                "accessToken": "sk-legacy",
+                "refreshToken": "rt-legacy",
+                "expiresAt": 1799999999,
+                "subscriptionType": "team",
+            }
+        }
+        assert not (work_dir / ".claude.json").exists()
+
 
 class TestOwnedPaths:
     def test_returns_claude_files_and_dir(self, writer):

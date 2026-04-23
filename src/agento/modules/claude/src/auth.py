@@ -44,9 +44,29 @@ class ClaudeAuthStrategy:
                 "Auth may have been incomplete."
             )
 
+        # Claude Code stores its login state in TWO places:
+        # - ``~/.claude/.credentials.json`` (oauth tokens; seen above)
+        # - ``~/.claude.json`` at HOME root (``oauthAccount`` + per-install user state)
+        # Without the second, a sandboxed Claude with HOME=<build dir> sees creds but
+        # still falls through to the login picker. Capture both so ``write_credentials``
+        # can restore them verbatim.
+        claude_json_path = Path(real_home) / ".claude.json"
+        claude_json: dict = {}
+        if claude_json_path.is_file():
+            try:
+                claude_json = json.loads(claude_json_path.read_text())
+                if not isinstance(claude_json, dict):
+                    claude_json = {}
+            except (json.JSONDecodeError, OSError):
+                claude_json = {}
+
         return AuthResult(
             subscription_key=access_token,
             refresh_token=oauth.get("refreshToken"),
             expires_at=oauth.get("expiresAt"),
             subscription_type=oauth.get("subscriptionType"),
+            raw_auth={
+                "credentials": raw,
+                "claude_json": claude_json,
+            },
         )

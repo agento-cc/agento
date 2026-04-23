@@ -1,0 +1,144 @@
+"""Tests for ClaudeAuthStrategy — captures full ``claudeAiOauth`` + ``.claude.json``."""
+from __future__ import annotations
+
+import json
+import logging
+from unittest.mock import patch
+
+import pytest
+
+from agento.framework.agent_manager.auth import AuthenticationError
+from agento.modules.claude.src.auth import ClaudeAuthStrategy
+
+
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "agento.modules.claude.src.auth.Path.home",
+        classmethod(lambda _cls: tmp_path),
+    )
+    return tmp_path
+
+
+class TestClaudeAuthStrategy:
+    def _stub_run_cli(self, home):
+        # Simulate a successful interactive login writing files to HOME
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-oat01-abc",
+                "refreshToken": "sk-ant-ort01-def",
+                "expiresAt": 1776946615316,
+                "scopes": [
+                    "user:file_upload",
+                    "user:inference",
+                    "user:mcp_servers",
+                    "user:profile",
+                    "user:sessions:claude_code",
+                ],
+                "subscriptionType": "team",
+                "rateLimitTier": "default_claude_max_5x",
+            }
+        }
+        (home / ".claude" / ".credentials.json").write_text(json.dumps(creds))
+        (home / ".claude.json").write_text(json.dumps({
+            "numStartups": 3,
+            "userID": "abc123",
+            "oauthAccount": {
+                "emailAddress": "m@k.com",
+                "organizationName": "Kazar",
+            },
+        }))
+
+    def test_captures_full_oauth_payload(self, fake_home):
+        strategy = ClaudeAuthStrategy()
+        with patch(
+            "agento.modules.claude.src.auth._run_cli",
+            side_effect=lambda *a, **kw: self._stub_run_cli(fake_home),
+        ):
+            result = strategy.authenticate("/ignored/tmp", logging.getLogger("test"))
+
+        assert result.subscription_key == "sk-ant-oat01-abc"
+        assert result.refresh_token == "sk-ant-ort01-def"
+        assert result.expires_at == 1776946615316
+        assert result.subscription_type == "team"
+
+        # raw_auth.credentials preserves the full Claude payload verbatim
+        assert result.raw_auth is not None
+        raw_creds = result.raw_auth["credentials"]
+        assert raw_creds["claudeAiOauth"]["scopes"] == [
+            "user:file_upload",
+            "user:inference",
+            "user:mcp_servers",
+            "user:profile",
+            "user:sessions:claude_code",
+        ]
+        assert raw_creds["claudeAiOauth"]["rateLimitTier"] == "default_claude_max_5x"
+
+    def test_captures_claude_json_user_state(self, fake_home):
+        strategy = ClaudeAuthStrategy()
+        with patch(
+            "agento.modules.claude.src.auth._run_cli",
+            side_effect=lambda *a, **kw: self._stub_run_cli(fake_home),
+        ):
+            result = strategy.authenticate("/ignored/tmp", logging.getLogger("test"))
+
+        assert result.raw_auth is not None
+        claude_json = result.raw_auth["claude_json"]
+        assert claude_json["oauthAccount"]["emailAddress"] == "m@k.com"
+        assert claude_json["oauthAccount"]["organizationName"] == "Kazar"
+        assert claude_json["userID"] == "abc123"
+
+    def test_missing_claude_json_is_ok(self, fake_home):
+        # Only .credentials.json is written; .claude.json absent.
+        def _only_creds(*_args, **_kw):
+            (fake_home / ".claude" / ".credentials.json").write_text(json.dumps({
+                "claudeAiOauth": {"accessToken": "sk-x"}
+            }))
+
+        strategy = ClaudeAuthStrategy()
+        with patch("agento.modules.claude.src.auth._run_cli", side_effect=_only_creds):
+            result = strategy.authenticate("/ignored/tmp", logging.getLogger("test"))
+
+        assert result.subscription_key == "sk-x"
+        assert result.raw_auth is not None
+        assert result.raw_auth["claude_json"] == {}
+
+    def test_missing_credentials_file_raises(self, fake_home):
+        strategy = ClaudeAuthStrategy()
+        # _run_cli returns without writing anything
+        with (
+            patch("agento.modules.claude.src.auth._run_cli", lambda *a, **kw: None),
+            pytest.raises(AuthenticationError, match="credentials file not found"),
+        ):
+            strategy.authenticate("/ignored/tmp", logging.getLogger("test"))
+
+    def test_credentials_without_access_token_raises(self, fake_home):
+        def _no_token(*_args, **_kw):
+            (fake_home / ".claude" / ".credentials.json").write_text(
+                json.dumps({"claudeAiOauth": {}})
+            )
+
+        strategy = ClaudeAuthStrategy()
+        with (
+            patch("agento.modules.claude.src.auth._run_cli", side_effect=_no_token),
+            pytest.raises(AuthenticationError, match="no accessToken"),
+        ):
+            strategy.authenticate("/ignored/tmp", logging.getLogger("test"))
+
+    def test_malformed_claude_json_is_tolerated(self, fake_home):
+        def _bad_claude_json(*_args, **_kw):
+            (fake_home / ".claude" / ".credentials.json").write_text(json.dumps({
+                "claudeAiOauth": {"accessToken": "sk-x"}
+            }))
+            (fake_home / ".claude.json").write_text("not-json{")
+
+        strategy = ClaudeAuthStrategy()
+        with patch("agento.modules.claude.src.auth._run_cli", side_effect=_bad_claude_json):
+            result = strategy.authenticate("/ignored/tmp", logging.getLogger("test"))
+
+        assert result.subscription_key == "sk-x"
+        assert result.raw_auth is not None
+        assert result.raw_auth["claude_json"] == {}
