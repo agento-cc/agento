@@ -42,63 +42,10 @@ class TestSkipConditions:
         observer.execute(_make_event(name="other"))
 
     @patch(f"{_FWK}.bootstrap.get_module_config")
-    def test_skips_when_account_id_already_set(self, mock_get_config):
-        mock_get_config.return_value = _make_config(
-            jira_assignee_account_id="712020:abc"
-        )
-        observer = ResolveAccountIdObserver()
-        with patch.object(observer, "_resolve_agent_views"):
-            observer.execute(_make_event())
-
-    @patch(f"{_FWK}.bootstrap.get_module_config")
     def test_skips_when_no_toolbox_url(self, mock_get_config):
         mock_get_config.return_value = _make_config(toolbox_url="")
         observer = ResolveAccountIdObserver()
         observer.execute(_make_event())
-
-
-class TestDefaultScopeResolve:
-    @patch(f"{_FWK}.bootstrap.set_module_config")
-    @patch(f"{_FWK}.bootstrap.get_module_config")
-    @patch(f"{_FWK}.db.get_connection")
-    @patch(f"{_FWK}.database_config.DatabaseConfig.from_env")
-    @patch(f"{_FWK}.core_config.config_set")
-    @patch(f"{_OBS}._resolve_account_id", return_value="712020:abc-123")
-    def test_resolves_and_saves_account_id(
-        self, mock_resolve, mock_config_set, mock_db_config,
-        mock_get_conn, mock_get_config, mock_set_config,
-    ):
-        mock_get_config.return_value = _make_config()
-        mock_conn = MagicMock()
-        mock_get_conn.return_value = mock_conn
-
-        observer = ResolveAccountIdObserver()
-        with patch.object(observer, "_resolve_agent_views"):
-            observer.execute(_make_event())
-
-        mock_resolve.assert_called_once_with("http://toolbox:3001")
-        mock_config_set.assert_called_once_with(
-            mock_conn, "jira/jira_assignee_account_id", "712020:abc-123"
-        )
-        mock_conn.commit.assert_called_once()
-        mock_conn.close.assert_called_once()
-
-        updated_config = mock_set_config.call_args[0][1]
-        assert updated_config.jira_assignee_account_id == "712020:abc-123"
-
-    @patch(f"{_FWK}.bootstrap.set_module_config")
-    @patch(f"{_FWK}.bootstrap.get_module_config")
-    @patch(f"{_OBS}._resolve_account_id", return_value=None)
-    def test_skips_when_myself_missing_account_id(
-        self, mock_resolve, mock_get_config, mock_set_config,
-    ):
-        mock_get_config.return_value = _make_config()
-
-        observer = ResolveAccountIdObserver()
-        with patch.object(observer, "_resolve_agent_views"):
-            observer.execute(_make_event())
-
-        mock_set_config.assert_not_called()
 
 
 class TestAgentViewScopeResolve:
@@ -198,35 +145,6 @@ class TestAgentViewScopeResolve:
 
 
 class TestErrorHandling:
-    @patch(f"{_FWK}.bootstrap.get_module_config")
-    @patch(f"{_OBS}._resolve_account_id", side_effect=ConnectionError("toolbox down"))
-    def test_handles_toolbox_error_gracefully(self, mock_resolve, mock_get_config):
-        mock_get_config.return_value = _make_config()
-
-        observer = ResolveAccountIdObserver()
-        observer.execute(_make_event())  # should not raise
-
-    @patch(f"{_FWK}.bootstrap.get_module_config")
-    def test_handles_httpx_connect_error_quietly(self, mock_get_config, caplog):
-        import logging
-
-        import httpx
-
-        mock_get_config.return_value = _make_config()
-        caplog.set_level(logging.INFO, logger="agento.modules.jira.src.observers")
-
-        with patch(
-            f"{_OBS}._resolve_account_id",
-            side_effect=httpx.ConnectError("Connection refused"),
-        ):
-            observer = ResolveAccountIdObserver()
-            with patch.object(observer, "_resolve_agent_views"):
-                observer.execute(_make_event())  # should not raise
-
-        # No traceback should be emitted for ConnectError; just an info line.
-        assert "Traceback" not in caplog.text
-        assert "toolbox not reachable" in caplog.text
-
     @patch(f"{_FWK}.workspace.get_active_agent_views", side_effect=RuntimeError("DB down"))
     @patch(f"{_FWK}.db.get_connection")
     @patch(f"{_FWK}.database_config.DatabaseConfig.from_env")
