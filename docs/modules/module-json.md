@@ -286,7 +286,7 @@ class SyncCommand:
         ...
 ```
 
-After bootstrap, the command appears as `bin/agento sync --dry-run`. Framework commands (consumer, setup:upgrade, config, token, rotate) are built-in; module commands extend the CLI dynamically.
+After bootstrap, the command appears as `bin/agento sync --dry-run`. Framework commands (consumer, setup:upgrade, config, token) are built-in; module commands extend the CLI dynamically.
 
 ### Onboarding
 

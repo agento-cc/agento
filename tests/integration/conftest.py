@@ -217,9 +217,11 @@ def _truncate_tables():
 # ---------------------------------------------------------------------------
 
 def insert_primary_token(agent_type: str = "claude", model: str | None = None) -> int:
-    """Insert an enabled oauth_token for tests. Returns its id. The name is kept
-    for backward-compat with older tests; there is no primary concept anymore —
-    selection is LRU over healthy tokens within the provider pool."""
+    """Insert an enabled oauth_token and bind agent_view/provider at the default
+    scope. Returns the token id. The name is kept for backward-compat with older
+    tests; there is no primary concept anymore — selection is LRU over healthy
+    tokens within the provider pool. The scoped-config bind is what tells the
+    consumer which pool to draw from (no more implicit primary-token fallback)."""
     from agento.framework.agent_manager.models import encrypt_credentials
 
     encrypted = encrypt_credentials({"subscription_key": f"sk-test-{agent_type}"})
@@ -234,7 +236,16 @@ def insert_primary_token(agent_type: str = "claude", model: str | None = None) -
                 """,
                 (agent_type, f"test-{agent_type}", encrypted, model),
             )
-            return cur.lastrowid
+            token_id = cur.lastrowid
+            cur.execute(
+                """
+                INSERT INTO core_config_data (scope, scope_id, path, value, encrypted)
+                VALUES ('default', 0, 'agent_view/provider', %s, 0)
+                ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()
+                """,
+                (agent_type,),
+            )
+            return token_id
     finally:
         conn.close()
 

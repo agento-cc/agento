@@ -28,14 +28,14 @@
 | `config:get <path\|module>` | Get config value (exact path or module tree view) |
 | `config:list [prefix]` | List config values (all scopes) |
 | `config:remove <path> [--scope=S] [--scope-id=N]` | Remove config override from DB |
-| **Tokens** | |
+| **Tokens** (LRU pool per provider — no sticky primary) | |
 | `token:register <agent> <label> [path]` | Register OAuth token ([details](tokens.md)) |
-| `token:list` | List tokens with usage stats |
-| `token:set <agent> <id>` | Set primary token |
-| `token:refresh <id>` | Re-authenticate token |
+| `token:list [--all]` | List tokens with status, last_used, expires_at |
+| `token:refresh <id>` | Re-authenticate token (clears status=error) |
+| `token:mark-error <id> "<msg>"` | Quarantine a token (status=error) |
+| `token:reset <id>` | Clear error status without re-auth |
 | `token:deregister <id>` | Disable token |
 | `token:usage` | Show token usage |
-| `rotate` | Rotate active tokens |
 | **Ingress** | |
 | `ingress:bind <type> <value> <agent_view>` | Bind inbound identity to agent_view |
 | `ingress:list [--type <type>] [--json]` | List all identity bindings |

@@ -162,7 +162,7 @@ _STANDALONE_GROUPS = {
     "doctor": "project", "install": "project", "up": "project",
     "down": "project", "logs": "project",
     "run": "project",
-    "consumer": "job", "publish": "job", "replay": "job", "rotate": "job",
+    "consumer": "job", "publish": "job", "replay": "job",
     "e2e": "test",
 }
 

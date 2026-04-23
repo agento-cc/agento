@@ -7,9 +7,11 @@ Each `agent_view` has its own identity: SSH private key, optional public key, op
 Minimum viable onboarding for a fresh `agent_view`, using the interactive paste flow (no host paths leaked into Docker, no volume mounts):
 
 ```bash
-# 1. Register the agent CLI credentials (Claude / Codex OAuth token)
+# 1. Register the agent CLI credentials (Claude / Codex OAuth token).
+#    The token joins the provider's LRU pool automatically — no primary flag.
 agento token:register claude dev_01
-agento token:set claude <id_printed_above>
+# 1b. Bind this agent_view to the provider so the consumer knows which pool to draw from.
+agento config:set agent_view/provider claude --scope=agent_view --scope-id=<agent_view_id>
 
 # 2. Paste the SSH private key into the encrypted DB field
 agento config:set agent_view/identity/ssh_private_key --agent-view dev_01
