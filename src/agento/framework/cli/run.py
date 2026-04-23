@@ -99,6 +99,7 @@ class RunCommand:
             exec_args = [
                 "docker", "compose", "-f", str(compose_file),
                 "exec", "-T",
+                "-u", "agent",
                 "-e", f"HOME={home_in_container}",
                 "-w", home_in_container,
                 "sandbox",
@@ -111,6 +112,7 @@ class RunCommand:
         exec_args = [
             "docker", "compose", "-f", str(compose_file),
             "exec", "-it",
+            "-u", "agent",
             "-e", f"HOME={home_in_container}",
             "-e", f"TERM={term}",
             "-e", "COLORTERM=truecolor",
