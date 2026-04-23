@@ -9,9 +9,9 @@ from collections.abc import Callable
 
 from ..runner import RunResult
 from ..ssh_prelude import wrap_with_ssh_prelude
-from .active import resolve_active_token
 from .config import AgentManagerConfig
 from .models import AgentProvider, Token
+from .token_store import select_token
 from .usage_store import record_usage
 
 
@@ -197,13 +197,11 @@ class TokenRunner(ABC):
             token = None
             credentials = self.credentials_override
         else:
-            token = self._resolve_primary_token()
+            token = self._resolve_token_from_pool()
             if token is None or token.credentials is None:
                 raise RuntimeError(
-                    f"No active token for agent_type={self.agent_type.value}. "
-                    f"Register a token and mark it primary: "
-                    f"bin/agento token:register {self.agent_type.value} <label> <path> "
-                    f"&& bin/agento token:set {self.agent_type.value} <id>."
+                    f"No healthy token for agent_type={self.agent_type.value}. "
+                    f"Register one: bin/agento token:register {self.agent_type.value} <label>"
                 )
             credentials = token.credentials
         model = model or self.model_override
@@ -266,16 +264,16 @@ class TokenRunner(ABC):
 
         return get_connection(DatabaseConfig.from_env_and_json())
 
-    def _resolve_primary_token(self) -> Token | None:
-        """Look up the primary Token DB record for this runner's agent_type."""
+    def _resolve_token_from_pool(self) -> Token | None:
+        """Claim the LRU healthy token for this runner's agent_type (DB-driven)."""
         try:
             conn = self._get_db_connection()
             try:
-                return resolve_active_token(conn, self.agent_type)
+                return select_token(conn, self.agent_type)
             finally:
                 conn.close()
         except Exception:
-            self.logger.exception("Failed to resolve primary token from DB")
+            self.logger.exception("Failed to select token from DB pool")
             return None
 
     def _record_usage(self, token: Token | None, result: RunResult) -> None:

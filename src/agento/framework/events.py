@@ -323,3 +323,13 @@ class TokenRefreshedEvent:
     token_id: int
     label: str
     credentials: dict[str, Any]
+
+
+@dataclass
+class TokenAuthFailedEvent:
+    """Dispatched when a runtime auth failure flips a token to ``status='error'``."""
+
+    agent_type: str
+    token_id: int
+    error_msg: str
+    job_id: int | None = None

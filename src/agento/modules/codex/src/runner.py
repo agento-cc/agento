@@ -3,9 +3,24 @@ from __future__ import annotations
 import re
 import subprocess
 
+from agento.framework.agent_manager.errors import AuthenticationError
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.agent_manager.runner import TokenRunner
 from agento.framework.runner import RunResult
+
+# Substrings Codex prints on stderr when the stored OAuth / API key is rejected.
+# Case-insensitive match against raw output keeps us robust to CLI wording
+# tweaks (e.g. "Please sign in" vs "Please log in").
+_CODEX_AUTH_ERROR_PHRASES = (
+    "401",
+    "unauthorized",
+    "invalid_api_key",
+    "invalid api key",
+    "please sign in",
+    "please log in",
+    "authentication failed",
+    "not authenticated",
+)
 
 
 class TokenCodexRunner(TokenRunner):
@@ -59,8 +74,15 @@ class TokenCodexRunner(TokenRunner):
         """Parse Codex CLI structured text output.
 
         Extracts model, session id, and token count from the header/footer.
-        Falls back gracefully if the format is unexpected.
+        Falls back gracefully if the format is unexpected. Raises
+        ``AuthenticationError`` when the CLI reports the stored credential
+        was rejected (401 / unauthorized / invalid key) so the consumer can
+        mark the token and pick a different one on retry.
         """
+        lower = raw.lower()
+        for phrase in _CODEX_AUTH_ERROR_PHRASES:
+            if phrase in lower:
+                raise AuthenticationError(f"Codex CLI auth error: {raw[:500]}")
         result = RunResult(raw_output=raw)
         try:
             self._parse_header(raw, result)

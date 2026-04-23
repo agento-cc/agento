@@ -4,6 +4,18 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 ---
 
+## 2026-04-23 — Token pool per provider, LRU selection
+
+- **Dropped `oauth_token.is_primary`.** The sticky "global primary per provider" flag made a single token carry all traffic until manually rotated; a second license sat idle. Multi-license accounts (which are the common case for paid subscriptions) only benefited after the operator ran `token:set`, and even then the sticky winner kept being picked. The flag conflated two concepts — "preferred" and "active" — and couldn't express per-agent_view preferences either.
+- **Added `status`, `error_msg`, `expires_at`, `used_at` to `oauth_token`.** `status` (enum `ok|error`) is flipped to `error` automatically when the runner reports an auth failure (Claude's `AuthenticationError` phrases; new Codex stderr patterns). `error_msg` stores the reason for the operator. `expires_at` is pulled from the credentials payload on `token:register` / `token:refresh` so expiry filtering happens in SQL without decrypting every row. `used_at` is the bump timestamp for LRU selection.
+- **`select_token(provider)` replaces the rotator.** `SELECT ... ORDER BY used_at IS NULL DESC, used_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED` claims the least-recently-used healthy token atomically, then stamps `used_at = UTC_TIMESTAMP()`. `SKIP LOCKED` prevents two concurrent workers from claiming the same row; the in-line commit makes the bump visible before the runner executes. Why delete `rotator.py` entirely: selection *is* rotation now — the pool fans out naturally without a separate nightly job.
+- **Required `agent_view/provider`; no more primary-token fallback.** Consumer raises with an actionable message when `agent_view/provider` is unset. The fallback ("infer provider from whichever token happens to be primary") hid misconfigurations and made agent_view bindings non-authoritative. Operators must now explicitly bind provider per agent_view / workspace / global — which matches every other scoped config in the framework.
+- **Auto-detect auth failures → `status='error'` + `TokenAuthFailedEvent`.** When the runner raises `AuthenticationError`, the consumer marks the offending token and dispatches an event for observers. The job still flows through the existing retry pipeline; the next attempt picks a different healthy token via LRU. Dead-letter only when no healthy token remains or retries are exhausted.
+- **New CLI: `token:mark-error <id> "<msg>"`, `token:reset <id>`.** Manual levers for operators who want to quarantine or recover a token without re-authenticating. Removed `token:set` (and `rotate`) — they have no meaning under LRU.
+- **Alternatives considered.** (a) Keep `is_primary` as a "must-use-first" hint and add LRU as tiebreaker: rejected — still leaves the sticky-preference muddle, just reordered. (b) Per-agent_view token binding table: deferred — buys fine-grained control but costs a new table, a UI surface, and a migration for something no one asked for yet. The per-provider pool handles the real use case (multiple licenses on one account).
+
+---
+
 ## 2026-03-31 — UTC-everywhere for timestamps, scoped timezone config
 
 - **All Python datetime calls use `datetime.now(timezone.utc)`, never naive `datetime.now()`.** Bug: container TZ (`Europe/Warsaw`, UTC+2) caused `scheduled_after` on the retry path to be stored 2h ahead of MySQL `NOW()` (UTC). Retries fired late by the timezone offset. Root cause: Python `datetime.now()` returns container-local time, but MySQL TIMESTAMP columns and `NOW()` operate in the server's session timezone (UTC by default).

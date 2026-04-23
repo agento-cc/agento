@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 
 from ..db import get_connection_or_exit
 from ..log import get_logger
@@ -198,6 +199,42 @@ class TokenRefreshCommand:
         print(f"Token [{token.id}] refreshed successfully.")
 
 
+def _humanize_delta(when: datetime | None, now: datetime) -> str:
+    if when is None:
+        return "never"
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    delta = now - when
+    secs = int(delta.total_seconds())
+    if secs < 0:
+        return "just now"
+    if secs < 60:
+        return f"{secs}s ago"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
+
+
+def _format_expiry(when: datetime | None, now: datetime) -> str:
+    if when is None:
+        return "never"
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    if when <= now:
+        return f"expired ({_humanize_delta(when, now)})"
+    delta = when - now
+    secs = int(delta.total_seconds())
+    if secs < 60:
+        return f"in {secs}s"
+    if secs < 3600:
+        return f"in {secs // 60}m"
+    if secs < 86400:
+        return f"in {secs // 3600}h"
+    return f"in {secs // 86400}d"
+
+
 class TokenListCommand:
     @property
     def name(self) -> str:
@@ -234,6 +271,8 @@ class TokenListCommand:
         finally:
             conn.close()
 
+        now = datetime.now(UTC)
+
         if args.json:
             data = []
             for t in tokens:
@@ -246,7 +285,10 @@ class TokenListCommand:
                     "agent_type": t.agent_type.value,
                     "label": t.label,
                     "model": t.model,
-                    "is_primary": t.is_primary,
+                    "status": t.status.value,
+                    "error_msg": t.error_msg,
+                    "used_at": t.used_at.isoformat() if t.used_at else None,
+                    "expires_at": t.expires_at.isoformat() if t.expires_at else None,
                     "token_limit": t.token_limit,
                     "tokens_used": used,
                     "call_count": calls,
@@ -254,21 +296,34 @@ class TokenListCommand:
                     "enabled": t.enabled,
                 })
             print(json.dumps(data, indent=2))
-        else:
-            if not tokens:
-                print("No tokens found.")
-                return
-            for t in tokens:
-                s = usage_map.get(t.id)
-                used = s.total_tokens if s else 0
-                model_str = f"model={t.model}" if t.model else "model=-"
-                if t.token_limit > 0:
-                    pct_free = round((t.token_limit - used) / t.token_limit * 100, 1)
-                    usage_str = f"used={used}/{t.token_limit} ({pct_free}% free)"
-                else:
-                    usage_str = f"used={used}/unlimited"
-                primary_str = "  PRIMARY" if t.is_primary else ""
-                print(f"  [{t.id}] {t.agent_type.value:8} {t.label:20} {model_str:30} {usage_str}{primary_str}")
+            return
+
+        if not tokens:
+            print("No tokens found.")
+            return
+
+        for t in tokens:
+            s = usage_map.get(t.id)
+            used = s.total_tokens if s else 0
+            model_str = f"model={t.model}" if t.model else "model=-"
+            if t.token_limit > 0:
+                pct_free = round((t.token_limit - used) / t.token_limit * 100, 1)
+                usage_str = f"used={used}/{t.token_limit} ({pct_free}% free)"
+            else:
+                usage_str = f"used={used}/unlimited"
+            status_str = f"status={t.status.value}"
+            used_at_str = f"last_used={_humanize_delta(t.used_at, now)}"
+            expires_str = f"expires={_format_expiry(t.expires_at, now)}"
+            line = (
+                f"  [{t.id}] {t.agent_type.value:8} {t.label:20} {model_str:30} "
+                f"{usage_str}  {status_str}  {used_at_str}  {expires_str}"
+            )
+            print(line)
+            if t.status.value == "error" and t.error_msg:
+                snippet = t.error_msg[:180]
+                if len(t.error_msg) > 180:
+                    snippet += "…"
+                print(f"      ! {snippet}")
 
 
 class TokenDeregisterCommand:
@@ -305,43 +360,71 @@ class TokenDeregisterCommand:
             conn.close()
 
 
-class TokenSetCommand:
+class TokenMarkErrorCommand:
     @property
     def name(self) -> str:
-        return "token:set"
+        return "token:mark-error"
 
     @property
     def shortcut(self) -> str:
-        return "to:se"
+        return "to:me"
 
     @property
     def help(self) -> str:
-        return "Set a token as primary for its agent_type (sticky, not overridden by rotation)"
+        return "Manually flag a token as unhealthy (status=error) so the pool stops using it"
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("agent_type", choices=["claude", "codex"])
         parser.add_argument("token_id", type=int)
+        parser.add_argument("message", help="Human-readable reason, stored in error_msg")
 
     def execute(self, args: argparse.Namespace) -> None:
-        from ..agent_manager import AgentProvider
-        from ..agent_manager.token_store import get_token, set_primary_token
+        from ..agent_manager import mark_token_error
 
         db_config, _, _ = _load_framework_config()
         logger = get_logger("agent-manager")
-        agent_type = AgentProvider(args.agent_type)
-        token_id = args.token_id
-
         conn = get_connection_or_exit(db_config)
         try:
-            found = set_primary_token(conn, agent_type, token_id, logger)
-            if not found:
-                print(f"Token not found or disabled: id={token_id} agent_type={args.agent_type}", file=sys.stderr)
-                sys.exit(1)
-
-            token = get_token(conn, token_id)
+            found = mark_token_error(conn, args.token_id, args.message, logger=logger)
             conn.commit()
-            model_info = f" model={token.model}" if token and token.model else ""
-            print(f"Set primary token: [{token_id}] {args.agent_type}{model_info}")
+            if found:
+                print(f"Token [{args.token_id}] marked as error: {args.message}")
+            else:
+                print(f"Token not found: id={args.token_id}", file=sys.stderr)
+                sys.exit(1)
+        finally:
+            conn.close()
+
+
+class TokenResetCommand:
+    @property
+    def name(self) -> str:
+        return "token:reset"
+
+    @property
+    def shortcut(self) -> str:
+        return "to:rs"
+
+    @property
+    def help(self) -> str:
+        return "Clear error status on a token so the pool starts using it again"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("token_id", type=int)
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..agent_manager import clear_token_error
+
+        db_config, _, _ = _load_framework_config()
+        logger = get_logger("agent-manager")
+        conn = get_connection_or_exit(db_config)
+        try:
+            found = clear_token_error(conn, args.token_id, logger=logger)
+            conn.commit()
+            if found:
+                print(f"Token [{args.token_id}] status cleared (ok)")
+            else:
+                print(f"Token not found: id={args.token_id}", file=sys.stderr)
+                sys.exit(1)
         finally:
             conn.close()
 

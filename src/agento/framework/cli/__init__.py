@@ -119,15 +119,15 @@ def _register_framework_commands() -> None:
         PauseCommand,
         ReplayCommand,
         ResumeCommand,
-        RotateCommand,
         SetupUpgradeCommand,
     )
     from .token import (
         TokenDeregisterCommand,
         TokenListCommand,
+        TokenMarkErrorCommand,
         TokenRefreshCommand,
         TokenRegisterCommand,
-        TokenSetCommand,
+        TokenResetCommand,
         TokenUsageCommand,
     )
     from .upgrade import UpgradeCommand
@@ -138,9 +138,10 @@ def _register_framework_commands() -> None:
         DoctorCommand, InstallCommand, UpgradeCommand,
         MakeModuleCommand, ModuleEnableCommand, ModuleDisableCommand, ModuleListCommand, ModuleValidateCommand,
         ConfigSetCommand, ConfigGetCommand, ConfigListCommand, ConfigRemoveCommand, ConfigSchemaCommand, ConfigResolveCommand,
-        ConsumerCommand, SetupUpgradeCommand, ReplayCommand, RotateCommand, PauseCommand, ResumeCommand, E2eCommand,
+        ConsumerCommand, SetupUpgradeCommand, ReplayCommand, PauseCommand, ResumeCommand, E2eCommand,
         RunCommand,
-        TokenRegisterCommand, TokenRefreshCommand, TokenListCommand, TokenDeregisterCommand, TokenSetCommand, TokenUsageCommand,
+        TokenRegisterCommand, TokenRefreshCommand, TokenListCommand, TokenDeregisterCommand,
+        TokenMarkErrorCommand, TokenResetCommand, TokenUsageCommand,
     ]:
         register_command(cmd_cls())
 

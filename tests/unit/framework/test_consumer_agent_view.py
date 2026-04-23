@@ -177,7 +177,6 @@ class TestRunJobWithAgentView:
         MockRunner.assert_called_once()
         assert MockRunner.call_args.kwargs["working_dir"] == "/workspace/acme/developer/runs/42"
 
-    @patch("agento.framework.consumer.get_primary_token")
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
@@ -185,14 +184,13 @@ class TestRunJobWithAgentView:
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_no_agent_view_skips_populate(
         self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
-        mock_primary, sample_db_config, sample_consumer_config,
+        sample_db_config, sample_consumer_config,
     ):
-        """Job with agent_view_id=None uses global config, no artifacts_dir."""
-        mock_resolve.return_value = AgentViewRuntime()  # defaults: no agent_view
+        """Job with agent_view_id=None still needs an explicit provider; workspace/agent_view are None so artifacts_dir is skipped."""
+        runtime = AgentViewRuntime()
+        runtime.provider = "claude"
+        mock_resolve.return_value = runtime
         mock_conn.return_value = MagicMock()
-        primary = MagicMock()
-        primary.agent_type = AgentProvider.CLAUDE
-        mock_primary.return_value = primary
 
         mock_result = _make_claude_result()
         mock_workflow = MagicMock()
@@ -274,45 +272,17 @@ class TestRunJobProviderFallback:
         assert MockRunner.call_args[0][0] == AgentProvider.CODEX
         assert MockRunner.call_args.kwargs["model_override"] == "o3"
 
-    @patch("agento.framework.consumer.get_primary_token")
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
-    def test_falls_back_to_primary_token_when_no_provider(
+    def test_raises_when_provider_unset(
         self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
-        mock_primary, sample_db_config, sample_consumer_config,
+        sample_db_config, sample_consumer_config,
     ):
-        mock_resolve.return_value = AgentViewRuntime()  # no provider
-        mock_conn.return_value = MagicMock()
-
-        primary = MagicMock()
-        primary.agent_type = AgentProvider.CLAUDE
-        mock_primary.return_value = primary
-
-        mock_result = _make_claude_result()
-        mock_workflow = MagicMock()
-        mock_workflow.execute_job.return_value = mock_result
-        mock_get_wf.return_value.return_value = mock_workflow
-        mock_get_ch.return_value = MagicMock(name="jira")
-
-        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
-        consumer._run_job(_make_job())
-
-        MockRunner.assert_called_once()
-        assert MockRunner.call_args[0][0] == AgentProvider.CLAUDE
-
-    @patch("agento.framework.consumer.get_primary_token", return_value=None)
-    @patch("agento.framework.consumer.get_workflow_class")
-    @patch("agento.framework.consumer.get_channel")
-    @patch("agento.framework.consumer.create_runner")
-    @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.resolve_agent_view_runtime")
-    def test_raises_when_no_provider_and_no_primary_token(
-        self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
-        mock_primary, sample_db_config, sample_consumer_config,
-    ):
+        """No agent_view/provider configured → raise with actionable message. The
+        sticky primary-token fallback is gone; tokens form an LRU pool per provider."""
         mock_resolve.return_value = AgentViewRuntime()  # no provider
         mock_conn.return_value = MagicMock()
 
@@ -372,7 +342,6 @@ class TestPostRunCredentialCapture:
         call_args = mock_writer.capture_refreshed_credentials.call_args
         assert Path(call_args[0][0]) == Path("/workspace/acme/developer/current")
 
-    @patch("agento.framework.consumer.get_primary_token")
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
@@ -380,13 +349,12 @@ class TestPostRunCredentialCapture:
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_skips_capture_when_no_artifacts_dir(
         self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
-        mock_primary, sample_db_config, sample_consumer_config,
+        sample_db_config, sample_consumer_config,
     ):
-        mock_resolve.return_value = AgentViewRuntime()
+        runtime = AgentViewRuntime()
+        runtime.provider = "claude"
+        mock_resolve.return_value = runtime
         mock_conn.return_value = MagicMock()
-        primary = MagicMock()
-        primary.agent_type = AgentProvider.CLAUDE
-        mock_primary.return_value = primary
 
         mock_writer = MagicMock()
 

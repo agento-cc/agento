@@ -1,8 +1,10 @@
 """End-to-end tests using real LLM calls and the prod database.
 
 Exercises the full consumer pipeline: dequeue → channel → workflow → runner → finalize.
-The primary token (is_primary=1) determines which agent runs.
-Requires active tokens and DISABLE_LLM=0.
+The selected token drives the run; for deterministic targeting the scenario
+temporarily disables every other token of the same provider so the LRU pool
+has only one candidate, then restores their enabled state at teardown.
+Requires healthy tokens and DISABLE_LLM=0.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ import sys
 import time
 
 from .agent_manager.models import Token
-from .agent_manager.token_store import get_primary_token, get_token, set_primary_token
+from .agent_manager.token_store import get_token, list_tokens, select_token
 from .channels.registry import register_channel
 from .channels.test import TestChannel
 from .consumer import Consumer
@@ -62,6 +64,44 @@ def _delete_job(db_config: DatabaseConfig, job_id: int) -> None:
         conn.close()
 
 
+def _disable_other_tokens(db_config: DatabaseConfig, token: Token) -> list[int]:
+    """Disable every other enabled token of the same agent_type; return their ids."""
+    conn = get_connection(db_config)
+    try:
+        peers = [
+            t.id for t in list_tokens(conn, agent_type=token.agent_type)
+            if t.id != token.id
+        ]
+        if peers:
+            placeholders = ",".join(["%s"] * len(peers))
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE oauth_token SET enabled = FALSE WHERE id IN ({placeholders})",
+                    peers,
+                )
+            conn.commit()
+        return peers
+    finally:
+        conn.close()
+
+
+def _restore_tokens(db_config: DatabaseConfig, token_ids: list[int]) -> None:
+    """Re-enable tokens previously disabled by ``_disable_other_tokens``."""
+    if not token_ids:
+        return
+    conn = get_connection(db_config)
+    try:
+        placeholders = ",".join(["%s"] * len(token_ids))
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE oauth_token SET enabled = TRUE WHERE id IN ({placeholders})",
+                token_ids,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _run_checks(row: dict) -> list[tuple[str, bool, str]]:
     """Return list of (label, passed, detail) for a finished job row."""
     return [
@@ -92,24 +132,13 @@ def run_scenario(
     print(f"E2E: {description}")
     print(f"{'='*60}")
 
-    # 1. Register blank channel
     register_channel(TestChannel())
-
-    # 2. Temporarily set this token as primary
-    conn = get_connection(db_config)
-    try:
-        old_primary = get_primary_token(conn)
-        set_primary_token(conn, token.agent_type, token.id, logger)
-        conn.commit()
-    finally:
-        conn.close()
+    disabled_peers = _disable_other_tokens(db_config, token)
 
     try:
-        # 3. Insert test job
         job_id = _insert_test_job(db_config, ref_id)
         print(f"  Inserted job id={job_id}, reference_id={ref_id}")
 
-        # 4. Dequeue + execute via consumer (same path as production)
         consumer = Consumer(db_config, consumer_config, logger, model_override=model)
         job = consumer._try_dequeue()
         if job is None:
@@ -123,7 +152,6 @@ def run_scenario(
 
         consumer._execute_job(job)
 
-        # 5. Verify DB state
         row = _fetch_job(db_config, job_id)
         if row is None:
             print("  FAIL: job row not found after execution")
@@ -141,7 +169,6 @@ def run_scenario(
         output_preview = (row["output"] or "")[:120]
         print(f"  Output: {output_preview}")
 
-        # 6. Cleanup
         if keep:
             print(f"  Keeping job {job_id} (--keep)")
         else:
@@ -150,14 +177,7 @@ def run_scenario(
 
         return all_ok
     finally:
-        # Restore previous primary token
-        if old_primary:
-            conn = get_connection(db_config)
-            try:
-                set_primary_token(conn, old_primary.agent_type, old_primary.id, logger)
-                conn.commit()
-            finally:
-                conn.close()
+        _restore_tokens(db_config, disabled_peers)
 
 
 def cmd_e2e(args) -> None:
@@ -175,7 +195,6 @@ def cmd_e2e(args) -> None:
     logger = logging.getLogger("e2e")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    # Resolve token: explicit --oauth_token or DB primary
     conn = get_connection(db_config)
     try:
         if args.oauth_token:
@@ -184,9 +203,19 @@ def cmd_e2e(args) -> None:
                 print(f"Token not found: id={args.oauth_token}", file=sys.stderr)
                 sys.exit(1)
         else:
-            token = get_primary_token(conn)
+            from .agent_manager.models import AgentProvider
+            token = None
+            for provider in AgentProvider:
+                candidate = select_token(conn, provider)
+                if candidate is not None:
+                    token = candidate
+                    break
             if token is None:
-                print("No primary token set. Run: agent token set <claude|codex> <id>", file=sys.stderr)
+                print(
+                    "No healthy tokens across any provider. "
+                    "Register one: bin/agento token:register <claude|codex> <label>",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
     finally:
         conn.close()
@@ -198,7 +227,6 @@ def cmd_e2e(args) -> None:
         logger.exception(f"E2E failed for token {token.id}")
         ok = False
 
-    # Summary
     print(f"\n{'='*60}")
     print("SUMMARY")
     print(f"{'='*60}")

@@ -130,7 +130,10 @@ def get_dashboard_data(conn) -> DashboardData:
                 "agent_type": t.agent_type.value,
                 "label": t.label,
                 "model": t.model,
-                "is_primary": t.is_primary,
+                "status": t.status.value,
+                "error_msg": t.error_msg,
+                "used_at": t.used_at,
+                "expires_at": t.expires_at,
                 "enabled": t.enabled,
             }
             for t in tokens
@@ -210,7 +213,10 @@ def get_tokens_with_usage(conn, *, window_hours: int = 24) -> list[dict]:
                 "agent_type": t.agent_type.value,
                 "label": t.label,
                 "model": t.model,
-                "is_primary": t.is_primary,
+                "status": t.status.value,
+                "error_msg": t.error_msg,
+                "used_at": t.used_at,
+                "expires_at": t.expires_at,
                 "token_limit": t.token_limit,
                 "enabled": t.enabled,
                 "tokens_used": usage.total_tokens,
@@ -511,13 +517,20 @@ def delete_config_override(conn, path: str, scope: str = Scope.DEFAULT, scope_id
     return result
 
 
-def do_set_primary_token(conn, agent_type: str, token_id: int) -> bool:
-    from ..agent_manager.models import AgentProvider
-    from ..agent_manager.token_store import set_primary_token
+def do_reset_token_error(conn, token_id: int) -> bool:
+    from ..agent_manager.token_store import clear_token_error
 
     _ensure_conn(conn)
-    provider = AgentProvider(agent_type)
-    result = set_primary_token(conn, provider, token_id)
+    result = clear_token_error(conn, token_id)
+    conn.commit()
+    return result
+
+
+def do_mark_token_error(conn, token_id: int, message: str) -> bool:
+    from ..agent_manager.token_store import mark_token_error
+
+    _ensure_conn(conn)
+    result = mark_token_error(conn, token_id, message)
     conn.commit()
     return result
 

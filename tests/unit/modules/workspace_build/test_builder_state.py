@@ -217,10 +217,12 @@ class TestGcOldBuilds:
 
 
 def _token(agent_type, credentials):
+    from agento.framework.agent_manager.models import TokenStatus
     now = datetime.now(UTC)
     return Token(
         id=1, agent_type=agent_type, label="t", credentials=credentials,
-        model=None, is_primary=True, token_limit=0, enabled=True,
+        model=None, token_limit=0, enabled=True,
+        status=TokenStatus.OK, error_msg=None, expires_at=None, used_at=None,
         created_at=now, updated_at=now,
     )
 

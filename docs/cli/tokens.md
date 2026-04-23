@@ -2,10 +2,23 @@
 
 Agento uses OAuth tokens for Claude Code and OpenAI Codex. **Token contents are stored encrypted in the database** (`oauth_token.credentials`, AES-256-CBC via the framework `Encryptor`). The file passed to `token:register` is only read once — the server no longer needs filesystem access to credentials at runtime.
 
+## Token Pool Model
+
+All tokens registered for a given provider form a **pool**. When the consumer needs a token for a job it calls `select_token(provider)` which picks the **least-recently-used healthy** token (`status='ok'`, not expired) atomically and stamps its `used_at`. Multiple licenses for the same provider therefore share traffic fairly without any "primary" flag.
+
+Health state lives on each row:
+
+| Column       | Meaning                                                                 |
+|--------------|-------------------------------------------------------------------------|
+| `status`     | `ok` or `error`. Flipped to `error` when the runner sees a 401/expired. |
+| `error_msg`  | Operator-visible reason for the latest failure.                         |
+| `expires_at` | Credential expiry (from the stored payload). Expired rows are skipped.  |
+| `used_at`    | Last time a worker claimed the row — drives LRU ordering.               |
+
 ## Token Lifecycle
 
 ```
-register → set (primary) → [use] → refresh (if expired) → deregister
+register → [use via LRU] → (auto-flagged error on 401) → refresh | reset → deregister
 ```
 
 ## Register a Token
@@ -23,16 +36,7 @@ Options:
 - `--token-limit N` — usage limit (0 = unlimited)
 - `--model MODEL` — model override (e.g. `claude-sonnet-4-20250514`)
 
-## Set Primary Token
-
-After registering, mark which token the consumer uses for a given agent type:
-
-```bash
-bin/agento token:set claude 1    # Set token ID 1 as primary for Claude
-bin/agento token:set codex 2     # Set token ID 2 as primary for Codex
-```
-
-Only one token per agent_type can be primary at a time. Rotation respects the sticky primary flag.
+`register` also resets `status='ok'` and clears any prior `error_msg`, so re-running it on an existing label is a valid recovery path.
 
 ## List Tokens
 
@@ -40,9 +44,10 @@ Only one token per agent_type can be primary at a time. Rotation respects the st
 bin/agento token:list
 bin/agento token:list --agent-type claude
 bin/agento token:list --json
+bin/agento token:list --all    # include disabled tokens
 ```
 
-The list output does **not** include `credentials_path` anymore — the credentials live in the DB, encrypted, and are never surfaced by the CLI.
+Each row shows `status`, `last_used`, `expires`, and (for errored tokens) the truncated `error_msg`. The `credentials` blob is never surfaced.
 
 ## Refresh an Expired Token
 
@@ -50,7 +55,18 @@ The list output does **not** include `credentials_path` anymore — the credenti
 bin/agento token:refresh 1    # Re-authenticate token ID 1 (interactive)
 ```
 
-Behaviour: launches OAuth in an isolated temp HOME, then overwrites the stored `credentials` column with the new encrypted blob. The `id` and `label` are preserved, so any downstream references stay valid.
+Refresh overwrites the stored `credentials`, re-parses `expires_at` from the new payload, and resets `status='ok'` / `error_msg=NULL`. The `id` and `label` are preserved so downstream references stay valid.
+
+## Manual Error Control
+
+Useful when you know a license has been revoked or want to take one offline for a bit:
+
+```bash
+bin/agento token:mark-error 1 "Revoked by admin 2026-04-23"
+bin/agento token:reset 1    # clear status=error, status back to 'ok'
+```
+
+`mark-error` stops the pool from handing out that token; `reset` puts it back in rotation without a full OAuth round-trip.
 
 ## Usage Stats
 
@@ -58,6 +74,22 @@ Behaviour: launches OAuth in an isolated temp HOME, then overwrites the stored `
 bin/agento token:usage                  # Show usage stats across all providers
 bin/agento token:usage --agent-type claude --window 72
 ```
+
+## Deregister
+
+```bash
+bin/agento token:deregister 1   # soft-disable (enabled=FALSE); data retained
+```
+
+## Binding a Provider to an `agent_view`
+
+The consumer requires `agent_view/provider` to be set — there is no sticky-primary fallback.
+
+```bash
+bin/agento config:set agent_view/provider claude --scope=agent_view --scope-id=1
+```
+
+Without this, jobs for that agent_view fail fast with `No agent_view/provider configured`.
 
 ## OAuth Flow for Headless Servers
 
@@ -75,13 +107,12 @@ bin/agento token:usage --agent-type claude --window 72
 3. Register on server:
    ```bash
    bin/agento token:register claude my-token /tmp/claude_oauth_1.json
-   bin/agento token:set claude 1
    rm /tmp/claude_oauth_1.json   # safe — credentials are already in DB
    ```
 
 ## Requirements
 
 - `AGENTO_ENCRYPTION_KEY` must be set (same key used for `core_config_data` obscure fields). See [encryption.md](../config/encryption.md).
-- The `oauth_token` table schema is applied via framework migration `019_oauth_token_inline_credentials.sql`. `agento setup:upgrade` applies it automatically.
+- The `oauth_token` schema is maintained by `019_oauth_token_inline_credentials.sql` + `020_oauth_token_pool.sql`. `agento setup:upgrade` applies both.
 
 Source: [src/agento/framework/cli/token.py](../../src/agento/framework/cli/token.py)

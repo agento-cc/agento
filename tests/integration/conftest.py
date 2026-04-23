@@ -217,7 +217,9 @@ def _truncate_tables():
 # ---------------------------------------------------------------------------
 
 def insert_primary_token(agent_type: str = "claude", model: str | None = None) -> int:
-    """Insert an enabled, primary oauth_token and return its id."""
+    """Insert an enabled oauth_token for tests. Returns its id. The name is kept
+    for backward-compat with older tests; there is no primary concept anymore —
+    selection is LRU over healthy tokens within the provider pool."""
     from agento.framework.agent_manager.models import encrypt_credentials
 
     encrypted = encrypt_credentials({"subscription_key": f"sk-test-{agent_type}"})
@@ -225,14 +227,10 @@ def insert_primary_token(agent_type: str = "claude", model: str | None = None) -
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE oauth_token SET is_primary = FALSE WHERE agent_type = %s AND is_primary = TRUE",
-                (agent_type,),
-            )
-            cur.execute(
                 """
                 INSERT INTO oauth_token
-                    (agent_type, label, credentials, is_primary, enabled, model)
-                VALUES (%s, %s, %s, TRUE, TRUE, %s)
+                    (agent_type, label, credentials, enabled, status, model)
+                VALUES (%s, %s, %s, TRUE, 'ok', %s)
                 """,
                 (agent_type, f"test-{agent_type}", encrypted, model),
             )

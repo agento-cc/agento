@@ -15,17 +15,12 @@ from agento.framework.runner import RunResult
 from agento.modules.claude.src.output_parser import ClaudeResult
 
 
-def _mock_primary_token():
-    """Create a mock primary token for consumer._run_job fallback."""
-    token = MagicMock()
-    token.agent_type = AgentProvider.CLAUDE
-    return token
-
-
 def _mock_resolved_token():
     """Create a mock token returned by TokenResolver.resolve."""
     token = MagicMock()
+    token.id = 1
     token.credentials = {"subscription_key": "sk-test"}
+    token.agent_type = AgentProvider.CLAUDE
     return token
 
 
@@ -322,8 +317,10 @@ class TestRunJob:
     @pytest.fixture(autouse=True)
     def _mock_runtime(self):
         from agento.framework.agent_view_runtime import AgentViewRuntime
+        runtime = AgentViewRuntime()
+        runtime.provider = "claude"
         with patch("agento.framework.consumer.resolve_agent_view_runtime",
-                   return_value=AgentViewRuntime()):
+                   return_value=runtime):
             yield
 
     @pytest.fixture(autouse=True)
@@ -335,12 +332,11 @@ class TestRunJob:
             self._token_resolver_mock = mock_resolver
             yield
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_cron(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary, sample_config, sample_db_config, sample_consumer_config):
+    def test_run_job_cron(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
         mock_conn.return_value = MagicMock()
         mock_result = _make_claude_result()
         mock_workflow = MagicMock()
@@ -371,12 +367,11 @@ class TestRunJob:
         assert isinstance(result, _JobResult)
         assert "subtype=" in result.summary
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_cron_no_reference_id_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary, sample_config, sample_db_config, sample_consumer_config):
+    def test_run_job_cron_no_reference_id_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
         mock_conn.return_value = MagicMock()
         mock_get_ch.return_value = MagicMock(name="jira")
         mock_workflow = MagicMock()
@@ -389,12 +384,11 @@ class TestRunJob:
         with pytest.raises(ValueError, match="no reference_id"):
             consumer._run_job(job)
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_todo_specific(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary, sample_config, sample_db_config, sample_consumer_config):
+    def test_run_job_todo_specific(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
         mock_conn.return_value = MagicMock()
         mock_result = _make_claude_result()
         mock_workflow = MagicMock()
@@ -415,13 +409,12 @@ class TestRunJob:
         assert isinstance(result, _JobResult)
         assert "subtype=" in result.summary
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     def test_run_job_todo_no_ref_delegates_to_workflow(
-        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary,
+        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_config, sample_db_config, sample_consumer_config,
     ):
         """Consumer passes through to workflow -- no TODO-specific branching."""
@@ -444,12 +437,11 @@ class TestRunJob:
         assert isinstance(result, _JobResult)
         assert result.summary == "No TODO tasks found"
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_followup(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary, sample_config, sample_db_config, sample_consumer_config):
+    def test_run_job_followup(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
         mock_conn.return_value = MagicMock()
         mock_result = _make_claude_result()
         mock_workflow = MagicMock()
@@ -475,12 +467,11 @@ class TestRunJob:
         assert isinstance(result, _JobResult)
         assert "subtype=" in result.summary
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_followup_no_reference_id_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary, sample_config, sample_db_config, sample_consumer_config):
+    def test_run_job_followup_no_reference_id_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
         mock_conn.return_value = MagicMock()
         mock_get_ch.return_value = MagicMock(name="jira")
         mock_workflow = MagicMock()
@@ -497,12 +488,11 @@ class TestRunJob:
         with pytest.raises(ValueError, match="no reference_id"):
             consumer._run_job(job)
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_followup_no_context_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary, sample_config, sample_db_config, sample_consumer_config):
+    def test_run_job_followup_no_context_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
         mock_conn.return_value = MagicMock()
         mock_get_ch.return_value = MagicMock(name="jira")
         mock_workflow = MagicMock()
@@ -523,27 +513,32 @@ class TestRunJob:
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    def test_run_job_no_provider_no_primary_raises(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
-        """When no agent_view/provider in config and no primary token, consumer raises."""
-        mock_conn.return_value = MagicMock()
+    def test_run_job_raises_when_provider_unset(self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, sample_config, sample_db_config, sample_consumer_config):
+        """When no agent_view/provider is configured, the consumer raises with an actionable message."""
+        from agento.framework.agent_view_runtime import AgentViewRuntime
 
-        with patch("agento.framework.consumer.get_primary_token", return_value=None):
+        mock_conn.return_value = MagicMock()
+        runtime = AgentViewRuntime()
+        runtime.provider = None
+
+        with patch(
+            "agento.framework.consumer.resolve_agent_view_runtime",
+            return_value=runtime,
+        ):
             consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
             job = _make_job(type=AgentType.CRON, reference_id="AI-1")
 
             with pytest.raises(RuntimeError, match="No agent_view/provider configured"):
                 consumer._run_job(job)
 
-        # TokenResolver.resolve should never be reached
         self._token_resolver_mock.resolve.assert_not_called()
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     def test_run_job_resumes_when_session_id_present(
-        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary,
+        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_config, sample_db_config, sample_consumer_config,
     ):
         """When attempt > 1 and session_id is set, consumer calls runner.resume()."""
@@ -571,13 +566,12 @@ class TestRunJob:
         assert "resumed" in result.summary
         assert result.session_id == "sess-resume"
 
-    @patch("agento.framework.consumer.get_primary_token", return_value=_mock_primary_token())
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     def test_run_job_no_resume_on_first_attempt(
-        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf, mock_primary,
+        self, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
         sample_config, sample_db_config, sample_consumer_config,
     ):
         """First attempt (attempt=1) never resumes, even if session_id is somehow set."""

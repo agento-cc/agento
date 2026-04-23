@@ -4,42 +4,41 @@ import pymysql
 
 from .config import AgentManagerConfig
 from .models import AgentProvider, Token
-from .rotator import select_best_token
-from .token_store import list_tokens
-from .usage_store import get_usage_summaries
+from .token_store import count_tokens_for_provider, select_token
 
 
 class TokenResolver:
     """Resolve which oauth_token to use for a given provider.
 
-    Single responsibility: given an AgentProvider, return the Token
-    to execute with.  Encapsulates selection logic — future extension
-    point for pools, capacity routing, etc.
+    Selection is LRU over the pool of healthy tokens (``status='ok'`` and
+    unexpired). Sticky-primary semantics are gone — running jobs fan out over
+    every enabled license so capacity is shared fairly.
     """
 
     def __init__(self, config: AgentManagerConfig | None = None) -> None:
         self._config = config or AgentManagerConfig()
 
     def resolve(self, conn: pymysql.Connection, agent_type: AgentProvider) -> Token:
-        """Return the best token for the given provider.
+        """Return the least-recently-used healthy token for ``agent_type``.
 
-        Strategy:
-        1. List enabled tokens for the provider.
-        2. Use select_best_token() rotation logic
-           (is_primary sticky, then capacity-based fallback).
-        3. Raise if no tokens available.
+        Raises ``RuntimeError`` with an actionable message when no healthy
+        token is available (distinguishes "none registered" vs
+        "all errored/expired" so the operator knows whether to ``token:register``,
+        ``token:refresh``, or ``token:reset``).
         """
-        tokens = list_tokens(conn, agent_type=agent_type, enabled_only=True)
-        if not tokens:
+        token = select_token(conn, agent_type)
+        if token is not None:
+            return token
+
+        total, healthy = count_tokens_for_provider(conn, agent_type)
+        if total == 0:
             raise RuntimeError(
                 f"No enabled tokens for provider={agent_type.value}. "
-                f"Register tokens first: bin/agento token:register "
-                f"{agent_type.value} <label> <path>"
+                f"Register one: bin/agento token:register {agent_type.value} <label>"
             )
-        summaries = get_usage_summaries(
-            conn, agent_type.value, self._config.usage_window_hours,
+        raise RuntimeError(
+            f"All {total} enabled tokens for provider={agent_type.value} are "
+            f"unhealthy (errored or expired); {healthy} healthy. "
+            f"Run 'bin/agento token:list --all' to inspect, then "
+            f"'bin/agento token:refresh <id>' or 'bin/agento token:reset <id>'."
         )
-        usage_map = {s.token_id: s for s in summaries}
-        best = select_best_token(tokens, usage_map)
-        # select_best_token returns None only when tokens is empty, already guarded
-        return best  # type: ignore[return-value]

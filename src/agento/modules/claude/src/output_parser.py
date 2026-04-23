@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
+from agento.framework.agent_manager.errors import AuthenticationError
 from agento.framework.runner import RunResult
 
 AUTH_ERROR_PHRASES = (
@@ -13,12 +14,10 @@ AUTH_ERROR_PHRASES = (
 )
 
 
-class AuthenticationError(RuntimeError):
-    """Raised when Claude CLI fails due to expired or missing OAuth credentials."""
-
-
 # Backward-compatible alias — all existing imports of ClaudeResult keep working.
 ClaudeResult = RunResult
+
+__all__ = ["AUTH_ERROR_PHRASES", "AuthenticationError", "ClaudeResult", "parse_claude_output"]
 
 
 def parse_claude_output(raw: str, logger: logging.Logger | None = None) -> RunResult:

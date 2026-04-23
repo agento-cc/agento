@@ -9,9 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from .agent_manager.errors import AuthenticationError
 from .agent_manager.models import AgentProvider
 from .agent_manager.token_resolver import TokenResolver
-from .agent_manager.token_store import get_primary_token
+from .agent_manager.token_store import mark_token_error
 from .agent_view_runtime import resolve_agent_view_runtime
 from .artifacts_dir import (
     build_artifacts_dir,
@@ -35,6 +36,7 @@ from .events import (
     JobFailedEvent,
     JobRetryingEvent,
     JobSucceededEvent,
+    TokenAuthFailedEvent,
     WorkerStartedEvent,
     WorkerStoppedEvent,
 )
@@ -371,22 +373,19 @@ class Consumer:
         try:
             runtime = resolve_agent_view_runtime(conn, job.agent_view_id)
 
-            # Determine provider and model: agent_view config > CLI override > primary token
-            if runtime.provider is not None:
-                agent_type = AgentProvider(runtime.provider)
-                model_override = runtime.model or self.model_override
-            else:
-                # Fallback: infer provider from primary token (backward compat)
-                primary = get_primary_token(conn)
-                if primary is None:
-                    raise RuntimeError(
-                        "No agent_view/provider configured and no primary token set. "
-                        "Run: bin/agento config:set agent_view/provider claude"
-                    )
-                agent_type = primary.agent_type
-                model_override = self.model_override
+            # agent_view/provider must be explicitly set — the sticky primary-token
+            # fallback is gone (tokens are now an LRU pool per provider, not a single
+            # globally-preferred license).
+            if runtime.provider is None:
+                raise RuntimeError(
+                    "No agent_view/provider configured. Set it via: "
+                    "bin/agento config:set agent_view/provider <claude|codex> "
+                    "--scope=agent_view --scope-id=<id>"
+                )
+            agent_type = AgentProvider(runtime.provider)
+            model_override = runtime.model or self.model_override
 
-            # Resolve token via TokenResolver
+            # Resolve token via TokenResolver (LRU over healthy pool)
             token = self._token_resolver.resolve(conn, agent_type)
 
             # Resolve shared toolbox base URL (needed below for writer injection).
@@ -495,6 +494,10 @@ class Consumer:
                 else f"subtype={result.subtype or '?'} {result.stats_line}"
             )
             return _JobResult.from_run_result(result, summary)
+        except AuthenticationError as exc:
+            success = False
+            self._handle_auth_failure(job, token, agent_type, exc)
+            raise
         except Exception:
             success = False
             raise
@@ -506,6 +509,45 @@ class Consumer:
                 model=model_override,
                 success=success,
             ))
+
+    def _handle_auth_failure(
+        self,
+        job: Job,
+        token,
+        agent_type: AgentProvider,
+        exc: AuthenticationError,
+    ) -> None:
+        """Mark the offending token as errored so the pool stops handing it out,
+        and dispatch ``token_auth_failed_after`` for observers. Best-effort —
+        DB issues here must not mask the original failure about to be re-raised."""
+        token_id = exc.token_id if exc.token_id is not None else token.id
+        try:
+            conn = get_connection(self._db_config)
+            try:
+                mark_token_error(conn, token_id, str(exc), logger=self.logger)
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            self.logger.exception(
+                "Failed to mark token as errored after auth failure",
+                extra={"job_id": job.id, "token_id": token_id},
+            )
+        try:
+            get_event_manager().dispatch(
+                "token_auth_failed_after",
+                TokenAuthFailedEvent(
+                    agent_type=agent_type.value,
+                    token_id=token_id,
+                    error_msg=str(exc),
+                    job_id=job.id,
+                ),
+            )
+        except Exception:
+            self.logger.exception(
+                "token_auth_failed_after observer failed",
+                extra={"job_id": job.id, "token_id": token_id},
+            )
 
     def _update_job_reference_id(self, job_id: int, reference_id: str) -> None:
         conn = get_connection(self._db_config)
