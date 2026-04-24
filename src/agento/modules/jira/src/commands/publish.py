@@ -126,14 +126,20 @@ class PublishCommand:
             priority = resolve_publish_priority(conn, av.id)
             logger.info("Publishing %s for agent_view %s (id=%d)", kind, av.code, av.id)
 
-            if kind == "jira-todo":
-                self._publish_todo_for_agent_view(args, db_config, jira_config, av.id, priority, logger)
-            elif kind == "jira-mention":
-                count = _publisher.publish_mentions(
-                    jira_config, logger, db_config=db_config,
-                    agent_view_id=av.id, priority=priority,
+            try:
+                if kind == "jira-todo":
+                    self._publish_todo_for_agent_view(args, db_config, jira_config, av.id, priority, logger)
+                elif kind == "jira-mention":
+                    count = _publisher.publish_mentions(
+                        jira_config, logger, db_config=db_config,
+                        agent_view_id=av.id, priority=priority,
+                    )
+                    logger.info("Published %d mention jobs for agent_view %s", count, av.code)
+            except Exception:
+                logger.exception(
+                    "Failed to publish %s for agent_view %s (id=%d), continuing",
+                    kind, av.code, av.id,
                 )
-                logger.info("Published %d mention jobs for agent_view %s", count, av.code)
 
     def _publish_todo_for_agent_view(self, args, db_config, jira_config, agent_view_id, priority, logger):
         """Publish todo for a specific agent_view."""
