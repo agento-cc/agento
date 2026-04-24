@@ -18,11 +18,40 @@ def publish(
     logger: logging.Logger | None = None,
     agent_view_id: int | None = None,
     priority: int = 50,
+    skip_if_active: bool = False,
 ) -> bool:
-    """Insert a job into the queue. Returns True if inserted, False if duplicate."""
+    """Insert a job into the queue. Returns True if inserted, False if duplicate.
+
+    When ``skip_if_active`` is True and ``reference_id`` is set, the publish is
+    skipped if a non-terminal job already exists for the same
+    (type, source, agent_view_id, reference_id). Use this when the idempotency
+    key rotates on every remote update (e.g. Jira `updated` timestamp), so a
+    source-side search-index lag can't produce a duplicate enqueue while the
+    original job is still TODO/RUNNING/PAUSED.
+    """
     conn = get_connection(config)
     try:
         with conn.cursor() as cur:
+            if skip_if_active and reference_id is not None:
+                cur.execute(
+                    """
+                    SELECT 1 FROM job
+                    WHERE type = %s AND source = %s
+                      AND agent_view_id <=> %s AND reference_id = %s
+                      AND status IN ('TODO','RUNNING','PAUSED')
+                    LIMIT 1
+                    """,
+                    (agent_type.value, source, agent_view_id, reference_id),
+                )
+                if cur.fetchone() is not None:
+                    if logger:
+                        logger.debug(
+                            f"Active job exists, skipping: "
+                            f"type={agent_type.value} source={source} "
+                            f"ref={reference_id} agent_view_id={agent_view_id}"
+                        )
+                    return False
+
             cur.execute(
                 """
                 INSERT IGNORE INTO job
