@@ -78,8 +78,6 @@ Configured via environment variables (set in `docker/.cron.env` or `docker-compo
 | `DISABLE_LLM` | 0 | Dry-run mode (skip actual LLM calls) |
 | `AGENTO_WORKSPACE_DIR` | /workspace | Base directory for per-run directories |
 
-`CONSUMER_CONCURRENCY` is accepted as a backward-compatible alias for `CONSUMER_MAX_WORKERS`.
-
 ## Events
 
 The consumer dispatches events at each state transition. Modules can observe these via `events.json` — see [Event-Observer System](events.md).

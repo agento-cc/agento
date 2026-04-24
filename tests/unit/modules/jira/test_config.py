@@ -100,7 +100,7 @@ class TestDatabaseConfig:
 
 class TestConsumerConfig:
     def test_from_env_with_values(self, monkeypatch):
-        monkeypatch.setenv("CONSUMER_CONCURRENCY", "4")
+        monkeypatch.setenv("CONSUMER_MAX_WORKERS", "4")
         monkeypatch.setenv("CONSUMER_POLL_INTERVAL", "10.0")
 
         config = ConsumerConfig.from_env()

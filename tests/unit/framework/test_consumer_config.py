@@ -21,7 +21,7 @@ class TestConsumerConfigDefaults:
 
 class TestConsumerConfigFromEnv:
     def test_from_env(self, monkeypatch):
-        monkeypatch.setenv("CONSUMER_CONCURRENCY", "2")
+        monkeypatch.setenv("CONSUMER_MAX_WORKERS", "2")
         monkeypatch.setenv("CONSUMER_POLL_INTERVAL", "10.0")
         monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "600")
 
@@ -55,19 +55,6 @@ class TestConsumerConfigFromEnv:
         assert cfg.concurrency == 1
         assert cfg.poll_interval == 5.0
         assert cfg.job_timeout_seconds == 1200
-
-    def test_max_workers_env_takes_precedence(self, monkeypatch):
-        monkeypatch.setenv("CONSUMER_MAX_WORKERS", "5")
-        monkeypatch.setenv("CONSUMER_CONCURRENCY", "3")
-        cfg = ConsumerConfig.from_env()
-        assert cfg.max_workers == 5
-        assert cfg.concurrency == 5  # alias
-
-    def test_concurrency_env_fallback(self, monkeypatch):
-        monkeypatch.delenv("CONSUMER_MAX_WORKERS", raising=False)
-        monkeypatch.setenv("CONSUMER_CONCURRENCY", "3")
-        cfg = ConsumerConfig.from_env()
-        assert cfg.max_workers == 3
 
     def test_backward_compat_alias(self):
         cfg = ConsumerConfig.from_env_and_json({"consumer": {"concurrency": 99}})
