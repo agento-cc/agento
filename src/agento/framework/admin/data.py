@@ -59,6 +59,7 @@ class ResolvedField:
     options: list[dict] | None = None  # For select/multiselect: [{"value": ..., "label": ...}]
     editable_at_scope: bool = True
     allowed_scopes: list[str] = field(default_factory=lambda: list(_ALL_SCOPES))
+    description: str = ""
 
 
 def _count_modules() -> int:
@@ -377,6 +378,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
     for field_name, field_schema in target.fields.items():
         field_type = field_schema.get("type", "string")
         label = field_schema.get("label", field_name)
+        description = field_schema.get("description", "")
         obscure = field_type == "obscure"
         db_path = _db_path(module, field_name)
         env_key = _env_key(module, field_name)
@@ -417,6 +419,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             options=options,
             editable_at_scope=editable,
             allowed_scopes=scopes_list,
+            description=description,
         ))
 
     # Tool fields
@@ -426,6 +429,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
         for field_name, field_schema in tool_fields.items():
             field_type = field_schema.get("type", "string")
             label = field_schema.get("label", field_name)
+            description = field_schema.get("description", "")
             obscure = field_type == "obscure"
             db_path = _db_path_tool(module, tool_name, field_name)
             env_key = _env_key_tool(module, tool_name, field_name)
@@ -465,6 +469,7 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
                 options=options,
                 editable_at_scope=editable,
                 allowed_scopes=scopes_list,
+                description=description,
             ))
 
     return results
