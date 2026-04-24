@@ -189,6 +189,95 @@ describe('browser tools', () => {
     });
   });
 
+  describe('no cross-session leak in register()', () => {
+    it('passthrough tool list logged is identical across N register() calls', async () => {
+      setupMocks();
+      const { register } = await import('../../modules/core/toolbox/browser.js');
+
+      const fakeUpstream = [
+        { name: 'browser_fake_one', description: 'a', inputSchema: { type: 'object', properties: {} } },
+        { name: 'browser_fake_two', description: 'b', inputSchema: { type: 'object', properties: {} } },
+      ];
+      const whitelist = fakeUpstream.map(t => t.name).join(',');
+
+      const logs = [];
+      function buildContext() {
+        return {
+          log: (mod, level, msg) => logs.push({ mod, level, msg }),
+          playwright: {
+            getClient: () => mockClient,
+            getTools: () => fakeUpstream,
+          },
+          moduleConfigs: {
+            core: {
+              playwright_tool_whitelist: whitelist,
+              allowed_domains: 'example.com',
+            },
+          },
+          isToolEnabled: () => true,
+          artifactsDir: '/workspace/tmp',
+        };
+      }
+
+      const N = 10;
+      for (let i = 0; i < N; i++) {
+        const server = { tool: vi.fn() };
+        register(server, buildContext());
+      }
+
+      const passthroughLogs = logs.filter(
+        l => l.mod === 'browser' && l.level === 'INIT' && l.msg.startsWith('Passthrough tools registered:'),
+      );
+      expect(passthroughLogs).toHaveLength(N);
+
+      const firstMsg = passthroughLogs[0].msg;
+      for (const log of passthroughLogs) {
+        expect(log.msg).toBe(firstMsg);
+      }
+    });
+
+    it('each register() call only registers its own tools on its own server', async () => {
+      setupMocks();
+      const { register } = await import('../../modules/core/toolbox/browser.js');
+
+      const fakeUpstream = [
+        { name: 'browser_fake_one', description: 'a', inputSchema: { type: 'object', properties: {} } },
+      ];
+      const whitelist = fakeUpstream.map(t => t.name).join(',');
+
+      function buildContext() {
+        return {
+          log: vi.fn(),
+          playwright: {
+            getClient: () => mockClient,
+            getTools: () => fakeUpstream,
+          },
+          moduleConfigs: {
+            core: {
+              playwright_tool_whitelist: whitelist,
+              allowed_domains: 'example.com',
+            },
+          },
+          isToolEnabled: () => true,
+          artifactsDir: '/workspace/tmp',
+        };
+      }
+
+      const servers = [];
+      for (let i = 0; i < 5; i++) {
+        const server = { tool: vi.fn() };
+        register(server, buildContext());
+        servers.push(server);
+      }
+
+      const firstCallCount = servers[0].tool.mock.calls.length;
+      expect(firstCallCount).toBeGreaterThan(0);
+      for (const server of servers) {
+        expect(server.tool.mock.calls.length).toBe(firstCallCount);
+      }
+    });
+  });
+
   describe('healthcheck', () => {
     it('returns ok when playwright client is connected', async () => {
       setupMocks();
