@@ -152,3 +152,13 @@ class TestPublishTodo:
         key_second = mock_publish.call_args[0][3]
 
         assert key_first != key_second
+
+    @patch("agento.modules.jira.src.channel.publish")
+    def test_publish_todo_requests_skip_if_active(self, mock_publish, sample_config):
+        """publish_todo must guard against in-flight duplicates (e.g. Jira
+        search-index lag re-publishing the same ticket while a job is running)."""
+        mock_publish.return_value = True
+
+        publish_todo(sample_config, "AI-64", updated="2026-02-24T16:45:00.000+0000")
+
+        assert mock_publish.call_args.kwargs.get("skip_if_active") is True

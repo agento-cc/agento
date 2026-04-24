@@ -203,6 +203,7 @@ class JiraPublisher:
             config, AgentType.TODO, self.name, idem_key,
             reference_id=reference_id, logger=logger,
             agent_view_id=agent_view_id, priority=priority,
+            skip_if_active=True,
         )
 
     def publish_mentions(
