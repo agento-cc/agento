@@ -25,7 +25,6 @@ class ConsumerConfig:
         """Build from env vars only."""
         max_workers = int(
             os.environ.get("CONSUMER_MAX_WORKERS")
-            or os.environ.get("CONSUMER_CONCURRENCY", "1")
         )
         return cls(
             max_workers=max_workers,
