@@ -289,6 +289,8 @@ class ConfigFieldEditorScreen(ModalScreen[bool]):
             yield Static(f"Type:   {field.field_type}")
             yield Static(f"Scope:  {self._scope}" + (f" (id={self._scope_id})" if self._scope_id else ""))
             yield Static(f"Current: {field.display_value} [{field.source}]")
+            if field.description:
+                yield Static(f"Info:   {field.description}")
             yield Static("")
 
             if field.field_type == "boolean":
