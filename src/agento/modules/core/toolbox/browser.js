@@ -163,8 +163,6 @@ const BROWSER_TOOLS = {
   },
 };
 
-const registeredPassthroughNames = [];
-
 // --- Registration ---
 
 export async function healthcheck({ playwright }) {
@@ -175,16 +173,6 @@ export async function healthcheck({ playwright }) {
   return [{ tool: 'browser', status: 'ok', ms: 0 }];
 }
 
-export function getRegisteredBrowserToolNames() {
-  // NOTE: requires register() to have been called first for _toolWhitelist to be set
-  return [
-    ...Object.keys(BROWSER_TOOLS).filter(name => _toolWhitelist.includes(name)),
-    ...registeredPassthroughNames,
-  ];
-}
-
-let _toolWhitelist = [];
-
 export function register(server, { log, playwright, moduleConfigs, isToolEnabled, artifactsDir }) {
   if (isToolEnabled && !isToolEnabled('browser')) return;
   const cfg = moduleConfigs?.core || {};
@@ -192,7 +180,7 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
   const allowedDomains = parseList(cfg.allowed_domains);
   const allowSubdomains = parseBool(cfg.allow_subdomains, true);
   const allowHttp = parseBool(cfg.allow_http, false);
-  _toolWhitelist = toolWhitelist;
+  const registeredPassthroughNames = [];
 
   function validateDomain(urlString) {
     let parsed;
