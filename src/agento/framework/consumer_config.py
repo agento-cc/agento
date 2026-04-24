@@ -23,11 +23,8 @@ class ConsumerConfig:
     @classmethod
     def from_env(cls) -> ConsumerConfig:
         """Build from env vars only."""
-        max_workers = int(
-            os.environ.get("CONSUMER_MAX_WORKERS")
-        )
         return cls(
-            max_workers=max_workers,
+            max_workers=int(os.environ.get("CONSUMER_MAX_WORKERS", "1")),
             poll_interval=float(os.environ.get("CONSUMER_POLL_INTERVAL", "5.0")),
             job_timeout_seconds=int(os.environ.get("JOB_TIMEOUT_SECONDS", "1200")),
             disable_llm=os.environ.get("DISABLE_LLM", "0").lower() in ("1", "true", "yes"),
