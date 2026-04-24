@@ -13,6 +13,14 @@ from agento.modules.jira.src.mention_detector import find_unanswered_mention
 from agento.modules.jira.src.task_list import TaskListBuilder
 from agento.modules.jira.src.toolbox_client import ToolboxClient
 
+_COMMENT_FORMAT = (
+    "Komentarz pisz w Jira wiki markup, nie jako surowy blok tekstu: "
+    "krótkie sekcje, czytelne nagłówki, płaskie listy, odstępy między akapitami. "
+    "Formatowania używaj tam, gdzie poprawia skanowalność: *pogrubienie*, "
+    "listy `*`, cytaty i dla poleceń, logów oraz snippetów. "
+    "Unikaj nadmiarowego escape'owania znaków nowej linii i backslashy."
+)
+
 
 class JiraPromptChannel:
     """Channel concern: prompt fragments for agent instructions."""
@@ -29,7 +37,8 @@ class JiraPromptChannel:
             ),
             respond=(
                 "Wynik dodaj jako komentarz (jira_add_comment), "
-                "chyba że treść mówi inaczej (np. email_send)."
+                "chyba że treść mówi inaczej (np. email_send). "
+                + _COMMENT_FORMAT
             ),
             transition_start='Użyj jira_transition_issue z status_name "In Progress".',
             transition_done='Zmień status na "Review" (jira_transition_issue z status_name "Review").',
@@ -37,6 +46,7 @@ class JiraPromptChannel:
             ask_and_handback=(
                 "Jeśli masz pytania lub wątpliwości:\n"
                 "  a) Napisz komentarz z pytaniami (jira_add_comment).\n"
+                f"     {_COMMENT_FORMAT}\n"
                 '  b) Przypisz zadanie na reportera (jira_assign_issue z assignee "reporter").\n'
                 "  c) ZAKOŃCZ — nie wykonuj dalszych kroków.\n"
                 "Jeśli wcześniej zadałeś pytania i nie ma odpowiedzi w komentarzach: ZAKOŃCZ."
@@ -53,7 +63,8 @@ class JiraPromptChannel:
             ),
             respond=(
                 "Wynik zwróć w komentarzu (jira_add_comment), "
-                "chyba że instrukcje mówią inaczej (np. email_send)."
+                "chyba że instrukcje mówią inaczej (np. email_send). "
+                + _COMMENT_FORMAT
             ),
             transition_done='Zmień status na "Review" (jira_transition_issue z status_name "Review").',
             assign_back='Przypisz na reportera (jira_assign_issue z assignee "reporter").',
