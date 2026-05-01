@@ -1,4 +1,6 @@
 # Agento project
+.venv/
+.agento/docker/
 logs/
 tokens/
 storage/

@@ -15,6 +15,11 @@ from pathlib import Path
 
 from ._output import cyan, log_error, log_info, log_warn
 from ._project import find_compose_file, update_dotenv_value
+from ._provisioning import (
+    materialize_docker_context,
+    regenerate_compose,
+    write_project_pyproject,
+)
 from ._templates import TemplateNotFoundError, extract_sql_files, get_package_version, get_template
 from .terminal import select
 
@@ -98,6 +103,8 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
     except TemplateNotFoundError:
         (project_dir / ".gitignore").write_text(
             "# Agento project\n"
+            ".venv/\n"
+            ".agento/docker/\n"
             "logs/\n"
             "tokens/\n"
             "storage/\n"
@@ -113,12 +120,16 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             "workspace/build/\n"
         )
 
-    # Docker Compose — managed base + user-owned override
-    try:
-        compose = get_template("docker-compose.yml")
-        (project_dir / "docker" / "docker-compose.yml").write_text(compose)
-    except TemplateNotFoundError:
-        pass
+    # Project pyproject.toml — composer.json equivalent (pinned agento-core dep).
+    write_project_pyproject(
+        project_dir,
+        project_name=project_name,
+        agento_version=config["agento_version"],
+    )
+
+    # User-owned docker-compose.override.yml — never overwritten on upgrade.
+    # Managed docker-compose.yml is generated later by regenerate_compose()
+    # after `uv sync` so we know the venv's Python version.
     try:
         override = get_template("docker-compose.override.yml")
         (project_dir / "docker" / "docker-compose.override.yml").write_text(override)
@@ -175,11 +186,39 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
         )
 
 
+def _run_uv_sync(project_dir: Path) -> bool:
+    """Run `uv sync` in the project directory. Returns True on success."""
+    log_info("Resolving dependencies (uv sync)...")
+    result = subprocess.run(["uv", "sync"], cwd=project_dir)
+    if result.returncode != 0:
+        log_error(
+            "uv sync failed. Ensure 'uv' is installed and rerun "
+            "(or run 'uv sync' manually in the project directory)."
+        )
+        return False
+    return True
+
+
+def _provision_project(project_dir: Path, *, force: bool = False) -> bool:
+    """Run uv sync, materialize Docker context, regenerate compose.
+
+    Returns True if all steps succeeded. Idempotent except for ``force``
+    which forces re-materialization of the Docker context.
+    """
+    if not _run_uv_sync(project_dir):
+        return False
+    materialize_docker_context(project_dir, force=force)
+    regenerate_compose(project_dir)
+    return True
+
+
 def _reinstall(project_dir: Path) -> None:
     """Reinstall framework files while preserving data.
 
-    Preserves: storage/, tokens/, secrets.env, app/code/, workspace/, docker/.env passwords.
-    Refreshes: docker-compose.yml, docker/sql/, .agento/project.json version, AGENTO_VERSION.
+    Preserves: storage/, tokens/, secrets.env, app/code/, workspace/,
+    docker/.env passwords, project pyproject.toml version pin.
+    Refreshes: docker-compose.yml, docker/sql/, .agento/docker/ context,
+    .agento/project.json version, AGENTO_VERSION.
     """
     version = get_package_version()
 
@@ -190,12 +229,26 @@ def _reinstall(project_dir: Path) -> None:
     else:
         log_warn("docker/.env not found — skipping version update.")
 
-    # Refresh managed docker-compose.yml (user's override file is untouched)
-    try:
-        compose = get_template("docker-compose.yml")
-        (project_dir / "docker" / "docker-compose.yml").write_text(compose)
-    except TemplateNotFoundError:
-        pass
+    # Bump the agento-core pin in <project>/pyproject.toml so `uv sync`
+    # pulls the matching framework version.
+    project_pyproject = project_dir / "pyproject.toml"
+    if project_pyproject.is_file():
+        from ._provisioning import bump_agento_version
+        bump_agento_version(project_pyproject, version)
+    else:
+        write_project_pyproject(project_dir, project_dir.name, version)
+
+    # Refresh user-owned override stub if missing (never overwrite existing).
+    override_path = project_dir / "docker" / "docker-compose.override.yml"
+    if not override_path.is_file():
+        try:
+            override = get_template("docker-compose.override.yml")
+            override_path.write_text(override)
+        except TemplateNotFoundError:
+            pass
+
+    # Re-sync deps, re-materialize Docker context, regenerate compose.
+    _provision_project(project_dir, force=True)
 
     # Refresh SQL migration scripts
     with contextlib.suppress(Exception):
@@ -212,13 +265,25 @@ def _reinstall(project_dir: Path) -> None:
 
 
 def _run_post_install(project_dir: Path) -> None:
-    """Run agento up + setup:upgrade after scaffolding."""
+    """Build images, run agento up + setup:upgrade after scaffolding."""
     compose_file = find_compose_file(project_dir)
     if not compose_file:
         log_warn("docker-compose.yml not found. Skipping runtime startup.")
         return
 
     compose_cmd = ["docker", "compose", "-f", str(compose_file)]
+
+    # Build sandbox first (cron's FROM ${SANDBOX_IMAGE} depends on it),
+    # then toolbox + cron in a single pass.
+    log_info("Building Docker images (first run can take a few minutes)...")
+    result = subprocess.run([*compose_cmd, "build", "sandbox"])
+    if result.returncode != 0:
+        log_error("Failed to build sandbox image. Run 'docker compose build' manually.")
+        return
+    result = subprocess.run([*compose_cmd, "build", "toolbox", "cron"])
+    if result.returncode != 0:
+        log_error("Failed to build toolbox/cron images. Run 'docker compose build' manually.")
+        return
 
     log_info("Starting containers...")
     result = subprocess.run([*compose_cmd, "up", "-d"])
@@ -368,7 +433,13 @@ class InstallCommand:
         _scaffold(project_dir, project_name, config)
         log_info(f"Project created at: {project_dir}")
 
-        # Post-install: start runtime
+        # Resolve deps + materialize Docker context + render compose.
+        # Failure here is fatal: containers can't start without it.
+        if not _provision_project(project_dir, force=True):
+            log_error("Provisioning failed. Fix the error above and rerun 'agento install'.")
+            sys.exit(1)
+
+        # Post-install: build images + start runtime
         _run_post_install(project_dir)
 
         print()

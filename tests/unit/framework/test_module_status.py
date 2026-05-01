@@ -9,6 +9,7 @@ from agento.framework.module_status import (
     filter_enabled,
     is_enabled,
     read_module_status,
+    resolve_module_source,
     set_enabled,
     write_module_status,
 )
@@ -85,3 +86,41 @@ class TestFilterEnabled:
         manifests = [_m("a"), _m("b")]
         result = filter_enabled(manifests, p)
         assert [m.name for m in result] == ["a", "b"]
+
+
+class TestResolveModuleSource:
+    def test_local_module_takes_precedence(self, tmp_path: Path):
+        # Both app/code/<name>/ AND venv install — local wins.
+        local = tmp_path / "app" / "code" / "k3_jira"
+        local.mkdir(parents=True)
+        (local / "module.json").write_text("{}")
+
+        site = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "k3_jira"
+        site.mkdir(parents=True)
+        (site / "__init__.py").write_text("")
+
+        assert resolve_module_source("k3_jira", tmp_path) == "local"
+
+    def test_pypi_extension(self, tmp_path: Path):
+        site = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "agento_ext"
+        site.mkdir(parents=True)
+        (site / "__init__.py").write_text("")
+
+        assert resolve_module_source("agento_ext", tmp_path) == "pypi"
+
+    def test_pypi_under_alternate_python_minor(self, tmp_path: Path):
+        # detect_python_version may pick a different minor — resolver globs
+        # python*/site-packages so it must still find the package.
+        site = tmp_path / ".venv" / "lib" / "python3.13" / "site-packages" / "agento_ext"
+        site.mkdir(parents=True)
+        (site / "__init__.py").write_text("")
+
+        assert resolve_module_source("agento_ext", tmp_path) == "pypi"
+
+    def test_missing_module(self, tmp_path: Path):
+        assert resolve_module_source("ghost", tmp_path) == "missing"
+
+    def test_module_dir_without_init_is_not_pypi(self, tmp_path: Path):
+        # An empty package directory (no __init__.py) does not count.
+        (tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "halfbaked").mkdir(parents=True)
+        assert resolve_module_source("halfbaked", tmp_path) == "missing"

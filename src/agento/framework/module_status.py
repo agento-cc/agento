@@ -11,10 +11,13 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from .module_loader import ModuleManifest
 
 logger = logging.getLogger(__name__)
+
+ModuleSource = Literal["local", "pypi", "missing"]
 
 _DOCKER_PATH = Path("/app/etc/modules.json")
 
@@ -82,3 +85,27 @@ def filter_enabled(
     """Filter manifests to only enabled modules."""
     status = read_module_status(path)
     return [m for m in manifests if is_enabled(m.name, status)]
+
+
+def resolve_module_source(
+    name: str,
+    project_dir: Path,
+    venv_path: Path | None = None,
+) -> ModuleSource:
+    """Determine where a module is sourced from.
+
+    - ``"local"``: ``<project_dir>/app/code/<name>/module.json`` exists.
+    - ``"pypi"``: package importable from ``<venv>/lib/python*/site-packages/<name>/``.
+    - ``"missing"``: neither.
+
+    The local check wins when both exist (Magento-like override semantics).
+    """
+    if (project_dir / "app" / "code" / name / "module.json").is_file():
+        return "local"
+
+    venv = venv_path or (project_dir / ".venv")
+    if venv.is_dir():
+        for site_packages in venv.glob("lib/python*/site-packages"):
+            if (site_packages / name / "__init__.py").is_file():
+                return "pypi"
+    return "missing"

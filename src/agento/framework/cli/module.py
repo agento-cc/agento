@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,19 +21,59 @@ def _module_dirs() -> tuple[Path, Path]:
 
 
 def _set_module_state(name: str, enabled: bool) -> None:
-    """Enable or disable a module by name. Exits if module not found."""
-    from ..module_loader import scan_modules
-    from ..module_status import set_enabled
+    """Enable or disable a module by name.
 
-    core_dir, user_dir = _module_dirs()
-    all_names = {m.name for m in scan_modules(str(core_dir)) + scan_modules(str(user_dir))}
-    if name not in all_names:
-        print(f"Module '{name}' not found")
+    On the host, resolves the source via ``app/code/`` (local) and the project
+    venv (PyPI extension) — toggling a PyPI extension also regenerates
+    ``docker-compose.yml`` and restarts containers (mounts changed). Inside
+    Docker (no project root), falls back to scanning the core/user module
+    directories.
+    """
+    from ..module_status import set_enabled
+    from ._project import find_compose_file, find_project_root
+
+    project_root = find_project_root()
+
+    source: str
+    if project_root is not None:
+        from ..module_status import resolve_module_source
+        source = resolve_module_source(name, project_root)
+    else:
+        # In-container fallback: only modules visible to scan can be toggled.
+        from ..module_loader import scan_modules
+
+        core_dir, user_dir = _module_dirs()
+        all_names = {m.name for m in scan_modules(str(core_dir)) + scan_modules(str(user_dir))}
+        if name not in all_names:
+            print(f"Module '{name}' not found")
+            sys.exit(1)
+        source = "local"
+
+    if source == "missing":
+        print(f"Module '{name}' not found.")
+        print(f"  - For local modules: place under app/code/<vendor>/{name}/ with module.json")
+        print(f"  - For PyPI extensions: run 'uv add {name}' first, then re-run module:enable")
         sys.exit(1)
 
     set_enabled(name, enabled)
     state = "enabled" if enabled else "disabled"
     print(f"Module '{name}' {state}")
+
+    # PyPI extension toggle changes container mounts — regenerate compose
+    # and bounce the running stack. Local modules already mount via app/code/.
+    if source == "pypi" and project_root is not None:
+        from ._provisioning import regenerate_compose
+
+        regenerate_compose(project_root)
+        print("Regenerated docker-compose.yml")
+
+        compose_file = find_compose_file(project_root)
+        if compose_file is not None:
+            result = subprocess.run(
+                ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+            )
+            if result.returncode != 0:
+                print("Warning: 'docker compose up -d' failed — restart manually for the mount change to take effect.")
 
 
 class MakeModuleCommand:
