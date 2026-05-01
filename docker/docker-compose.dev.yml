@@ -3,7 +3,7 @@ name: agento
 services:
   sandbox:
     build:
-      context: ./sandbox
+      context: ../src/agento/framework/docker/sandbox
       dockerfile: Dockerfile
       args:
         HOST_UID: ${HOST_UID:-501}
@@ -31,7 +31,9 @@ services:
   toolbox:
     build:
       context: ..
-      dockerfile: docker/toolbox/Dockerfile
+      dockerfile: src/agento/framework/docker/toolbox/Dockerfile
+      args:
+        PACKAGE_DIR: src/agento/toolbox
     image: agento-toolbox:latest
     container_name: agento-toolbox
     environment:
@@ -47,8 +49,7 @@ services:
       - path: ../secrets.env
         required: false
     volumes:
-      - ../src/agento/toolbox:/app
-      - /app/node_modules
+      - ../src/agento/toolbox:/opt/agento-toolbox-src:ro
       - ../src/agento/modules:/app/modules/core:ro
       - ../app/code:/app/modules/user:ro
       - ../logs:/app/logs
@@ -65,7 +66,10 @@ services:
   cron:
     build:
       context: ..
-      dockerfile: docker/cron/Dockerfile
+      dockerfile: src/agento/framework/docker/cron/Dockerfile
+      args:
+        PYPROJECT_DIR: .
+        SCRIPTS_DIR: src/agento/framework/docker/cron
     image: agento-cron:latest
     container_name: agento-cron
     env_file:
@@ -81,13 +85,13 @@ services:
       - MYSQL_USER=cron_agent
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-cronagent_pass}
       - DISABLE_LLM=${DISABLE_LLM:-0}
+      - PYTHONPATH=/opt/agento-src
     volumes:
       - ../workspace:/workspace
       - ../app/code:/app/code:ro
       - ../app/etc:/app/etc
       - ../logs:/app/logs
-      - ../src/agento:/opt/cron-agent/src/agento
-      - ../pyproject.toml:/opt/cron-agent/pyproject.toml:ro
+      - ../src/agento:/opt/agento-src/agento:ro
     networks:
       - agento-net
     depends_on:
