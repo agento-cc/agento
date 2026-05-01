@@ -1,4 +1,12 @@
-"""agento upgrade — update CLI and Docker images to a new version."""
+"""agento upgrade — upgrade CLI + rebuild Docker images locally.
+
+Customer projects own their ``pyproject.toml`` (composer.json equivalent).
+``agento upgrade`` bumps the ``agento-core`` pin, runs ``uv sync`` to refresh
+``.venv`` + ``uv.lock``, re-materializes the Docker build context, regenerates
+the managed ``docker-compose.yml``, then rebuilds local images.
+
+No GHCR pulls — images are built locally from the in-package context.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +15,13 @@ import sys
 
 from ._output import log_error, log_info, log_warn
 from ._project import find_compose_file, find_project_root, update_dotenv_value
-from ._templates import TemplateNotFoundError, get_package_version, get_template
+from ._provisioning import (
+    bump_agento_version,
+    materialize_docker_context,
+    regenerate_compose,
+    write_project_pyproject,
+)
+from ._templates import get_package_version
 
 
 def _fetch_latest_pypi_version() -> str | None:
@@ -67,13 +81,23 @@ class UpgradeCommand:
 
     @property
     def help(self) -> str:
-        return "Upgrade Docker images to a new version"
+        return "Upgrade CLI + rebuild Docker images locally"
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             "--version",
             default=None,
             help="Target version (default: latest from PyPI)",
+        )
+        parser.add_argument(
+            "--no-build",
+            action="store_true",
+            help="Skip 'docker compose build' (CI/automation use).",
+        )
+        parser.add_argument(
+            "--no-restart",
+            action="store_true",
+            help="Skip 'docker compose up -d' after building.",
         )
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -95,12 +119,12 @@ class UpgradeCommand:
             if installed:
                 log_info(f"CLI upgraded to {installed}.")
             else:
-                log_warn("CLI upgrade failed. Continuing with Docker image upgrade.")
+                log_warn("CLI upgrade failed. Continuing with project upgrade.")
 
-        # Docker image upgrade
+        # Project upgrade
         project_root = find_project_root()
         if project_root is None:
-            log_info(f"Not inside an agento project. CLI upgraded to {version}, skipping Docker.")
+            log_info(f"Not inside an agento project. CLI upgraded to {version}, skipping project upgrade.")
             return
 
         compose_file = find_compose_file(project_root)
@@ -116,26 +140,46 @@ class UpgradeCommand:
         update_dotenv_value(env_path, "AGENTO_VERSION", version)
         log_info(f"AGENTO_VERSION set to {version}")
 
-        # Refresh managed docker-compose.yml from template
-        try:
-            compose_content = get_template("docker-compose.yml")
-            (project_root / "docker" / "docker-compose.yml").write_text(compose_content)
-            log_info("Refreshed docker-compose.yml")
-        except TemplateNotFoundError:
-            pass
+        # Bump the agento-core pin in the project's pyproject.toml. If the
+        # project predates the per-project pyproject layout, write a fresh one.
+        project_pyproject = project_root / "pyproject.toml"
+        if project_pyproject.is_file():
+            bump_agento_version(project_pyproject, version)
+        else:
+            write_project_pyproject(project_root, project_root.name, version)
+
+        # Resolve deps, refresh Docker context, regenerate compose.
+        log_info("Resolving dependencies (uv sync)...")
+        result = subprocess.run(["uv", "sync"], cwd=project_root)
+        if result.returncode != 0:
+            log_error("uv sync failed. Resolve the error and rerun 'agento upgrade'.")
+            sys.exit(result.returncode)
+        materialize_docker_context(project_root, force=True)
+        regenerate_compose(project_root)
+        log_info("Refreshed docker-compose.yml + .agento/docker/")
 
         compose = ["docker", "compose", "-f", str(compose_file)]
 
-        log_info("Pulling images...")
-        result = subprocess.run([*compose, "pull"])
-        if result.returncode != 0:
-            log_error("Failed to pull images.")
-            sys.exit(result.returncode)
+        if args.no_build:
+            log_info("Skipping image build (--no-build).")
+        else:
+            log_info("Rebuilding Docker images locally...")
+            result = subprocess.run([*compose, "build", "sandbox"])
+            if result.returncode != 0:
+                log_error("Failed to build sandbox image.")
+                sys.exit(result.returncode)
+            result = subprocess.run([*compose, "build", "toolbox", "cron"])
+            if result.returncode != 0:
+                log_error("Failed to build toolbox/cron images.")
+                sys.exit(result.returncode)
 
-        log_info("Restarting containers...")
-        result = subprocess.run([*compose, "up", "-d"])
-        if result.returncode != 0:
-            log_error("Failed to restart containers.")
-            sys.exit(result.returncode)
+        if args.no_restart:
+            log_info("Skipping container restart (--no-restart).")
+        else:
+            log_info("Restarting containers...")
+            result = subprocess.run([*compose, "up", "-d"])
+            if result.returncode != 0:
+                log_error("Failed to restart containers.")
+                sys.exit(result.returncode)
 
         log_info(f"Upgraded to {version}. setup:upgrade runs automatically on container start.")

@@ -150,10 +150,28 @@ class TestScaffold:
         assert "DISABLE_LLM=0" in env_content
         assert "{" not in env_content
 
-    def test_docker_compose_uses_ghcr_images(self, tmp_path: Path):
+    def test_scaffold_writes_project_pyproject(self, tmp_path: Path):
         config = {
             "compose_project_name": "x",
-            "agento_version": "0.2.4",
+            "agento_version": "0.8.0",
+            "mysql_root_password": "x",
+            "mysql_password": "x",
+            "mysql_port": "3306",
+            "timezone": "UTC",
+        }
+        _scaffold(tmp_path, "myproj", config)
+
+        pyproject = (tmp_path / "pyproject.toml").read_text()
+        assert 'name = "myproj"' in pyproject
+        assert 'agento-core==0.8.0' in pyproject
+        assert 'requires-python = ">=3.12"' in pyproject
+
+    def test_scaffold_does_not_write_compose_yet(self, tmp_path: Path):
+        # docker-compose.yml is rendered later by regenerate_compose() once
+        # the project venv exists. _scaffold only writes the user-owned override.
+        config = {
+            "compose_project_name": "x",
+            "agento_version": "0.8.0",
             "mysql_root_password": "x",
             "mysql_password": "x",
             "mysql_port": "3306",
@@ -161,16 +179,7 @@ class TestScaffold:
         }
         _scaffold(tmp_path, "x", config)
 
-        # Managed base file has GHCR images and DO NOT EDIT header
-        compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
-        assert "container_name" not in compose
-        assert "build:" not in compose
-        assert "ghcr.io/agento-cc/agento-toolbox:" in compose
-        assert "ghcr.io/agento-cc/agento-cron:" in compose
-        assert "${AGENTO_VERSION" in compose
-        assert "DO NOT EDIT" in compose
-
-        # User-owned override file is scaffolded
+        assert not (tmp_path / "docker" / "docker-compose.yml").is_file()
         override = (tmp_path / "docker" / "docker-compose.override.yml").read_text()
         assert "safe to edit" in override
 
@@ -212,9 +221,10 @@ class TestInstallCommandAlreadyInstalled:
 
 class TestInstallCommandBasic:
     @patch("agento.framework.cli.install._run_post_install")
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install.select", return_value=0)
     @patch("builtins.input", return_value=".")
-    def test_basic_install_scaffolds(self, mock_input, mock_select, mock_post, tmp_path: Path):
+    def test_basic_install_scaffolds(self, mock_input, mock_select, mock_provision, mock_post, tmp_path: Path):
         original_cwd = Path.cwd
         try:
             Path.cwd = staticmethod(lambda: tmp_path)
@@ -232,13 +242,17 @@ class TestInstallCommandBasic:
         assert "cronagent_pass" not in env
         assert "cronagent_root" not in env
 
+        # Provisioning was invoked between scaffold and post-install runtime.
+        mock_provision.assert_called_once()
+
 
 class TestInstallCommandAdvanced:
     @patch("agento.framework.cli.install._run_post_install")
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install._is_port_free", return_value=True)
     @patch("agento.framework.cli.install.select", return_value=1)
     @patch("builtins.input", side_effect=[".", "custom-name", "3307", "America/Chicago"])
-    def test_advanced_install_uses_custom_values(self, mock_input, mock_select, mock_port, mock_post, tmp_path: Path):
+    def test_advanced_install_uses_custom_values(self, mock_input, mock_select, mock_port, mock_provision, mock_post, tmp_path: Path):
         original_cwd = Path.cwd
         try:
             Path.cwd = staticmethod(lambda: tmp_path)
@@ -266,15 +280,17 @@ class TestReinstall:
         }
         _scaffold(tmp_path, "myapp", config)
 
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
-    def test_reinstall_updates_version_in_env(self, mock_ver, tmp_path: Path):
+    def test_reinstall_updates_version_in_env(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
         _reinstall(tmp_path)
         env = (tmp_path / "docker" / ".env").read_text()
         assert "AGENTO_VERSION=0.5.0" in env
 
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
-    def test_reinstall_preserves_passwords(self, mock_ver, tmp_path: Path):
+    def test_reinstall_preserves_passwords(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
         _reinstall(tmp_path)
         env = (tmp_path / "docker" / ".env").read_text()
@@ -282,23 +298,31 @@ class TestReinstall:
         assert "MYSQL_PASSWORD=secret_user" in env
         assert "MYSQL_PORT=3307" in env
 
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
-    def test_reinstall_refreshes_compose_but_not_override(self, mock_ver, tmp_path: Path):
+    def test_reinstall_preserves_user_override(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
-        # Corrupt managed file to verify it gets refreshed
-        (tmp_path / "docker" / "docker-compose.yml").write_text("corrupted")
-        # Add custom content to override
-        (tmp_path / "docker" / "docker-compose.override.yml").write_text("services:\n  redis:\n    image: redis:7\n")
+        # Add custom content to override — must not be overwritten.
+        (tmp_path / "docker" / "docker-compose.override.yml").write_text(
+            "services:\n  redis:\n    image: redis:7\n"
+        )
         _reinstall(tmp_path)
-        # Managed file refreshed
-        compose = (tmp_path / "docker" / "docker-compose.yml").read_text()
-        assert "ghcr.io/agento-cc/agento-cron" in compose
-        # Override untouched
+
         override = (tmp_path / "docker" / "docker-compose.override.yml").read_text()
         assert "redis:7" in override
 
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
-    def test_reinstall_updates_project_json_version(self, mock_ver, tmp_path: Path):
+    def test_reinstall_bumps_pyproject_pin(self, mock_ver, mock_provision, tmp_path: Path):
+        self._scaffold_project(tmp_path)
+        # _scaffold pinned 0.1.0; _reinstall must bump to mocked 0.5.0
+        _reinstall(tmp_path)
+        pyproject = (tmp_path / "pyproject.toml").read_text()
+        assert "agento-core==0.5.0" in pyproject
+
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_updates_project_json_version(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
         _reinstall(tmp_path)
         meta = json.loads((tmp_path / ".agento" / "project.json").read_text())
