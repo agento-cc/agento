@@ -15,14 +15,29 @@ include = [
     "src/agento/framework/cli/templates/*",
     "src/agento/toolbox/package.json",
     "src/agento/toolbox/package-lock.json",
+    # Local-build distribution context (Dockerfiles + service scripts).
+    "src/agento/framework/docker/**/*",
+    # Root-level files needed for thin Docker image builds (force-included into wheel below).
+    "uv.lock",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agento"]
 
+# Force-include root-level files needed for thin Docker image builds.
+# - cron build context needs pyproject.toml + uv.lock for `uv sync` (deps only).
+# - toolbox build context needs package.json + package-lock.json for `npm ci`.
+# These are copied into the in-package build context at wheel-build time so
+# they're available to `agento install` / `materialize_docker_context` at runtime.
+[tool.hatch.build.targets.wheel.force-include]
+"pyproject.toml" = "agento/framework/docker/cron/pyproject.toml"
+"uv.lock" = "agento/framework/docker/cron/uv.lock"
+"src/agento/toolbox/package.json" = "agento/framework/docker/toolbox/package.json"
+"src/agento/toolbox/package-lock.json" = "agento/framework/docker/toolbox/package-lock.json"
+
 [project]
 name = "agento-core"
-version = "0.7.7"
+version = "0.8.0"
 description = "AI Agent Framework — automates tasks using AI agents in Docker containers"
 requires-python = ">=3.12"
 dependencies = [
