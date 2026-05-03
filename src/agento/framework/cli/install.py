@@ -16,6 +16,7 @@ from pathlib import Path
 from ._output import cyan, log_error, log_info, log_warn
 from ._project import find_compose_file, update_dotenv_value
 from ._provisioning import (
+    find_links_for_local_install,
     materialize_docker_context,
     regenerate_compose,
     write_project_pyproject,
@@ -189,7 +190,9 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
 def _run_uv_sync(project_dir: Path) -> bool:
     """Run `uv sync` in the project directory. Returns True on success."""
     log_info("Resolving dependencies (uv sync)...")
-    result = subprocess.run(["uv", "sync"], cwd=project_dir)
+    result = subprocess.run(
+        ["uv", "sync", *find_links_for_local_install()], cwd=project_dir
+    )
     if result.returncode != 0:
         log_error(
             "uv sync failed. Ensure 'uv' is installed and rerun "

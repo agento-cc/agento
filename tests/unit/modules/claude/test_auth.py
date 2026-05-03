@@ -48,7 +48,7 @@ class TestClaudeAuthStrategy:
             "userID": "abc123",
             "oauthAccount": {
                 "emailAddress": "m@k.com",
-                "organizationName": "Kazar",
+                "organizationName": "My company",
             },
         }))
 
@@ -88,7 +88,7 @@ class TestClaudeAuthStrategy:
         assert result.raw_auth is not None
         claude_json = result.raw_auth["claude_json"]
         assert claude_json["oauthAccount"]["emailAddress"] == "m@k.com"
-        assert claude_json["oauthAccount"]["organizationName"] == "Kazar"
+        assert claude_json["oauthAccount"]["organizationName"] == "My company"
         assert claude_json["userID"] == "abc123"
 
     def test_missing_claude_json_is_ok(self, fake_home):

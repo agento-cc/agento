@@ -25,6 +25,13 @@ RUN apt-get update && \
 ENV NODE_TLS_REJECT_UNAUTHORIZED=0
 ENV NODE_PATH=/app/node_modules
 
+# Server.js is loaded from /opt/agento-toolbox-src/ (bind-mounted at runtime).
+# Node ESM walks up from the importing file looking for node_modules/ and ignores
+# NODE_PATH, so place a symlink one level above the bind mount where Node will
+# find it. We can't put it inside /opt/agento-toolbox-src/ — the bind mount
+# would shadow it.
+RUN ln -s /app/node_modules /opt/node_modules
+
 EXPOSE 3001
 
 # Source code (server.js, adapters/, etc.) is bind-mounted to /opt/agento-toolbox-src/.

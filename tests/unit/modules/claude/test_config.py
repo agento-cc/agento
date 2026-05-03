@@ -222,8 +222,8 @@ class TestWriteCredentials:
     def test_writes_claude_json_with_oauth_account(self, writer, work_dir):
         claude_json = {
             "oauthAccount": {
-                "emailAddress": "mklauza@kazar.com",
-                "organizationName": "Kazar",
+                "emailAddress": "mklauza@company.com",
+                "organizationName": "My company",
             },
             "numStartups": 3,
             "userID": "abc123",
@@ -238,7 +238,7 @@ class TestWriteCredentials:
         writer.write_credentials(work_dir, creds)
 
         out = json.loads((work_dir / ".claude.json").read_text())
-        assert out["oauthAccount"]["emailAddress"] == "mklauza@kazar.com"
+        assert out["oauthAccount"]["emailAddress"] == "mklauza@company.com"
         assert out["numStartups"] == 3
         assert out["userID"] == "abc123"
 

@@ -22,6 +22,40 @@ from ._templates import get_package_version, get_template
 
 _AGENTO_REQUIRES_PYTHON = ">=3.12"
 
+# Matches a uv.lock package source line:
+#   source = { registry = "<path-or-url>" }
+# Captures the path/URL so we can spot relative/absolute filesystem paths
+# that won't resolve inside the cron container.
+_LOCK_REGISTRY_LINE = re.compile(r'^source = \{ registry = "([^"]+)" \}', re.MULTILINE)
+
+
+def find_links_for_local_install() -> list[str]:
+    """Return --find-links args if agento-core was installed from a local wheel.
+
+    When the CLI was installed via `uv tool install /path/to/wheel.whl` the
+    dist-info contains a ``direct_url.json`` with a ``file://`` URL.  We pass
+    the wheel's parent directory to `uv sync --find-links` so the project venv
+    can resolve the same version without a PyPI lookup.  Returns [] when
+    agento-core came from PyPI (no extra flags needed).
+    """
+    try:
+        import json as _json
+        from importlib.metadata import distribution
+
+        dist = distribution("agento-core")
+        text = dist.read_text("direct_url.json")
+        if not text:
+            return []
+        data = _json.loads(text)
+        url = data.get("url", "")
+        if url.startswith("file://") and url.endswith(".whl"):
+            wheel_path = Path(url[len("file://"):])
+            if wheel_path.is_file():
+                return ["--find-links", str(wheel_path.parent)]
+    except Exception:
+        pass
+    return []
+
 
 def write_project_pyproject(
     project_dir: Path,
@@ -105,6 +139,57 @@ def _copy_tree(src, dst: Path) -> None:
                 shutil.copy2(f, target)
 
 
+def localize_lockfile_for_container(
+    project_dir: Path,
+    cron_ctx: Path,
+) -> None:
+    """Inline local-wheel registries from the project's ``uv.lock`` into the cron context.
+
+    When the CLI is installed from a local wheel (``uv tool install /path/to/*.whl``),
+    ``find_links_for_local_install()`` adds ``--find-links`` to ``uv sync``. uv records
+    the wheel's directory as a path-style ``source = { registry = "..." }`` in the
+    project's ``uv.lock`` — relative to the project directory.
+
+    Inside the cron container, that relative path navigates above ``/`` and uv refuses
+    to normalize it. Fix by copying every locally-sourced wheel/sdist into
+    ``cron/_local_dist/`` and rewriting the registry path in the cron context's
+    ``uv.lock`` to ``_local_dist`` (relative to ``/opt/cron-agent/uv.lock``).
+
+    Always creates ``cron/_local_dist/`` (with a ``.gitkeep``) so the Dockerfile's
+    ``COPY ./_local_dist`` step succeeds even when no rewrites are needed.
+    """
+    local_dist = cron_ctx / "_local_dist"
+    local_dist.mkdir(parents=True, exist_ok=True)
+    (local_dist / ".gitkeep").touch()
+
+    src_lock = project_dir / "uv.lock"
+    dst_lock = cron_ctx / "uv.lock"
+    if not src_lock.is_file() or not dst_lock.is_file():
+        return
+
+    text = dst_lock.read_text()
+    rewrote = False
+    for match in _LOCK_REGISTRY_LINE.finditer(text):
+        registry = match.group(1)
+        if registry.startswith(("http://", "https://")):
+            continue
+
+        # Filesystem registry — resolve relative to the project's uv.lock location.
+        registry_path = (project_dir / registry).resolve()
+        if not registry_path.is_dir():
+            continue
+
+        for entry in registry_path.iterdir():
+            if entry.is_file() and entry.suffix in (".whl", ".gz", ".zip"):
+                shutil.copy2(entry, local_dist / entry.name)
+
+        text = text.replace(match.group(0), 'source = { registry = "_local_dist" }')
+        rewrote = True
+
+    if rewrote:
+        dst_lock.write_text(text)
+
+
 def materialize_docker_context(
     project_dir: Path,
     *,
@@ -144,6 +229,11 @@ def materialize_docker_context(
         shutil.copy2(project_pyproject, target / "cron" / "pyproject.toml")
     if project_lock.is_file():
         shutil.copy2(project_lock, target / "cron" / "uv.lock")
+
+    # If the project venv was hydrated from a local wheel (developer build),
+    # uv.lock contains a path-style registry that won't resolve inside the
+    # cron container. Inline those wheels into the cron context.
+    localize_lockfile_for_container(project_dir, target / "cron")
 
     # Toolbox context needs npm manifests bundled with the wheel.
     # Wheel build force-includes them under agento.framework.docker.toolbox/,
