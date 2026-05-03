@@ -8,6 +8,7 @@ from agento.framework.cli._provisioning import (
     bump_agento_version,
     detect_python_version,
     enumerate_enabled_extensions,
+    localize_lockfile_for_container,
     materialize_docker_context,
     regenerate_compose,
     render_compose,
@@ -196,6 +197,91 @@ class TestMaterializeDockerContext:
         materialize_docker_context(proj, force=True)
         # force=True wipes and recopies — original Dockerfile content is restored.
         assert "HELLO_MARKER" not in marker.read_text()
+
+
+class TestLocalizeLockfileForContainer:
+    def _seed(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Build a project + cron context simulating a local-wheel install."""
+        project = tmp_path / "proj"
+        project.mkdir()
+
+        # Local wheel registry that lives outside the project tree.
+        dist = tmp_path / "host" / "dist"
+        dist.mkdir(parents=True)
+        (dist / "agento_core-0.8.0-py3-none-any.whl").write_bytes(b"WHEEL_BYTES")
+        (dist / "agento_core-0.8.0.tar.gz").write_bytes(b"SDIST_BYTES")
+
+        # uv records the registry as a path relative to the project's uv.lock.
+        rel = "../host/dist"
+        lock = (
+            'version = 1\n'
+            'revision = 2\n'
+            'requires-python = ">=3.12"\n'
+            '\n'
+            '[[package]]\n'
+            'name = "agento-core"\n'
+            'version = "0.8.0"\n'
+            f'source = {{ registry = "{rel}" }}\n'
+            'sdist = { path = "agento_core-0.8.0.tar.gz" }\n'
+            'wheels = [\n'
+            '    { path = "agento_core-0.8.0-py3-none-any.whl" },\n'
+            ']\n'
+            '\n'
+            '[[package]]\n'
+            'name = "anyio"\n'
+            'version = "4.13.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\n'
+        )
+        (project / "uv.lock").write_text(lock)
+
+        cron_ctx = tmp_path / "cron"
+        cron_ctx.mkdir()
+        (cron_ctx / "uv.lock").write_text(lock)
+        return project, cron_ctx
+
+    def test_creates_local_dist_dir_with_gitkeep(self, tmp_path: Path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        cron_ctx = tmp_path / "cron"
+        cron_ctx.mkdir()
+        # No uv.lock at all — still creates the directory so Dockerfile COPY works.
+        localize_lockfile_for_container(project, cron_ctx)
+        assert (cron_ctx / "_local_dist").is_dir()
+        assert (cron_ctx / "_local_dist" / ".gitkeep").is_file()
+
+    def test_inlines_local_wheels_and_rewrites_registry(self, tmp_path: Path):
+        project, cron_ctx = self._seed(tmp_path)
+        localize_lockfile_for_container(project, cron_ctx)
+
+        # Wheel + sdist copied into _local_dist/ (next to the lockfile in the container).
+        local_dist = cron_ctx / "_local_dist"
+        assert (local_dist / "agento_core-0.8.0-py3-none-any.whl").read_bytes() == b"WHEEL_BYTES"
+        assert (local_dist / "agento_core-0.8.0.tar.gz").read_bytes() == b"SDIST_BYTES"
+
+        # Lockfile registry path is now relative to the in-container lockfile location.
+        lock_text = (cron_ctx / "uv.lock").read_text()
+        assert 'source = { registry = "_local_dist" }' in lock_text
+        assert "../host/dist" not in lock_text
+        # PyPI registry entries are untouched.
+        assert 'source = { registry = "https://pypi.org/simple" }' in lock_text
+
+    def test_pypi_only_lockfile_is_unchanged(self, tmp_path: Path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        cron_ctx = tmp_path / "cron"
+        cron_ctx.mkdir()
+        lock = (
+            '[[package]]\n'
+            'name = "anyio"\n'
+            'source = { registry = "https://pypi.org/simple" }\n'
+        )
+        (project / "uv.lock").write_text(lock)
+        (cron_ctx / "uv.lock").write_text(lock)
+
+        localize_lockfile_for_container(project, cron_ctx)
+        assert (cron_ctx / "uv.lock").read_text() == lock
+        # _local_dist still gets created (Dockerfile COPY needs the dir).
+        assert (cron_ctx / "_local_dist").is_dir()
 
 
 class TestRegenerateCompose:

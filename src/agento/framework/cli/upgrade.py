@@ -17,6 +17,7 @@ from ._output import log_error, log_info, log_warn
 from ._project import find_compose_file, find_project_root, update_dotenv_value
 from ._provisioning import (
     bump_agento_version,
+    find_links_for_local_install,
     materialize_docker_context,
     regenerate_compose,
     write_project_pyproject,
@@ -150,7 +151,9 @@ class UpgradeCommand:
 
         # Resolve deps, refresh Docker context, regenerate compose.
         log_info("Resolving dependencies (uv sync)...")
-        result = subprocess.run(["uv", "sync"], cwd=project_root)
+        result = subprocess.run(
+            ["uv", "sync", *find_links_for_local_install()], cwd=project_root
+        )
         if result.returncode != 0:
             log_error("uv sync failed. Resolve the error and rerun 'agento upgrade'.")
             sys.exit(result.returncode)

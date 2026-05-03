@@ -25,7 +25,10 @@ ARG SCRIPTS_DIR=.
 # Container venv with native deps (cryptography, pymysql, etc.) only.
 # --no-install-project: agento itself is bind-mounted from host site-packages
 # at runtime via PYTHONPATH; we only need its dependencies pre-installed here.
+# _local_dist/: local wheels (when CLI was installed from a local build).
+# Always present (may be empty); see localize_lockfile_for_container().
 COPY ${PYPROJECT_DIR}/pyproject.toml ${PYPROJECT_DIR}/uv.lock /opt/cron-agent/
+COPY ${PYPROJECT_DIR}/_local_dist/ /opt/cron-agent/_local_dist/
 RUN cd /opt/cron-agent && \
     uv venv .venv && \
     uv sync --frozen --no-install-project --no-dev && \
