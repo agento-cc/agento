@@ -16,6 +16,14 @@ fi
 mkdir -p /app/logs
 chown agent /app/logs
 
+# Heal artifacts dir from pre-fix deployments where toolbox wrote files as root.
+# Idempotent and metadata-only — fast even on large dirs. The `|| true` guards
+# against partially-inaccessible mounts; if chown can't fix it here, the
+# diagnostic in prepare_artifacts_dir will surface a clear error.
+if [ -d /workspace/artifacts ]; then
+    chown -R agent:agent /workspace/artifacts 2>/dev/null || true
+fi
+
 # Persist Docker env vars for agent user (su - wipes the environment, cron has its own env)
 ENV_FILE=/opt/cron-agent/env
 env | grep -E '^(MYSQL_|TZ=|DISABLE_LLM=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=)' > "$ENV_FILE"

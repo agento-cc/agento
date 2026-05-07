@@ -34,6 +34,9 @@ services:
       dockerfile: src/agento/framework/docker/toolbox/Dockerfile
       args:
         PACKAGE_DIR: src/agento/toolbox
+        DOCKERFILE_DIR: src/agento/framework/docker/toolbox
+        HOST_UID: ${HOST_UID:-501}
+        HOST_GID: ${HOST_GID:-20}
     image: agento-toolbox:latest
     container_name: agento-toolbox
     environment:

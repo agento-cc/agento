@@ -1,6 +1,9 @@
 """Tests for per-job artifacts directory management."""
+import logging
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from agento.framework.artifacts_dir import (
     build_artifacts_dir,
@@ -42,6 +45,28 @@ class TestPrepareArtifactsDir:
         assert artifacts_dir.is_dir()
         assert not (artifacts_dir / "app").exists()
         assert not (artifacts_dir / "leftover.txt").exists()
+
+    def test_permission_error_logs_ownership_and_reraises(self, tmp_path, caplog):
+        # Reproduces the toolbox-as-root vs cron-as-agent ownership mismatch:
+        # rmtree fails with PermissionError, we want the log to surface
+        # ownership info so the next ownership regression is diagnosable
+        # without manual `ls -la` archaeology.
+        artifacts_dir = tmp_path / "runs" / "1"
+        artifacts_dir.mkdir(parents=True)
+        offender = artifacts_dir / "jira" / "AI-76"
+        offender.mkdir(parents=True)
+
+        boom = PermissionError(13, "Permission denied", str(offender))
+        with (
+            patch("shutil.rmtree", side_effect=boom),
+            caplog.at_level(logging.ERROR, logger="agento.framework.artifacts_dir"),
+            pytest.raises(PermissionError),
+        ):
+            prepare_artifacts_dir(artifacts_dir)
+
+        assert "owner uid=" in caplog.text
+        assert str(offender) in caplog.text
+        assert "Process running as uid=" in caplog.text
 
 
 class TestCleanupArtifactsDir:

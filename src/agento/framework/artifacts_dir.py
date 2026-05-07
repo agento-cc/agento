@@ -9,6 +9,7 @@ removed, but crashed jobs leave their artifacts dir behind for inspection.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -25,7 +26,26 @@ def build_artifacts_dir(workspace_code: str, agent_view_code: str, job_id: int) 
 def prepare_artifacts_dir(artifacts_dir: Path) -> None:
     """Create the artifacts directory tree, cleaning any stale contents from prior attempts."""
     if artifacts_dir.exists():
-        shutil.rmtree(artifacts_dir)
+        try:
+            shutil.rmtree(artifacts_dir)
+        except PermissionError as e:
+            offender = Path(e.filename) if e.filename else artifacts_dir
+            try:
+                st = offender.stat()
+                logger.error(
+                    "PermissionError cleaning artifacts dir %s: cannot remove %s "
+                    "(owner uid=%d gid=%d, mode=%o). Process running as uid=%d gid=%d. "
+                    "If toolbox container ran as root before the fix, run "
+                    "`sudo chown -R $(id -u):$(id -g) workspace/artifacts` on the host.",
+                    artifacts_dir, offender, st.st_uid, st.st_gid, st.st_mode & 0o777,
+                    os.getuid(), os.getgid(),
+                )
+            except OSError:
+                logger.error(
+                    "PermissionError cleaning %s (could not stat %s)",
+                    artifacts_dir, offender,
+                )
+            raise
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
 

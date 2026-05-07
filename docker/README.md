@@ -30,11 +30,12 @@ cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f docker-compos
 
 ### Rebuilding for a Different User
 
-If you switch users or deploy to a new server, force a rebuild:
+If you switch users or deploy to a new server, force a rebuild of every image
+that bakes `HOST_UID`/`HOST_GID` (sandbox, cron-via-sandbox, toolbox):
 
 ```bash
-docker rmi agento-sandbox:latest
-cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f docker-compose.dev.yml build sandbox
+docker rmi agento-sandbox:latest agento-toolbox:latest
+cd docker && HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose -f docker-compose.dev.yml build sandbox toolbox
 ```
 
 ## Jira Agent

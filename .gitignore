@@ -62,6 +62,10 @@ workspace/prompts/
 # Toolbox session
 docker/toolbox/session.json
 
+# Generated Docker build context + managed compose (dev runs of materialize/regenerate)
+.agento/docker/
+docker/docker-compose.yml
+
 # Claude worktrees
 .claude/worktrees/
 .claude/
