@@ -12,9 +12,13 @@ if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
     echo "$TZ" > /etc/timezone
 fi
 
-# Ensure log directory exists and is writable by agent
+# Ensure log directory and existing log files are writable by agent.
+# Recursive chown heals stale UIDs from prior builds (e.g. when HOST_UID
+# changed between releases) — without it the consumer crash-loops on
+# `PermissionError: '/app/logs/consumer.log'` because pre-existing log
+# files are still owned by the previous agent UID.
 mkdir -p /app/logs
-chown agent /app/logs
+chown -R agent /app/logs 2>/dev/null || true
 
 # Heal artifacts dir from pre-fix deployments where toolbox wrote files as root.
 # Idempotent and metadata-only — fast even on large dirs. The `|| true` guards
