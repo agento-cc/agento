@@ -1,8 +1,12 @@
 """Project root detection and utilities for agento CLI."""
 from __future__ import annotations
 
+import os
 import re
+import sys
 from pathlib import Path
+
+from ._output import log_error
 
 
 def find_project_root(start: Path | None = None) -> Path | None:
@@ -46,6 +50,27 @@ def find_compose_file(project_root: Path) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def resolve_host_ids() -> tuple[int, int]:
+    """Detect the current process UID/GID. Refuse running as root.
+
+    The container `agent` user is created at image build time with these IDs
+    so bind-mounted host paths are writable by the unprivileged in-container
+    user. UID 0 would defeat that model — bake root into the image, then
+    every file the container writes is host-root-owned. Refuse instead and
+    tell the operator to re-run as the project tree owner.
+    """
+    uid = os.getuid()
+    gid = os.getgid()
+    if uid == 0:
+        log_error(
+            "Refusing to run as root. Re-run as the non-root host user "
+            "that owns the project tree — that UID/GID is baked into the "
+            "container `agent` user."
+        )
+        sys.exit(1)
+    return uid, gid
 
 
 def update_dotenv_value(path: Path, key: str, value: str) -> None:

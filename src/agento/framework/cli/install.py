@@ -13,8 +13,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ._env import parse_env_file
 from ._output import cyan, log_error, log_info, log_warn
-from ._project import find_compose_file, update_dotenv_value
+from ._project import find_compose_file, resolve_host_ids, update_dotenv_value
 from ._provisioning import (
     find_links_for_local_install,
     materialize_docker_context,
@@ -154,6 +155,8 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             f"MYSQL_PASSWORD={config['mysql_password']}",
             f"MYSQL_PORT={config['mysql_port']}",
             f"TZ={config['timezone']}",
+            f"HOST_UID={config['host_uid']}",
+            f"HOST_GID={config['host_gid']}",
             "# Set to 1 to disable LLM API calls (mocks agent output, for testing)",
             "DISABLE_LLM=0",
             "",
@@ -215,13 +218,15 @@ def _provision_project(project_dir: Path, *, force: bool = False) -> bool:
     return True
 
 
-def _reinstall(project_dir: Path) -> None:
+def _reinstall(project_dir: Path, host_uid: int, host_gid: int) -> None:
     """Reinstall framework files while preserving data.
 
     Preserves: storage/, tokens/, secrets.env, app/code/, workspace/,
     docker/.env passwords, project pyproject.toml version pin.
     Refreshes: docker-compose.yml, docker/sql/, .agento/docker/ context,
     .agento/project.json version, AGENTO_VERSION.
+    Backfills HOST_UID/HOST_GID into docker/.env if missing (never overwrites
+    existing values — ops may have pinned different IDs intentionally).
     """
     version = get_package_version()
 
@@ -229,6 +234,11 @@ def _reinstall(project_dir: Path) -> None:
     env_path = project_dir / "docker" / ".env"
     if env_path.is_file():
         update_dotenv_value(env_path, "AGENTO_VERSION", version)
+        existing = parse_env_file(env_path)
+        if "HOST_UID" not in existing:
+            update_dotenv_value(env_path, "HOST_UID", str(host_uid))
+        if "HOST_GID" not in existing:
+            update_dotenv_value(env_path, "HOST_GID", str(host_gid))
     else:
         log_warn("docker/.env not found — skipping version update.")
 
@@ -376,6 +386,11 @@ class InstallCommand:
         pass
 
     def execute(self, args: argparse.Namespace) -> None:
+        # Resolve host UID/GID once. Refuses if running as root — containers
+        # build the `agent` user with these IDs so bind-mounted host paths
+        # are writable without root.
+        host_uid, host_gid = resolve_host_ids()
+
         # Step 1: Ask project path
         project_dir = self._ask_project_path()
         project_name = project_dir.name
@@ -394,7 +409,7 @@ class InstallCommand:
             choice = select("Proceed with reinstall?", ["Yes", "No"])
             if choice == 1:  # No
                 return
-            _reinstall(project_dir)
+            _reinstall(project_dir, host_uid, host_gid)
             _run_post_install(project_dir)
             return
 
@@ -429,6 +444,8 @@ class InstallCommand:
             "mysql_password": _generate_password(),
             "mysql_port": mysql_port,
             "timezone": timezone,
+            "host_uid": str(host_uid),
+            "host_gid": str(host_gid),
         }
 
         # Scaffold

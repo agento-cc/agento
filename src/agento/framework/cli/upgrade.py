@@ -13,8 +13,14 @@ import argparse
 import subprocess
 import sys
 
+from ._env import parse_env_file
 from ._output import log_error, log_info, log_warn
-from ._project import find_compose_file, find_project_root, update_dotenv_value
+from ._project import (
+    find_compose_file,
+    find_project_root,
+    resolve_host_ids,
+    update_dotenv_value,
+)
 from ._provisioning import (
     bump_agento_version,
     find_links_for_local_install,
@@ -140,6 +146,21 @@ class UpgradeCommand:
 
         update_dotenv_value(env_path, "AGENTO_VERSION", version)
         log_info(f"AGENTO_VERSION set to {version}")
+
+        # Backfill HOST_UID/HOST_GID for deployments installed before the
+        # pin landed. Never overwrite an existing value — ops may have
+        # pinned different IDs intentionally. Refuse running as root for
+        # the same reason install does: UID 0 in containers defeats the
+        # unprivileged-user model.
+        existing = parse_env_file(env_path)
+        if "HOST_UID" not in existing or "HOST_GID" not in existing:
+            host_uid, host_gid = resolve_host_ids()
+            if "HOST_UID" not in existing:
+                update_dotenv_value(env_path, "HOST_UID", str(host_uid))
+                log_info(f"HOST_UID backfilled to {host_uid}")
+            if "HOST_GID" not in existing:
+                update_dotenv_value(env_path, "HOST_GID", str(host_gid))
+                log_info(f"HOST_GID backfilled to {host_gid}")
 
         # Bump the agento-core pin in the project's pyproject.toml. If the
         # project predates the per-project pyproject layout, write a fresh one.

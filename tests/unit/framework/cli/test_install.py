@@ -98,6 +98,8 @@ class TestScaffold:
             "mysql_password": "userpass456",
             "mysql_port": "3307",
             "timezone": "Europe/Warsaw",
+            "host_uid": "1000",
+            "host_gid": "1000",
         }
         _scaffold(tmp_path, "test-proj", config)
 
@@ -121,6 +123,8 @@ class TestScaffold:
             "mysql_password": "up",
             "mysql_port": "3306",
             "timezone": "UTC",
+            "host_uid": "1000",
+            "host_gid": "1000",
         }
         _scaffold(tmp_path, "my-proj", config)
 
@@ -137,6 +141,8 @@ class TestScaffold:
             "mysql_password": "secret_user",
             "mysql_port": "3307",
             "timezone": "America/New_York",
+            "host_uid": "501",
+            "host_gid": "20",
         }
         _scaffold(tmp_path, "myapp", config)
 
@@ -147,6 +153,8 @@ class TestScaffold:
         assert "MYSQL_PASSWORD=secret_user" in env_content
         assert "MYSQL_PORT=3307" in env_content
         assert "TZ=America/New_York" in env_content
+        assert "HOST_UID=501" in env_content
+        assert "HOST_GID=20" in env_content
         assert "DISABLE_LLM=0" in env_content
         assert "{" not in env_content
 
@@ -158,6 +166,8 @@ class TestScaffold:
             "mysql_password": "x",
             "mysql_port": "3306",
             "timezone": "UTC",
+            "host_uid": "1000",
+            "host_gid": "1000",
         }
         _scaffold(tmp_path, "myproj", config)
 
@@ -176,6 +186,8 @@ class TestScaffold:
             "mysql_password": "x",
             "mysql_port": "3306",
             "timezone": "UTC",
+            "host_uid": "1000",
+            "host_gid": "1000",
         }
         _scaffold(tmp_path, "x", config)
 
@@ -191,6 +203,8 @@ class TestScaffold:
             "mysql_password": "x",
             "mysql_port": "3306",
             "timezone": "UTC",
+            "host_uid": "1000",
+            "host_gid": "1000",
         }
         _scaffold(tmp_path, "x", config)
 
@@ -277,6 +291,8 @@ class TestReinstall:
             "mysql_password": "secret_user",
             "mysql_port": "3307",
             "timezone": "Europe/Warsaw",
+            "host_uid": "1000",
+            "host_gid": "1000",
         }
         _scaffold(tmp_path, "myapp", config)
 
@@ -284,7 +300,7 @@ class TestReinstall:
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
     def test_reinstall_updates_version_in_env(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
-        _reinstall(tmp_path)
+        _reinstall(tmp_path, 1000, 1000)
         env = (tmp_path / "docker" / ".env").read_text()
         assert "AGENTO_VERSION=0.5.0" in env
 
@@ -292,7 +308,7 @@ class TestReinstall:
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
     def test_reinstall_preserves_passwords(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
-        _reinstall(tmp_path)
+        _reinstall(tmp_path, 1000, 1000)
         env = (tmp_path / "docker" / ".env").read_text()
         assert "MYSQL_ROOT_PASSWORD=secret_root" in env
         assert "MYSQL_PASSWORD=secret_user" in env
@@ -306,7 +322,7 @@ class TestReinstall:
         (tmp_path / "docker" / "docker-compose.override.yml").write_text(
             "services:\n  redis:\n    image: redis:7\n"
         )
-        _reinstall(tmp_path)
+        _reinstall(tmp_path, 1000, 1000)
 
         override = (tmp_path / "docker" / "docker-compose.override.yml").read_text()
         assert "redis:7" in override
@@ -316,7 +332,7 @@ class TestReinstall:
     def test_reinstall_bumps_pyproject_pin(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
         # _scaffold pinned 0.1.0; _reinstall must bump to mocked 0.5.0
-        _reinstall(tmp_path)
+        _reinstall(tmp_path, 1000, 1000)
         pyproject = (tmp_path / "pyproject.toml").read_text()
         assert "agento-core==0.5.0" in pyproject
 
@@ -324,6 +340,6 @@ class TestReinstall:
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
     def test_reinstall_updates_project_json_version(self, mock_ver, mock_provision, tmp_path: Path):
         self._scaffold_project(tmp_path)
-        _reinstall(tmp_path)
+        _reinstall(tmp_path, 1000, 1000)
         meta = json.loads((tmp_path / ".agento" / "project.json").read_text())
         assert meta["version"] == "0.5.0"
