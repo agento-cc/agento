@@ -10,7 +10,10 @@ describe('browser tools', () => {
 
   beforeEach(() => {
     vi.resetModules();
-    mockClient = { callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }) };
+    mockClient = {
+      callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
+      listTools: vi.fn().mockResolvedValue({ tools: [] }),
+    };
     mockReadFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
     mockWriteFile = vi.fn().mockResolvedValue(undefined);
     mockMkdir = vi.fn().mockResolvedValue(undefined);
@@ -155,8 +158,7 @@ describe('browser tools', () => {
   });
 
   describe('playwright not connected', () => {
-    it('returns error when client is null', async () => {
-      mockClient = null;
+    async function registerWithState(stateObj) {
       setupMocks();
       const { register } = await import('../../modules/core/toolbox/browser.js');
       const handlers = {};
@@ -170,6 +172,7 @@ describe('browser tools', () => {
         playwright: {
           getClient: () => null,
           getTools: () => [],
+          getState: () => stateObj,
         },
         moduleConfigs: {
           core: {
@@ -181,11 +184,31 @@ describe('browser tools', () => {
         artifactsDir: '/workspace/tmp',
       };
       register(server, context);
+      return handlers;
+    }
 
+    it('returns "starting up" error when state=starting', async () => {
+      const handlers = await registerWithState({ state: 'starting', attempt: 0, maxAttempts: 5, lastError: null });
       const result = await handlers.browser_snapshot({ user: 'a@b.com' });
-
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Playwright MCP is not available');
+      expect(result.content[0].text).toContain('starting up');
+      expect(result.content[0].text).not.toContain('permanently failed');
+    });
+
+    it('returns "restarting" error with attempt N of M when state=restarting', async () => {
+      const handlers = await registerWithState({ state: 'restarting', attempt: 2, maxAttempts: 5, lastError: 'EPIPE' });
+      const result = await handlers.browser_snapshot({ user: 'a@b.com' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('restarting (attempt 2 of 5)');
+      expect(result.content[0].text).not.toContain('starting up');
+    });
+
+    it('returns "permanently failed" error with lastError when state=failed', async () => {
+      const handlers = await registerWithState({ state: 'failed', attempt: 5, maxAttempts: 5, lastError: 'Chromium SIGSEGV' });
+      const result = await handlers.browser_snapshot({ user: 'a@b.com' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('failed permanently after 5');
+      expect(result.content[0].text).toContain('Chromium SIGSEGV');
     });
   });
 
@@ -279,7 +302,7 @@ describe('browser tools', () => {
   });
 
   describe('healthcheck', () => {
-    it('returns ok when playwright client is connected', async () => {
+    it('returns ok when client.listTools succeeds within timeout', async () => {
       setupMocks();
       const { healthcheck } = await import('../../modules/core/toolbox/browser.js');
 
@@ -287,10 +310,44 @@ describe('browser tools', () => {
         playwright: { getClient: () => mockClient },
       });
 
-      expect(results).toEqual([{ tool: 'browser', status: 'ok', ms: 0 }]);
+      expect(mockClient.listTools).toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ tool: 'browser', status: 'ok' });
+      expect(results[0].ms).toBeTypeOf('number');
     });
 
-    it('returns fail when playwright client is null', async () => {
+    it('returns fail when client.listTools times out (real timer, 3.1s)', async () => {
+      // listTools returns a Promise that never resolves — exercises the
+      // 3000ms timeout race inside healthcheck() with real timers, since
+      // mixing fake timers with Promises here is flaky.
+      const hangingClient = { listTools: vi.fn(() => new Promise(() => {})) };
+      setupMocks();
+      const { healthcheck } = await import('../../modules/core/toolbox/browser.js');
+
+      const results = await healthcheck({
+        playwright: { getClient: () => hangingClient },
+      });
+
+      expect(results[0]).toMatchObject({ tool: 'browser', status: 'fail' });
+      expect(results[0].error).toMatch(/timeout/i);
+    }, 6000);
+
+    it('returns state-aware fail when getClient is null and state=failed', async () => {
+      setupMocks();
+      const { healthcheck } = await import('../../modules/core/toolbox/browser.js');
+
+      const results = await healthcheck({
+        playwright: {
+          getClient: () => null,
+          getState: () => ({ state: 'failed', attempt: 5, maxAttempts: 5, lastError: 'boom' }),
+        },
+      });
+
+      expect(results[0]).toMatchObject({ tool: 'browser', status: 'fail' });
+      expect(results[0].error).toContain('failed permanently');
+    });
+
+    it('falls back to generic error when getState is not provided', async () => {
       setupMocks();
       const { healthcheck } = await import('../../modules/core/toolbox/browser.js');
 
@@ -298,11 +355,11 @@ describe('browser tools', () => {
         playwright: { getClient: () => null },
       });
 
-      expect(results).toEqual([{
+      expect(results[0]).toEqual({
         tool: 'browser',
         status: 'fail',
         error: 'Playwright MCP not connected',
-      }]);
+      });
     });
   });
 });
