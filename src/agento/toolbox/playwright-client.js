@@ -89,6 +89,14 @@ async function connectClient() {
 function handleClose() {
   log('playwright', 'CLOSE', 'Playwright MCP child process closed');
   client = null;
+  // connectClient() only sets lastError when *connect* throws. When the child
+  // boots fine and dies later (Chromium SIGSEGV, OOM, …), onclose fires with no
+  // connect-level error in scope — leave the marker so the eventual FATAL log
+  // and the agent-facing "permanently failed" message carry a meaningful cause
+  // instead of "unknown".
+  if (!state.lastError) {
+    state.lastError = 'Playwright child process closed unexpectedly';
+  }
   if (stabilityTimer) {
     clearTimeout(stabilityTimer);
     stabilityTimer = null;

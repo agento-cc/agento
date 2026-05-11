@@ -153,6 +153,51 @@ describe('playwright-client state machine', () => {
     expect(connectMock).not.toHaveBeenCalled();
   });
 
+  it('onclose after successful connect tags state.lastError with "closed unexpectedly"', async () => {
+    const mod = await import('../playwright-client.js');
+    mod.__resetForTests();
+
+    await mod.initPlaywright();
+    expect(mod.getPlaywrightState().lastError).toBeNull();
+
+    // Simulate the dead-child case: connect succeeded so no connect-level
+    // error is in scope when the child later dies. handleClose must still
+    // leave a usable marker for the eventual FATAL log + agent message.
+    onCloseRef.fn();
+
+    expect(mod.getPlaywrightState().lastError).toBe('Playwright child process closed unexpectedly');
+  });
+
+  it('5 successful-connect-then-crash cycles hit state=failed with "closed unexpectedly" lastError', async () => {
+    vi.useFakeTimers();
+    const mod = await import('../playwright-client.js');
+    mod.__resetForTests();
+
+    // Boot once successfully.
+    await mod.initPlaywright();
+    expect(mod.getPlaywrightState().state).toBe('ready');
+
+    // 5 cycles: fire onclose, advance through backoff so the restart loop
+    // reconnects successfully (connectMock still resolves). attempt grows
+    // 1 → 2 → 3 → 4 → 5 across the cycles because reconnects happen inside
+    // the STABILITY_RESET_MS window.
+    const backoffs = [1000, 2000, 4000, 8000, 16000];
+    for (let i = 0; i < 5; i++) {
+      onCloseRef.fn();
+      await vi.advanceTimersByTimeAsync(backoffs[i] + 50);
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    expect(mod.getPlaywrightState()).toMatchObject({ state: 'ready', attempt: 5 });
+
+    // 6th crash pushes scheduleRestart past MAX_ATTEMPTS → failed.
+    onCloseRef.fn();
+    const s = mod.getPlaywrightState();
+    expect(s.state).toBe('failed');
+    expect(s.attempt).toBe(5);
+    expect(s.lastError).toBe('Playwright child process closed unexpectedly');
+  });
+
   it('attempt counter resets to 0 after STABILITY_RESET_MS of stable ready', async () => {
     vi.useFakeTimers();
     const mod = await import('../playwright-client.js');
