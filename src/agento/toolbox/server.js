@@ -176,8 +176,12 @@ app.get('/health', async (req, res) => {
     healthchecks = registeredHealthchecks;
   }
 
+  // Docker HEALTHCHECK uses this endpoint to decide container liveness — it cares
+  // about the HTTP status code only. A dead Playwright subsystem leaves the body
+  // status=degraded but HTTP 200, so the container stays (healthy) and other
+  // adapters keep serving.
   if (!runTests) {
-    const response = { status: 'ok', tools };
+    const response = { status: 'ok', tools, playwright: playwright.getPlaywrightState() };
     if (agentViewId) response.agent_view_id = agentViewId;
     return res.json(response);
   }
@@ -188,6 +192,7 @@ app.get('/health', async (req, res) => {
     status: hasFail ? 'degraded' : 'ok',
     tools,
     checks,
+    playwright: playwright.getPlaywrightState(),
   };
   if (agentViewId) response.agent_view_id = agentViewId;
   res.json(response);
