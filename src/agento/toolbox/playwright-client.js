@@ -7,6 +7,17 @@ let client = null;
 let transport = null;
 let discoveredTools = [];
 
+// Lifecycle state for observers (browser.js healthcheck, /health endpoint).
+// Replaced by full state machine in the next commit; for now this is a thin
+// reflection of `client` so callers can branch on lifecycle, not on null.
+const MAX_ATTEMPTS = 5;
+const state = {
+  state: 'starting',
+  attempt: 0,
+  maxAttempts: MAX_ATTEMPTS,
+  lastError: null,
+};
+
 async function buildMcpArgs() {
   const args = ['@playwright/mcp', '--headless', '--browser', 'chromium', '--ignore-https-errors', '--caps', 'devtools'];
 
@@ -65,12 +76,20 @@ export async function initPlaywright() {
     log('playwright', 'WARN', `Failed to list tools: ${err.message}`);
   }
 
+  state.state = 'ready';
+  state.lastError = null;
+
   client.onclose = () => {
     log('playwright', 'CLOSE', 'Playwright MCP child process closed');
     client = null;
+    state.state = 'starting';
   };
 
   return client;
+}
+
+export function getPlaywrightState() {
+  return { ...state };
 }
 
 export function getPlaywrightClient() {

@@ -165,12 +165,36 @@ const BROWSER_TOOLS = {
 
 // --- Registration ---
 
+const HEALTHCHECK_LISTTOOLS_TIMEOUT_MS = 3000;
+
+function describePlaywrightState(getState) {
+  const s = typeof getState === 'function' ? getState() : null;
+  if (!s) return { error: 'Playwright MCP not connected' };
+  if (s.state === 'starting') return { error: 'Browser service is starting up — try again in a few seconds.' };
+  if (s.state === 'restarting') return { error: `Browser service is restarting (attempt ${s.attempt} of ${s.maxAttempts}) — try again in a moment.` };
+  if (s.state === 'failed') {
+    const last = s.lastError ? `: ${s.lastError}` : '';
+    return { error: `Browser service has failed permanently after ${s.attempt} restart attempts${last}. Check toolbox logs.` };
+  }
+  return { error: 'Browser service is in inconsistent state — check toolbox logs.' };
+}
+
 export async function healthcheck({ playwright }) {
   const client = playwright.getClient();
   if (!client) {
-    return [{ tool: 'browser', status: 'fail', error: 'Playwright MCP not connected' }];
+    const { error } = describePlaywrightState(playwright.getState);
+    return [{ tool: 'browser', status: 'fail', error }];
   }
-  return [{ tool: 'browser', status: 'ok', ms: 0 }];
+  const t0 = Date.now();
+  try {
+    await Promise.race([
+      client.listTools(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`listTools timeout after ${HEALTHCHECK_LISTTOOLS_TIMEOUT_MS}ms`)), HEALTHCHECK_LISTTOOLS_TIMEOUT_MS)),
+    ]);
+    return [{ tool: 'browser', status: 'ok', ms: Date.now() - t0 }];
+  } catch (err) {
+    return [{ tool: 'browser', status: 'fail', error: err.message }];
+  }
 }
 
 export function register(server, { log, playwright, moduleConfigs, isToolEnabled, artifactsDir }) {
@@ -252,9 +276,10 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
 
         const client = playwright.getClient();
         if (!client) {
-          log(name, 'ERROR', `user=${user} — Playwright MCP not connected`);
+          const { error } = describePlaywrightState(playwright.getState);
+          log(name, 'ERROR', `user=${user} — ${error}`);
           return {
-            content: [{ type: 'text', text: 'Error: Playwright MCP is not available. Browser service may be starting up.' }],
+            content: [{ type: 'text', text: `Error: ${error}` }],
             isError: true,
           };
         }
@@ -415,9 +440,10 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
       const { user, ...toolArgs } = args;
       const client = playwright.getClient();
       if (!client) {
-        log(tool.name, 'ERROR', `user=${user} — Playwright MCP not connected`);
+        const { error } = describePlaywrightState(playwright.getState);
+        log(tool.name, 'ERROR', `user=${user} — ${error}`);
         return {
-          content: [{ type: 'text', text: 'Error: Playwright MCP is not available. Browser service may be starting up.' }],
+          content: [{ type: 'text', text: `Error: ${error}` }],
           isError: true,
         };
       }

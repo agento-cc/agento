@@ -24,6 +24,7 @@ const context = {
   playwright: {
     getClient: playwright.getPlaywrightClient,
     getTools: playwright.getPlaywrightTools,
+    getState: playwright.getPlaywrightState,
   },
 };
 
