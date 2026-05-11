@@ -203,7 +203,7 @@ Promise.allSettled([
     logToolbox('startup', 'ERROR', `Module REST API registration failed: ${restResult.reason?.message}`);
   }
   if (playwrightResult.status === 'rejected') {
-    logToolbox('playwright', 'ERROR', `Failed to start Playwright MCP: ${playwrightResult.reason?.message}. Browser tools will be unavailable.`);
+    logToolbox('playwright', 'ERROR', `Failed to start Playwright MCP: ${playwrightResult.reason?.message}. Auto-restart loop will retry up to MAX_ATTEMPTS.`);
   }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Toolbox MCP server listening on port ${PORT}`);
