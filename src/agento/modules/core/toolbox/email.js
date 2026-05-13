@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import nodemailer from 'nodemailer';
+import { stat } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { createTransporter } from './email-transport.js';
+
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 function matchesWhitelist(email, whitelist) {
   email = email.toLowerCase();
@@ -13,6 +17,39 @@ function matchesWhitelist(email, whitelist) {
     );
     return regex.test(email);
   });
+}
+
+function findRejectedRecipient(whitelist, ...groups) {
+  for (const { field, list } of groups) {
+    if (!list) continue;
+    for (const addr of list) {
+      if (!matchesWhitelist(addr, whitelist)) return { field, addr };
+    }
+  }
+  return null;
+}
+
+async function validateAttachments(paths) {
+  for (const p of paths) {
+    if (!p.startsWith('/workspace/')) {
+      return `Error: attachment path "${p}" must be inside /workspace/`;
+    }
+  }
+  for (const p of paths) {
+    let info;
+    try {
+      info = await stat(p);
+    } catch (err) {
+      return `Error: attachment "${p}" not found (${err.code || err.message})`;
+    }
+    if (!info.isFile()) {
+      return `Error: attachment "${p}" is not a regular file`;
+    }
+    if (info.size > MAX_ATTACHMENT_BYTES) {
+      return `Error: attachment "${p}" is ${info.size} bytes; exceeds 25 MB cap`;
+    }
+  }
+  return null;
 }
 
 export async function healthcheck({ moduleConfigs }) {
@@ -30,7 +67,7 @@ export async function healthcheck({ moduleConfigs }) {
 
   const start = Date.now();
   try {
-    const transporter = nodemailer.createTransport({
+    const transporter = await createTransporter({
       host: smtpConfig.host,
       port: smtpConfig.port,
       secure: smtpConfig.port === 465,
@@ -62,22 +99,35 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
   server.tool(
     'email_send',
     [
-      'Send an email via SMTP. Recipients are validated against a whitelist.',
-      'Only whitelisted addresses are allowed. Blocked recipients return an error.',
+      'Send a single SMTP email. Supports multiple To/Cc/Bcc recipients and file attachments.',
+      'All recipient addresses (to, cc, bcc) must match the whitelist.',
+      'Attachment paths must be absolute and inside /workspace/ (typically files in artifactsDir). Max 10 files, 25 MB each.',
       'Example:',
-      '  to: "user@example.com", subject: "Diagnostic report", body: "Analysis content..."',
+      '  to: ["user@example.com"], cc: ["lead@example.com"],',
+      '  subject: "Diagnostic report",',
+      '  body: "Analysis attached.",',
+      '  attachments: ["/workspace/artifacts/ws/av/123/report.pdf"]',
     ].join('\n'),
     {
       user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),
-      to: z.string().describe('Recipient email address'),
+      to: z.array(z.string().email()).min(1).describe('Recipient email addresses (To). All must be in the whitelist.'),
+      cc: z.array(z.string().email()).optional().describe('Carbon-copy recipients. All must be in the whitelist.'),
+      bcc: z.array(z.string().email()).optional().describe('Blind carbon-copy recipients. All must be in the whitelist.'),
+      attachments: z.array(z.string()).max(10).optional().describe('Absolute file paths inside /workspace/. Max 10 files; each up to 25 MB.'),
       subject: z.string().describe('Email subject'),
       body: z.string().describe('Email body (plain text)'),
     },
-    async ({ user, to, subject, body }) => {
-      if (!matchesWhitelist(to, whitelist)) {
-        log('email_send', 'BLOCKED', `user=${user} to="${to}" - not in whitelist`);
+    async ({ user, to, cc, bcc, attachments, subject, body }) => {
+      const rejected = findRejectedRecipient(
+        whitelist,
+        { field: 'to', list: to },
+        { field: 'cc', list: cc },
+        { field: 'bcc', list: bcc },
+      );
+      if (rejected) {
+        log('email_send', 'BLOCKED', `user=${user} ${rejected.field}="${rejected.addr}" - not in whitelist`);
         return {
-          content: [{ type: 'text', text: `Error: Recipient "${to}" is not in the allowed recipients whitelist.` }],
+          content: [{ type: 'text', text: `Error: Recipient "${rejected.addr}" (${rejected.field}) is not in the allowed recipients whitelist.` }],
           isError: true,
         };
       }
@@ -90,8 +140,18 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
         };
       }
 
+      let attachmentsList;
+      if (attachments && attachments.length > 0) {
+        const err = await validateAttachments(attachments);
+        if (err) {
+          log('email_send', 'ERROR', `user=${user} ${err}`);
+          return { content: [{ type: 'text', text: err }], isError: true };
+        }
+        attachmentsList = attachments.map(p => ({ filename: basename(p), path: p }));
+      }
+
       try {
-        const transporter = nodemailer.createTransport({
+        const transporter = await createTransporter({
           host: smtpConfig.host,
           port: smtpConfig.port,
           secure: smtpConfig.port === 465,
@@ -101,14 +161,21 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
         const info = await transporter.sendMail({
           from: smtpConfig.from || smtpConfig.user,
           replyTo: user,
-          to,
+          to: to.join(', '),
+          cc: cc?.length ? cc.join(', ') : undefined,
+          bcc: bcc?.length ? bcc.join(', ') : undefined,
           subject,
           text: body,
+          attachments: attachmentsList,
         });
 
-        log('email_send', 'OK', `user=${user} to="${to}" subject="${subject}" msgId=${info.messageId}`);
+        const counts = `to=${to.length} cc=${cc?.length || 0} bcc=${bcc?.length || 0} attachments=${attachmentsList?.length || 0}`;
+        log('email_send', 'OK', `user=${user} ${counts} subject="${subject}" msgId=${info.messageId}`);
+        const summary = attachmentsList?.length
+          ? `Email sent (${to.length} to, ${cc?.length || 0} cc, ${bcc?.length || 0} bcc, ${attachmentsList.length} attachment${attachmentsList.length === 1 ? '' : 's'}). Message ID: ${info.messageId}`
+          : `Email sent (${to.length} to, ${cc?.length || 0} cc, ${bcc?.length || 0} bcc). Message ID: ${info.messageId}`;
         return {
-          content: [{ type: 'text', text: `Email sent to ${to}. Message ID: ${info.messageId}` }],
+          content: [{ type: 'text', text: summary }],
         };
       } catch (err) {
         log('email_send', 'ERROR', `user=${user} ${err.message}`);
