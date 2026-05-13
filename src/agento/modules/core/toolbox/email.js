@@ -100,12 +100,13 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
     'email_send',
     [
       'Send a single SMTP email. Supports multiple To/Cc/Bcc recipients and file attachments.',
+      'The body is HTML — wrap any plain text in <pre> or use tags like <p>, <br>, <ul>, <a href> for formatting.',
       'All recipient addresses (to, cc, bcc) must match the whitelist.',
       'Attachment paths must be absolute and inside /workspace/ (typically files in artifactsDir). Max 10 files, 25 MB each.',
       'Example:',
       '  to: ["user@example.com"], cc: ["lead@example.com"],',
       '  subject: "Diagnostic report",',
-      '  body: "Analysis attached.",',
+      '  body_html: "<p>Analysis attached. See <b>chart.png</b> for trend.</p>",',
       '  attachments: ["/workspace/artifacts/ws/av/123/report.pdf"]',
     ].join('\n'),
     {
@@ -115,9 +116,9 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
       bcc: z.array(z.string().email()).optional().describe('Blind carbon-copy recipients. All must be in the whitelist.'),
       attachments: z.array(z.string()).max(10).optional().describe('Absolute file paths inside /workspace/. Max 10 files; each up to 25 MB.'),
       subject: z.string().describe('Email subject'),
-      body: z.string().describe('Email body (plain text)'),
+      body_html: z.string().describe('Email body as HTML. Use tags like <p>, <br>, <ul>, <a href>, <b>; wrap plain text in <pre>.'),
     },
-    async ({ user, to, cc, bcc, attachments, subject, body }) => {
+    async ({ user, to, cc, bcc, attachments, subject, body_html }) => {
       const rejected = findRejectedRecipient(
         whitelist,
         { field: 'to', list: to },
@@ -165,7 +166,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
           cc: cc?.length ? cc.join(', ') : undefined,
           bcc: bcc?.length ? bcc.join(', ') : undefined,
           subject,
-          text: body,
+          html: body_html,
           attachments: attachmentsList,
         });
 

@@ -54,7 +54,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 'hi',
-      body: 'hello',
+      body_html: '<p>hello</p>',
     });
 
     expect(res.isError).toBeUndefined();
@@ -62,9 +62,10 @@ describe('email_send tool', () => {
     expect(sendMailMock.mock.calls[0][0]).toMatchObject({
       to: 'a@allowed.com',
       subject: 'hi',
-      text: 'hello',
+      html: '<p>hello</p>',
       replyTo: 'agent@allowed.com',
     });
+    expect(sendMailMock.mock.calls[0][0].text).toBeUndefined();
   });
 
   it('sends to multiple to recipients comma-joined', async () => {
@@ -73,7 +74,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com', 'b@allowed.com'],
       subject: 'group',
-      body: 'team',
+      body_html: '<p>team</p>',
     });
 
     expect(sendMailMock).toHaveBeenCalledTimes(1);
@@ -88,7 +89,7 @@ describe('email_send tool', () => {
       cc: ['boss@other.com'],
       bcc: ['c@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
     });
     const withCcBcc = sendMailMock.mock.calls[0][0];
     expect(withCcBcc.cc).toBe('boss@other.com');
@@ -99,7 +100,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
     });
     const noCcBcc = sendMailMock.mock.calls[0][0];
     expect(noCcBcc.cc).toBeUndefined();
@@ -113,7 +114,7 @@ describe('email_send tool', () => {
       to: ['a@allowed.com'],
       cc: ['stranger@evil.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
     });
 
     expect(res.isError).toBe(true);
@@ -128,7 +129,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
       attachments: ['/etc/passwd'],
     });
 
@@ -144,7 +145,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
       attachments: ['/workspace/missing.pdf'],
     });
 
@@ -160,7 +161,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
       attachments: ['/workspace/big.pdf'],
     });
 
@@ -176,7 +177,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
       attachments: [
         '/workspace/artifacts/ws/av/123/report.pdf',
         '/workspace/artifacts/ws/av/123/chart.png',
@@ -198,7 +199,7 @@ describe('email_send tool', () => {
       user: 'agent@allowed.com',
       to: ['a@allowed.com'],
       subject: 's',
-      body: 'b',
+      body_html: '<p>b</p>',
     });
 
     expect(res.isError).toBe(true);
