@@ -115,18 +115,18 @@ class PublishCommand:
             return
 
         for av in agent_views:
-            jira_config = get_scoped_config(conn, "jira", scope=Scope.AGENT_VIEW, scope_id=av.id)
-            if jira_config is None:
-                logger.warning("Could not resolve jira config for agent_view %s, skipping", av.code)
-                continue
-            if not jira_config.enabled:
-                logger.debug("Jira disabled for agent_view %s, skipping", av.code)
-                continue
-
-            priority = resolve_publish_priority(conn, av.id)
-            logger.info("Publishing %s for agent_view %s (id=%d)", kind, av.code, av.id)
-
             try:
+                jira_config = get_scoped_config(conn, "jira", scope=Scope.AGENT_VIEW, scope_id=av.id)
+                if jira_config is None:
+                    logger.warning("Could not resolve jira config for agent_view %s, skipping", av.code)
+                    continue
+                if not jira_config.enabled:
+                    logger.debug("Jira disabled for agent_view %s, skipping", av.code)
+                    continue
+
+                priority = resolve_publish_priority(conn, av.id)
+                logger.info("Publishing %s for agent_view %s (id=%d)", kind, av.code, av.id)
+
                 if kind == "jira-todo":
                     self._publish_todo_for_agent_view(args, db_config, jira_config, av.id, priority, logger)
                 elif kind == "jira-mention":
@@ -137,9 +137,10 @@ class PublishCommand:
                     logger.info("Published %d mention jobs for agent_view %s", count, av.code)
             except Exception:
                 logger.exception(
-                    "Failed to publish %s for agent_view %s (id=%d), continuing",
+                    "Publish %s failed for agent_view %s (id=%d) — continuing with remaining views",
                     kind, av.code, av.id,
                 )
+                continue
 
     def _publish_todo_for_agent_view(self, args, db_config, jira_config, agent_view_id, priority, logger):
         """Publish todo for a specific agent_view."""

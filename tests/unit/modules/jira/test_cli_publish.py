@@ -195,3 +195,39 @@ class TestCmdPublishTodoDispatch:
         _, kwargs = mock_publisher.publish_todo.call_args
         assert kwargs.get("agent_view_id") == 2
         assert kwargs.get("reference_id") == "AI-42"
+
+    @patch("agento.modules.jira.src.commands.publish._publisher")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.agent_view_runtime.resolve_publish_priority")
+    def test_config_resolution_error_continues_to_next_agent_view(
+        self, mock_priority, mock_scoped_config, mock_get_avs,
+        mock_bootstrap, mock_logger, mock_toolbox_cls, mock_builder_cls, mock_publisher,
+    ):
+        """If get_scoped_config OR resolve_publish_priority raises for one
+        agent_view, subsequent agent_views must still publish."""
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        av1 = _make_agent_view(id=1, code="mieszko")
+        av2 = _make_agent_view(id=2, code="zyga")
+        mock_get_avs.return_value = [av1, av2]
+
+        good_cfg = _make_jira_config()
+        mock_scoped_config.side_effect = [RuntimeError("bad config row"), good_cfg]
+        mock_priority.return_value = 50
+
+        task = _make_task("AI-99", updated="2026-05-14T10:00:00.000+0000")
+        builder = MagicMock()
+        builder.get_todo_tasks.return_value = [task]
+        mock_builder_cls.return_value = builder
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        mock_publisher.publish_todo.assert_called_once()
+        _, kwargs = mock_publisher.publish_todo.call_args
+        assert kwargs.get("agent_view_id") == 2
