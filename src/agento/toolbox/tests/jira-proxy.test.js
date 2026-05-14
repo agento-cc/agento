@@ -117,4 +117,51 @@ describe('createJiraProxyHandler', () => {
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ error: 'ECONNREFUSED' });
   });
+
+  it('logs ERROR when method/path missing on 400', async () => {
+    const handler = createJiraProxyHandler(() => validConfig, log);
+    const { req, res } = mockReqRes({ agent_view_id: 5 });
+    await handler(req, res);
+
+    expect(log).toHaveBeenCalledWith(
+      'api/jira/request', 'ERROR',
+      expect.stringContaining('agent_view_id=5'),
+    );
+  });
+
+  it('logs ERROR on invalid method', async () => {
+    const handler = createJiraProxyHandler(() => validConfig, log);
+    const { req, res } = mockReqRes({ method: 'PATCH', path: '/x', agent_view_id: 6 });
+    await handler(req, res);
+
+    expect(log).toHaveBeenCalledWith(
+      'api/jira/request', 'ERROR',
+      expect.stringContaining('Invalid method'),
+    );
+  });
+
+  it('logs ERROR when jira not configured on 500', async () => {
+    const handler = createJiraProxyHandler(
+      () => ({ host: null, user: null, token: null }),
+      log,
+    );
+    const { req, res } = mockReqRes({ method: 'GET', path: '/x', agent_view_id: 8 });
+    await handler(req, res);
+
+    expect(log).toHaveBeenCalledWith(
+      'api/jira/request', 'ERROR',
+      expect.stringContaining('agent_view_id=8'),
+    );
+  });
+
+  it('does not double-respond on network error (return after catch)', async () => {
+    const handler = createJiraProxyHandler(() => validConfig, log);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    const { req, res } = mockReqRes({ method: 'GET', path: '/x' });
+    await handler(req, res);
+
+    expect(res.status).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledTimes(1);
+  });
 });
