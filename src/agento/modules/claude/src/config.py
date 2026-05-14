@@ -9,6 +9,21 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Keys copied from the captured developer ``~/.claude.json`` into the agent's
+# build ``.claude.json``. Strictly auth/identity restoration — without
+# ``oauthAccount`` Claude falls into the login picker even with a valid
+# ``.credentials.json``. Everything else in the developer payload is per-CWD
+# or per-machine state (notably ``projects``, whose
+# ``enabledMcpjsonServers: []`` silently disables MCP servers including the
+# toolbox auto-injected by ``prepare_workspace``).
+_AUTH_IDENTITY_KEYS = frozenset({
+    "oauthAccount",
+    "userID",
+    "numStartups",
+    "firstStartTime",
+    "hasCompletedOnboarding",
+})
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
@@ -86,24 +101,26 @@ class ClaudeConfigWriter:
         logger.debug("Wrote Claude credentials to %s", creds_path)
 
         claude_json_payload = raw_auth.get("claude_json") if isinstance(raw_auth, dict) else None
-        if isinstance(claude_json_payload, dict) and claude_json_payload:
-            claude_json_path = build_dir / ".claude.json"
-            existing: dict[str, Any] = {}
-            if claude_json_path.is_file():
-                try:
-                    parsed = json.loads(claude_json_path.read_text())
-                    if isinstance(parsed, dict):
-                        existing = parsed
-                except (json.JSONDecodeError, OSError):
-                    existing = {}
-            # Auth state wins over prior build contents for any Claude-managed
-            # keys (``oauthAccount``, ``userID``, ``numStartups``, ...); agent_view
-            # config keys like ``model`` / ``systemPrompt`` / ``permissions`` that
-            # only ``prepare_workspace`` sets survive automatically because they
-            # are not present in ``claude_json_payload``.
-            merged = {**existing, **claude_json_payload}
-            claude_json_path.write_text(json.dumps(merged, indent=2))
-            logger.debug("Wrote Claude user state to %s", claude_json_path)
+        if not isinstance(claude_json_payload, dict) or not claude_json_payload:
+            return
+        sanitized = {
+            k: v for k, v in claude_json_payload.items()
+            if k in _AUTH_IDENTITY_KEYS
+        }
+        if not sanitized:
+            return
+        claude_json_path = build_dir / ".claude.json"
+        existing: dict[str, Any] = {}
+        if claude_json_path.is_file():
+            try:
+                parsed = json.loads(claude_json_path.read_text())
+                if isinstance(parsed, dict):
+                    existing = parsed
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        merged = {**existing, **sanitized}
+        claude_json_path.write_text(json.dumps(merged, indent=2))
+        logger.debug("Wrote Claude user state to %s", claude_json_path)
 
     def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
         """Merge legacy shared-HOME Claude config into the per-agent build."""

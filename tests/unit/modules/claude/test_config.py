@@ -333,6 +333,72 @@ class TestWriteCredentials:
         }
         assert not (work_dir / ".claude.json").exists()
 
+    def test_does_not_leak_projects_per_cwd_state(self, writer, work_dir):
+        # prepare_workspace wrote agent_view config; ``_write_mcp_json`` wrote
+        # toolbox into .mcp.json. The captured developer ~/.claude.json carries
+        # a per-CWD ``projects`` entry whose ``enabledMcpjsonServers: []`` would
+        # silently override the toolbox enablement if leaked into build_dir.
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "model": "opus-4-7",
+            "systemPrompt": "Be concise.",
+        }))
+
+        creds = {
+            "subscription_key": "sk-x",
+            "raw_auth": {
+                "credentials": {"claudeAiOauth": {"accessToken": "sk-x"}},
+                "claude_json": {
+                    "oauthAccount": {"emailAddress": "m@k.com"},
+                    "userID": "abc",
+                    "projects": {
+                        "/workspace": {
+                            "enabledMcpjsonServers": [],
+                            "hasTrustDialogAccepted": True,
+                            "lastSessionId": "leaked-id",
+                        },
+                        "/Users/dev/elsewhere": {"enabledMcpjsonServers": ["x"]},
+                    },
+                },
+            },
+        }
+        writer.write_credentials(work_dir, creds)
+
+        out = json.loads((work_dir / ".claude.json").read_text())
+        # Auth identity copied through
+        assert out["oauthAccount"] == {"emailAddress": "m@k.com"}
+        assert out["userID"] == "abc"
+        # Agent_view config from prepare_workspace survives
+        assert out["model"] == "opus-4-7"
+        assert out["systemPrompt"] == "Be concise."
+        # Per-CWD developer state did NOT leak
+        assert "projects" not in out
+
+    def test_payload_with_only_non_identity_keys_leaves_build_config_intact(
+        self, writer, work_dir,
+    ):
+        # If the captured payload has no auth-identity keys (only leaky state),
+        # the build's existing .claude.json must be left untouched — we must
+        # not write an empty merged file over the prepare_workspace output.
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "model": "opus-4-7",
+            "systemPrompt": "Be concise.",
+        }))
+
+        creds = {
+            "subscription_key": "sk-x",
+            "raw_auth": {
+                "credentials": {"claudeAiOauth": {"accessToken": "sk-x"}},
+                "claude_json": {
+                    "projects": {"/workspace": {"enabledMcpjsonServers": []}},
+                    "telemetryNoise": "ignored",
+                },
+            },
+        }
+        writer.write_credentials(work_dir, creds)
+
+        out = json.loads((work_dir / ".claude.json").read_text())
+        assert out == {"model": "opus-4-7", "systemPrompt": "Be concise."}
+
 
 class TestOwnedPaths:
     def test_returns_claude_files_and_dir(self, writer):
