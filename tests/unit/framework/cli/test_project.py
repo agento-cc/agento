@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agento.framework.cli._project import find_compose_file, find_project_root, update_dotenv_value
+from agento.framework.cli._project import (
+    compose_file_flags,
+    find_compose_file,
+    find_override_file,
+    find_project_root,
+    update_dotenv_value,
+)
 
 
 class TestFindProjectRoot:
@@ -67,6 +73,74 @@ class TestFindComposeFile:
 
     def test_returns_none_when_missing(self, tmp_path: Path):
         assert find_compose_file(tmp_path) is None
+
+
+class TestFindOverrideFile:
+    def test_finds_override_next_to_docker_subdir_base(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        (docker_dir / "docker-compose.yml").write_text("services: {}")
+        override = docker_dir / "docker-compose.override.yml"
+        override.write_text("services: {}")
+        assert find_override_file(tmp_path) == override
+
+    def test_finds_override_next_to_dev_compose(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        (docker_dir / "docker-compose.dev.yml").write_text("services: {}")
+        override = docker_dir / "docker-compose.override.yml"
+        override.write_text("services: {}")
+        assert find_override_file(tmp_path) == override
+
+    def test_finds_override_at_project_root(self, tmp_path: Path):
+        (tmp_path / "docker-compose.yml").write_text("services: {}")
+        override = tmp_path / "docker-compose.override.yml"
+        override.write_text("services: {}")
+        assert find_override_file(tmp_path) == override
+
+    def test_returns_none_when_override_absent(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        (docker_dir / "docker-compose.yml").write_text("services: {}")
+        assert find_override_file(tmp_path) is None
+
+    def test_returns_none_when_base_absent(self, tmp_path: Path):
+        # Stray override without a base is meaningless.
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        (docker_dir / "docker-compose.override.yml").write_text("services: {}")
+        assert find_override_file(tmp_path) is None
+
+
+class TestComposeFileFlags:
+    def test_base_only(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        base = docker_dir / "docker-compose.yml"
+        base.write_text("services: {}")
+        assert compose_file_flags(tmp_path) == ["-f", str(base)]
+
+    def test_base_and_override(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        base = docker_dir / "docker-compose.yml"
+        override = docker_dir / "docker-compose.override.yml"
+        base.write_text("services: {}")
+        override.write_text("services: {}")
+        # Order matters: base first, override second (native Compose convention).
+        assert compose_file_flags(tmp_path) == ["-f", str(base), "-f", str(override)]
+
+    def test_no_base(self, tmp_path: Path):
+        assert compose_file_flags(tmp_path) == []
+
+    def test_dev_base_and_override(self, tmp_path: Path):
+        docker_dir = tmp_path / "docker"
+        docker_dir.mkdir()
+        base = docker_dir / "docker-compose.dev.yml"
+        override = docker_dir / "docker-compose.override.yml"
+        base.write_text("services: {}")
+        override.write_text("services: {}")
+        assert compose_file_flags(tmp_path) == ["-f", str(base), "-f", str(override)]
 
 
 class TestUpdateDotenvValue:

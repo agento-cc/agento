@@ -16,6 +16,7 @@ import sys
 from ._env import parse_env_file
 from ._output import log_error, log_info, log_warn
 from ._project import (
+    compose_file_flags,
     find_compose_file,
     find_project_root,
     resolve_host_ids,
@@ -134,8 +135,7 @@ class UpgradeCommand:
             log_info(f"Not inside an agento project. CLI upgraded to {version}, skipping project upgrade.")
             return
 
-        compose_file = find_compose_file(project_root)
-        if compose_file is None:
+        if find_compose_file(project_root) is None:
             log_error("docker-compose.yml not found.")
             sys.exit(1)
 
@@ -182,7 +182,7 @@ class UpgradeCommand:
         regenerate_compose(project_root)
         log_info("Refreshed docker-compose.yml + .agento/docker/")
 
-        compose = ["docker", "compose", "-f", str(compose_file)]
+        compose = ["docker", "compose", *compose_file_flags(project_root)]
 
         if args.no_build:
             log_info("Skipping image build (--no-build).")

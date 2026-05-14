@@ -52,6 +52,38 @@ def find_compose_file(project_root: Path) -> Path | None:
     return None
 
 
+def find_override_file(project_root: Path) -> Path | None:
+    """Find docker-compose.override.yml next to the active base compose file.
+
+    Returns None when no base is present (a stray override without a base is
+    meaningless) or when no override sits next to the base.
+    """
+    base = find_compose_file(project_root)
+    if base is None:
+        return None
+    candidate = base.parent / "docker-compose.override.yml"
+    return candidate if candidate.is_file() else None
+
+
+def compose_file_flags(project_root: Path) -> list[str]:
+    """Return the -f flag list for `docker compose`, merging override if present.
+
+    Docker Compose auto-merges docker-compose.override.yml only when invoked
+    without any -f. The agento CLI always passes -f explicitly, so we must
+    list the override ourselves.
+
+    Returns [] when no base compose file is found.
+    """
+    base = find_compose_file(project_root)
+    if base is None:
+        return []
+    flags = ["-f", str(base)]
+    override = find_override_file(project_root)
+    if override is not None:
+        flags += ["-f", str(override)]
+    return flags
+
+
 def resolve_host_ids() -> tuple[int, int]:
     """Detect the current process UID/GID. Refuse running as root.
 

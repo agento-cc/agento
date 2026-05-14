@@ -30,7 +30,7 @@ def _set_module_state(name: str, enabled: bool) -> None:
     directories.
     """
     from ..module_status import set_enabled
-    from ._project import find_compose_file, find_project_root
+    from ._project import compose_file_flags, find_project_root
 
     project_root = find_project_root()
 
@@ -67,10 +67,10 @@ def _set_module_state(name: str, enabled: bool) -> None:
         regenerate_compose(project_root)
         print("Regenerated docker-compose.yml")
 
-        compose_file = find_compose_file(project_root)
-        if compose_file is not None:
+        flags = compose_file_flags(project_root)
+        if flags:
             result = subprocess.run(
-                ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+                ["docker", "compose", *flags, "up", "-d"],
             )
             if result.returncode != 0:
                 print("Warning: 'docker compose up -d' failed — restart manually for the mount change to take effect.")

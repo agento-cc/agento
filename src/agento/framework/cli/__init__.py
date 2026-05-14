@@ -53,14 +53,14 @@ def _should_proxy(argv: list[str]) -> bool:
 
 def _proxy_to_docker(argv: list[str]) -> None:
     """Exec command inside the cron container via docker compose."""
-    from ._project import find_compose_file, find_project_root
+    from ._project import compose_file_flags, find_project_root
 
     project_root = find_project_root()
     if not project_root:
         print("Error: Not inside an agento project. Run 'agento install' first.", file=sys.stderr)
         sys.exit(1)
-    compose_file = find_compose_file(project_root)
-    if not compose_file:
+    flags = compose_file_flags(project_root)
+    if not flags:
         print("Error: docker-compose.yml not found.", file=sys.stderr)
         sys.exit(1)
 
@@ -77,7 +77,7 @@ def _proxy_to_docker(argv: list[str]) -> None:
         env_flags = ["-e", f"TERM={term}", "-e", "COLORTERM=truecolor"]
 
     exec_args = [
-        "docker", "compose", "-f", str(compose_file),
+        "docker", "compose", *flags,
         "exec", "-u", "agent", tty_flag, *env_flags, "cron",
         "/opt/cron-agent/run.sh", *clean_argv,
     ]

@@ -7,22 +7,22 @@ import sys
 import time
 
 from ._output import log_error, log_info, log_warn
-from ._project import find_compose_file, find_project_root
+from ._project import compose_file_flags, find_project_root
 
 
 def _get_compose_cmd() -> list[str]:
-    """Get the base docker compose command with the project's compose file."""
+    """Get the base docker compose command with the project's compose file(s)."""
     project_root = find_project_root()
     if project_root is None:
         log_error("Not inside an agento project. Run 'agento install' first.")
         sys.exit(1)
 
-    compose_file = find_compose_file(project_root)
-    if compose_file is None:
+    flags = compose_file_flags(project_root)
+    if not flags:
         log_error("docker-compose.yml not found. Run 'agento install' first.")
         sys.exit(1)
 
-    return ["docker", "compose", "-f", str(compose_file)]
+    return ["docker", "compose", *flags]
 
 
 class UpCommand:

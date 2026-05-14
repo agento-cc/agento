@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from ..ssh_prelude import wrap_with_ssh_prelude
-from ._project import find_compose_file, find_project_root
+from ._project import compose_file_flags, find_project_root
 
 
 class RunCommand:
@@ -56,13 +56,13 @@ class RunCommand:
             )
             sys.exit(1)
 
-        compose_file = find_compose_file(project_root)
-        if compose_file is None:
+        compose_flags = compose_file_flags(project_root)
+        if not compose_flags:
             print("Error: docker-compose.yml not found.", file=sys.stderr)
             sys.exit(1)
 
         prompt = " ".join(args.prompt).strip()
-        runtime = _fetch_runtime(compose_file, args.agent_view_code, prompt=prompt)
+        runtime = _fetch_runtime(compose_flags, args.agent_view_code, prompt=prompt)
         provider = runtime.get("provider")
         if provider is None:
             print(
@@ -97,7 +97,7 @@ class RunCommand:
 
         if prompt:
             exec_args = [
-                "docker", "compose", "-f", str(compose_file),
+                "docker", "compose", *compose_flags,
                 "exec", "-T",
                 "-u", "agent",
                 "-e", f"HOME={home_in_container}",
@@ -110,7 +110,7 @@ class RunCommand:
 
         term = os.environ.get("TERM", "xterm-256color")
         exec_args = [
-            "docker", "compose", "-f", str(compose_file),
+            "docker", "compose", *compose_flags,
             "exec", "-it",
             "-u", "agent",
             "-e", f"HOME={home_in_container}",
@@ -124,11 +124,11 @@ class RunCommand:
 
 
 def _fetch_runtime(
-    compose_file: Path, agent_view_code: str, *, prompt: str = "",
+    compose_flags: list[str], agent_view_code: str, *, prompt: str = "",
 ) -> dict:
     """Ask the cron container for the runtime profile; return parsed JSON."""
     cmd = [
-        "docker", "compose", "-f", str(compose_file),
+        "docker", "compose", *compose_flags,
         "exec", "-T", "cron",
         "/opt/cron-agent/run.sh", "agent_view:runtime", agent_view_code,
     ]

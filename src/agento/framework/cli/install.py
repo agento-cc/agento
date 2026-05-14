@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ._env import parse_env_file
 from ._output import cyan, log_error, log_info, log_warn
-from ._project import find_compose_file, resolve_host_ids, update_dotenv_value
+from ._project import compose_file_flags, resolve_host_ids, update_dotenv_value
 from ._provisioning import (
     find_links_for_local_install,
     materialize_docker_context,
@@ -279,12 +279,12 @@ def _reinstall(project_dir: Path, host_uid: int, host_gid: int) -> None:
 
 def _run_post_install(project_dir: Path) -> None:
     """Build images, run agento up + setup:upgrade after scaffolding."""
-    compose_file = find_compose_file(project_dir)
-    if not compose_file:
+    flags = compose_file_flags(project_dir)
+    if not flags:
         log_warn("docker-compose.yml not found. Skipping runtime startup.")
         return
 
-    compose_cmd = ["docker", "compose", "-f", str(compose_file)]
+    compose_cmd = ["docker", "compose", *flags]
 
     # Build sandbox first (cron's FROM ${SANDBOX_IMAGE} depends on it),
     # then toolbox + cron in a single pass.

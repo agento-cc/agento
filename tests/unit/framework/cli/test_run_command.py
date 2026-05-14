@@ -85,7 +85,7 @@ class TestRunCommand:
     def test_missing_compose_file_exits(self, tmp_path, capsys):
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=tmp_path),
-            patch("agento.framework.cli.run.find_compose_file", return_value=None),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=[]),
             pytest.raises(SystemExit) as exc,
         ):
             RunCommand().execute(_make_args())
@@ -97,7 +97,7 @@ class TestRunCommand:
         runtime = {**_base_runtime(), "provider": None, "interactive_command": None}
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
             pytest.raises(SystemExit) as exc,
         ):
@@ -112,7 +112,7 @@ class TestRunCommand:
         runtime = {**_base_runtime(provider="exotic"), "interactive_command": None}
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
             pytest.raises(SystemExit) as exc,
         ):
@@ -125,7 +125,7 @@ class TestRunCommand:
         project_root, compose = _project_layout(tmp_path, include_current=False)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
             pytest.raises(SystemExit) as exc,
         ):
@@ -139,7 +139,7 @@ class TestRunCommand:
         project_root, compose = _project_layout(tmp_path)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
             patch("agento.framework.cli.run.os.execvp") as mock_execvp,
         ):
@@ -160,7 +160,7 @@ class TestRunCommand:
         runtime = _base_runtime(provider="codex", model="gpt-5.4")
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
             patch("agento.framework.cli.run.os.execvp") as mock_execvp,
         ):
@@ -174,7 +174,7 @@ class TestRunCommand:
         completed = subprocess.CompletedProcess(args=[], returncode=0)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime) as mock_fetch,
             patch("agento.framework.cli.run.subprocess.run", return_value=completed) as mock_run,
             pytest.raises(SystemExit) as exc,
@@ -199,7 +199,7 @@ class TestRunCommand:
         completed = subprocess.CompletedProcess(args=[], returncode=0)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
             patch("agento.framework.cli.run.subprocess.run", return_value=completed) as mock_run,
             pytest.raises(SystemExit) as exc,
@@ -215,7 +215,7 @@ class TestRunCommand:
         project_root, compose = _project_layout(tmp_path)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=_base_runtime()),
             patch("agento.framework.cli.run.os.execvp") as mock_execvp,
         ):
@@ -231,7 +231,7 @@ class TestRunCommand:
         completed = subprocess.CompletedProcess(args=[], returncode=0)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
             patch("agento.framework.cli.run.subprocess.run", return_value=completed) as mock_run,
             pytest.raises(SystemExit),
@@ -248,7 +248,7 @@ class TestRunCommand:
         completed = subprocess.CompletedProcess(args=[], returncode=17)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
-            patch("agento.framework.cli.run.find_compose_file", return_value=compose),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
             patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
             patch("agento.framework.cli.run.subprocess.run", return_value=completed),
             pytest.raises(SystemExit) as exc,
@@ -267,7 +267,7 @@ class TestFetchRuntime:
             stderr="",
         )
         with patch("agento.framework.cli.run.subprocess.run", return_value=fake_result):
-            result = _fetch_runtime(tmp_path / "compose.yml", "dev_01")
+            result = _fetch_runtime(["-f", str(tmp_path / "compose.yml")],"dev_01")
         assert result["interactive_command"] == _INTERACTIVE_CLAUDE
         assert result["headless_command"] is None
 
@@ -282,7 +282,7 @@ class TestFetchRuntime:
         with patch(
             "agento.framework.cli.run.subprocess.run", return_value=fake_result,
         ) as mock_run:
-            _fetch_runtime(tmp_path / "compose.yml", "dev_01", prompt="hello")
+            _fetch_runtime(["-f", str(tmp_path / "compose.yml")],"dev_01", prompt="hello")
         cmd = mock_run.call_args.args[0]
         assert "--prompt" in cmd
         assert cmd[cmd.index("--prompt") + 1] == "hello"
@@ -298,7 +298,7 @@ class TestFetchRuntime:
             patch("agento.framework.cli.run.subprocess.run", return_value=fake_result),
             pytest.raises(SystemExit) as exc,
         ):
-            _fetch_runtime(tmp_path / "compose.yml", "missing")
+            _fetch_runtime(["-f", str(tmp_path / "compose.yml")],"missing")
         assert exc.value.code == 1
         assert "agent_view 'missing' not found" in capsys.readouterr().err
 
@@ -313,6 +313,6 @@ class TestFetchRuntime:
             patch("agento.framework.cli.run.subprocess.run", return_value=fake_result),
             pytest.raises(SystemExit) as exc,
         ):
-            _fetch_runtime(tmp_path / "compose.yml", "dev_01")
+            _fetch_runtime(["-f", str(tmp_path / "compose.yml")],"dev_01")
         assert exc.value.code == 1
         assert "could not parse runtime JSON" in capsys.readouterr().err
