@@ -379,11 +379,15 @@ class TokenMarkErrorCommand:
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..agent_manager import mark_token_error
+        from ..agent_manager.token_store import get_token
+        from ..event_manager import get_event_manager
+        from ..events import TokenAuthFailedEvent
 
         db_config, _, _ = _load_framework_config()
         logger = get_logger("agent-manager")
         conn = get_connection_or_exit(db_config)
         try:
+            token = get_token(conn, args.token_id)
             found = mark_token_error(conn, args.token_id, args.message, logger=logger)
             conn.commit()
             if found:
@@ -393,6 +397,17 @@ class TokenMarkErrorCommand:
                 sys.exit(1)
         finally:
             conn.close()
+
+        if token is not None:
+            get_event_manager().dispatch(
+                "token_auth_failed_after",
+                TokenAuthFailedEvent(
+                    agent_type=token.agent_type.value,
+                    token_id=args.token_id,
+                    error_msg=args.message,
+                    job_id=None,
+                ),
+            )
 
 
 class TokenResetCommand:
