@@ -101,3 +101,15 @@ def test_cron_entry_command_sources_env_file():
     )
     assert entry.command.startswith("set -a; source /opt/cron-agent/env; set +a;")
     assert "/opt/cron-agent/run.sh publish jira-cron AI-99" in entry.command
+
+
+def test_cron_entry_command_captures_stderr_to_logfile():
+    """Per-issue cron commands must not discard stderr."""
+    entry = CronEntry(
+        issue_key="AI-99",
+        summary="Any task",
+        frequency_label="Co 5min",
+        cron_expression="*/5 * * * *",
+    )
+    assert ">/dev/null 2>&1" not in entry.command
+    assert "2>>/app/logs/cron-stderr.log" in entry.command

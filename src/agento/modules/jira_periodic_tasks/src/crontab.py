@@ -8,7 +8,7 @@ MARKER_END = "# JIRA-SYNC:END"
 
 ENV_FILE = "/opt/cron-agent/env"
 ENVLOAD = f"set -a; source {ENV_FILE}; set +a"
-EXEC_COMMAND_TEMPLATE = f"{ENVLOAD}; cd /workspace && /opt/cron-agent/run.sh publish jira-cron {{issue_key}} >/dev/null 2>&1"
+EXEC_COMMAND_TEMPLATE = f"{ENVLOAD}; cd /workspace && /opt/cron-agent/run.sh publish jira-cron {{issue_key}} >/dev/null 2>>/app/logs/cron-stderr.log"
 
 
 @dataclass
