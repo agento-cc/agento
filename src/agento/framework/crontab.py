@@ -18,7 +18,7 @@ MARKER_END = "# AGENTO:END"
 
 ENV_FILE = "/opt/cron-agent/env"
 ENVLOAD = f"set -a; source {ENV_FILE}; set +a"
-COMMAND_TEMPLATE = f"{ENVLOAD}; cd /workspace && /opt/cron-agent/run.sh {{command}} >/dev/null 2>&1"
+COMMAND_TEMPLATE = f"{ENVLOAD}; cd /workspace && /opt/cron-agent/run.sh {{command}} >/dev/null 2>>/app/logs/cron-stderr.log"
 
 
 @dataclass

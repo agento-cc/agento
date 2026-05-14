@@ -43,6 +43,16 @@ class TestCronJob:
         assert line.startswith("# jira/sync\n")
         assert "0 * * * *" in line
 
+    def test_full_command_captures_stderr_to_logfile_not_devnull(self):
+        """Cron stderr must not be discarded; it should land in a rotated
+        log file so escaped tracebacks remain forensically available."""
+        job = CronJob(name="sample", schedule="* * * * *", command="publish jira-todo")
+        cmd = job.full_command
+        assert ">/dev/null 2>&1" not in cmd
+        assert "2>>/app/logs/cron-stderr.log" in cmd
+        # stdout still suppressed
+        assert ">/dev/null" in cmd
+
 
 class TestCollectCronJobs:
     def test_collects_from_manifests(self):
