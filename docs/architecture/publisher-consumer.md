@@ -60,7 +60,7 @@ TODO → RUNNING → SUCCESS
 
 ## Concurrency & Per-Run Isolation (Phase 9.5)
 
-The consumer runs a bounded thread pool (`CONSUMER_MAX_WORKERS`). Each job gets an isolated run directory with freshly generated config files (`.claude.json`, `.mcp.json`, `AGENTS.md`, `SOUL.md`), eliminating the shared-file corruption that previously forced `concurrency=1`.
+The consumer runs a bounded thread pool (`AGENTO_CONSUMER_MAX_WORKERS`). Each job gets an isolated run directory with freshly generated config files (`.claude.json`, `.mcp.json`, `AGENTS.md`, `SOUL.md`), eliminating the shared-file corruption that previously forced `concurrency=1`.
 
 Jobs are dequeued by priority: `ORDER BY priority DESC, created_at ASC`. Priority is stamped at publish time from scoped config path `agent_view/scheduling/priority` (0-100, default 50).
 
@@ -72,11 +72,13 @@ Configured via environment variables (set in `docker/.cron.env` or `docker-compo
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `CONSUMER_MAX_WORKERS` | 1 | Worker pool size (max concurrent jobs). Safe to increase with per-run isolation. |
-| `CONSUMER_POLL_INTERVAL` | 5.0 | Seconds between poll cycles |
-| `JOB_TIMEOUT_SECONDS` | 1200 | Max job runtime (20 min) |
+| `AGENTO_CONSUMER_MAX_WORKERS` | 1 | Worker pool size (max concurrent jobs). Safe to increase with per-run isolation. |
+| `AGENTO_CONSUMER_POLL_INTERVAL` | 5.0 | Seconds between poll cycles |
+| `AGENTO_JOB_TIMEOUT_SECONDS` | 1200 | Max job runtime (20 min) |
 | `DISABLE_LLM` | 0 | Dry-run mode (skip actual LLM calls) |
 | `AGENTO_WORKSPACE_DIR` | /workspace | Base directory for per-run directories |
+
+> **Naming:** Framework knobs use the `AGENTO_*` prefix so they survive the cron entrypoint's env-var whitelist (the consumer is launched via `su - agent`, which wipes the parent env). See [cron-env-contract.md](cron-env-contract.md).
 
 ## Events
 

@@ -4,6 +4,17 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 ---
 
+## 2026-05-14 — `AGENTO_*` prefix for cron container env vars
+
+- **The bug.** Cron entrypoint persists docker env to `/opt/cron-agent/env` through a prefix whitelist (`MYSQL_|TZ=|DISABLE_LLM=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=`) because the consumer is launched via `su - agent`, which wipes the parent environment. `CONSUMER_MAX_WORKERS`, `CONSUMER_POLL_INTERVAL`, and `JOB_TIMEOUT_SECONDS` weren't in the list, so values set in `docker-compose.override.yml` silently fell back to hardcoded defaults — the consumer always ran with `max_workers=1, poll_interval=5.0s, job_timeout=1200s`.
+- **The convention.** Any env var the cron/consumer needs from `docker-compose` must use the `AGENTO_*` prefix. Five offending vars were renamed: `AGENTO_CONSUMER_MAX_WORKERS`, `AGENTO_CONSUMER_POLL_INTERVAL`, `AGENTO_JOB_TIMEOUT_SECONDS`, plus `AGENTO_AGENT_USAGE_WINDOW_HOURS` and `AGENTO_AGENT_ROTATION_INTERVAL_HOURS` (the latter two were surfaced by the regression guard — `AGENT_` doesn't match `AGENTO_`). Externally-conventional vars stay as-is (`MYSQL_*` for the driver, `TZ` for libc, `CONFIG__*` for the public config-fallback contract, `PYTHONPATH`, `PROVIDER`, `DISABLE_LLM`).
+- **No backwards-compat aliases.** The old names never reached the consumer in production (that *is* the bug), so nobody is relying on them working — there's no behavior to preserve. Operators upgrading past this release who had the old names set in their compose override should rename them.
+- **Regression test pins the contract.** `tests/unit/framework/test_entrypoint_env_whitelist.py` reads the regex out of `entrypoint.sh` and walks every `from_env()` classmethod under `src/agento/framework/` (via AST), collecting each literal var name passed to `os.environ.get(...)`; mismatches fail CI with a clear message. Stops the next framework knob from quietly drifting away from the whitelist — and surfaced the latent `AGENT_*` bug in `agent_manager/config.py` the moment the guard was broadened past `consumer_config.py`.
+- **Alternatives considered.** (a) Extend the regex with `CONSUMER_|JOB_TIMEOUT_SECONDS=`: rejected — every new knob would need an entrypoint edit, and the bug class returns. (b) Drop the whitelist and pass everything: rejected — `source $ENV_FILE` breaks on values with quotes/newlines (some `CONFIG__*` values do) and would clobber `PATH`/`HOME`/`SHELL`. (c) Rename `MYSQL_*`/`CONFIG__*`/`TZ` to `AGENTO_*` too: rejected — those are externally-mandated conventions; renaming would break drivers, libc, and the public config contract.
+- **Doc.** [docs/architecture/cron-env-contract.md](docs/architecture/cron-env-contract.md) explains the contract end-to-end and lists the migration for operators.
+
+---
+
 ## 2026-04-23 — Token pool per provider, LRU selection
 
 - **Dropped `oauth_token.is_primary`.** The sticky "global primary per provider" flag made a single token carry all traffic until manually rotated; a second license sat idle. Multi-license accounts (which are the common case for paid subscriptions) only benefited after the operator ran `token:set`, and even then the sticky winner kept being picked. The flag conflated two concepts — "preferred" and "active" — and couldn't express per-agent_view preferences either.
@@ -52,7 +63,7 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 - **ThreadPoolExecutor, not subprocess pool.** Threads are lightweight coordinators; the actual work runs in CLI subprocesses (Claude Code / Codex). Isolation comes from per-run directories, not process-level separation. Simpler shutdown semantics than subprocess supervision.
 - **Per-run directory** `{AGENTO_WORKSPACE_DIR}/{workspace}/{agent_view}/runs/{job_id}/`: each job gets freshly generated `.claude.json`, `.mcp.json`, `.codex/config.toml`, `AGENTS.md`, `SOUL.md`. Eliminates the shared `.claude.json` corruption that forced `concurrency=1`. Directory is cleaned up after job completion.
 - **`job.priority`** 0-100 (default 50), stamped at publish time from scoped config path `agent_view/scheduling/priority`. Dequeue uses `ORDER BY priority DESC, created_at ASC`. Changing config does not retroactively affect queued jobs — consistent with Jira's approach to sprint priorities.
-- **`CONSUMER_MAX_WORKERS`** env var (default 1, safe to increase now). `CONSUMER_CONCURRENCY` kept as backward-compat alias.
+- **`AGENTO_CONSUMER_MAX_WORKERS`** env var (default 1, safe to increase now). Originally `CONSUMER_MAX_WORKERS`; renamed in 2026-05 (see [Cron container env prefix convention](#2026-05-14--agento_-prefix-for-cron-container-env-vars) below) because the entrypoint's whitelist dropped non-`AGENTO_*` framework knobs.
 - **`agent_view_worker.py` deprecated** — the subprocess-per-agent_view model from Phase 9 is replaced by generic worker slots in the consumer's thread pool.
 
 ---
@@ -115,44 +126,3 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 - **Runner ABC shared by Claude and Codex**: common interface, replay support, e2e tests. Not two separate unrelated runners.
 - **20-minute subprocess timeout**: agents have variable duration, but unbounded is too risky. 20 min covers longest observed tasks.
 - **No timeout on ClaudeRunner for job execution**: agent tasks can legitimately run 30s–10min. Premature kill leaves Jira in inconsistent state. Timeout enforcement deferred.
-
----
-
-## 2026-03-05 — Mention publisher (jira-mention)
-
-- **Comment-level idempotency key** (`jira:mention:{issue_key}:{comment_id}`), not time-windowed — same mention never processed twice.
-- **New toolbox REST endpoint** (`POST /api/jira/issue/comments`): Python code can't use MCP tools directly, needed a REST bridge.
-- **Static `accountId` in config** (`jira_assignee_account_id`): dynamic lookup via `/myself` is unnecessary complexity for a rarely-changing value.
-- **JQL `comment ~ "{accountId}"`**: `text ~ email` returns 0 results (email not indexed from `[~accountid:...]` markup). Jira indexes the raw accountId string from comment bodies.
-- **Reuses `TodoWorkflow`**, no mention-specific workflow needed.
-
----
-
-## 2026-02-24 — Jira image attachments
-
-- **API v2 over v3** for issue fetching: v3 returns ADF JSON (no direct UUID→attachment mapping). v2 returns wiki markup with `!filename!` directly matching attachment filenames.
-- **Download to disk, not base64 in MCP response**: keeps every `jira_get_issue` response lightweight; agent reads images on demand.
-- **Shared volume mount** (`../workspace/tmp/jira`): toolbox writes, sandbox reads at same path.
-- **Limits: 10 images × 5 MB**: prevents runaway downloads.
-
----
-
-## 2026-02-22 — Publisher-consumer job queue
-
-- **MySQL `SELECT FOR UPDATE SKIP LOCKED`** over Redis/Celery/Kafka: ~50 jobs/day, 2 workers — no external queue infra needed.
-- **PyMySQL over mysql-connector-python**: pure Python, no C extension build in Docker (base image is `node:22-slim`).
-- **Consumer in same container as cron**: simpler than a separate service. `wait -n` provides fail-fast if either process dies.
-- **Retry via row mutation** (`TODO` + future `scheduled_after`), no separate `RETRYING` status. Backoff: 1m, 5m, 30m.
-- **`INSERT IGNORE` on unique key** for idempotency. Time-windowed keys (e.g., `jira:cron:AI-123:20260220_0800`) prevent duplicate jobs from double-fired cron.
-- **`source` column** (`'jira'`, `'email'`, …) for future multi-publisher extensibility.
-- **JSON structured logs for consumer only**: publisher/sync are short-lived, JSON adds noise there.
-
----
-
-## 2026-02-19 — Python port (bash → Python)
-
-- **httpx over requests**: native async for future migration, `respx` for clean mocking.
-- **Dataclasses over Pydantic**: simple models (<10 fields) from a trusted internal API. Pydantic is 5 MB+ of unneeded validation.
-- **Single CLI with subcommands** (`sync`, `exec:cron`, `exec:todo`, `task-list`) instead of 4 bash scripts.
-- **Code baked into Docker image** (COPY, not volume mount): venv must be in image. Trade-off: requires rebuild after code changes.
-- **Toolbox REST API is the only Jira interface**: cron container has no Jira credentials. All mutations go through Claude CLI via MCP.

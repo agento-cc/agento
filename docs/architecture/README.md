@@ -30,5 +30,6 @@ Agento runs as Docker containers with strict security separation between the AI 
 - [Workspace](workspace.md) — theme / build / runtime layers, what lives where, agent's view
 - [Zero-Trust Security](zero-trust.md) — credential isolation model
 - [Publisher-Consumer](publisher-consumer.md) — job queue architecture
+- [Cron Env Contract](cron-env-contract.md) — `AGENTO_*` env-var prefix convention for the cron container
 - [Event-Observer System](events.md) — cross-module communication via events
 - [FileManager](file-manager.md) — external file handling, conversion, and security

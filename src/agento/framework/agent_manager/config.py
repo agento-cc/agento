@@ -13,6 +13,6 @@ class AgentManagerConfig:
     def from_env(cls) -> AgentManagerConfig:
         """Build from env vars only."""
         return cls(
-            usage_window_hours=int(os.environ.get("AGENT_USAGE_WINDOW_HOURS", "24")),
-            rotation_interval_hours=int(os.environ.get("AGENT_ROTATION_INTERVAL_HOURS", "1")),
+            usage_window_hours=int(os.environ.get("AGENTO_AGENT_USAGE_WINDOW_HOURS", "24")),
+            rotation_interval_hours=int(os.environ.get("AGENTO_AGENT_ROTATION_INTERVAL_HOURS", "1")),
         )

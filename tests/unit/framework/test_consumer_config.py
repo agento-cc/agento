@@ -21,9 +21,9 @@ class TestConsumerConfigDefaults:
 
 class TestConsumerConfigFromEnv:
     def test_from_env(self, monkeypatch):
-        monkeypatch.setenv("CONSUMER_MAX_WORKERS", "2")
-        monkeypatch.setenv("CONSUMER_POLL_INTERVAL", "10.0")
-        monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "600")
+        monkeypatch.setenv("AGENTO_CONSUMER_MAX_WORKERS", "2")
+        monkeypatch.setenv("AGENTO_CONSUMER_POLL_INTERVAL", "10.0")
+        monkeypatch.setenv("AGENTO_JOB_TIMEOUT_SECONDS", "600")
 
         cfg = ConsumerConfig.from_env()
         assert cfg.concurrency == 2
@@ -32,7 +32,7 @@ class TestConsumerConfigFromEnv:
         assert cfg.disable_llm is False
 
     def test_env_overrides(self, monkeypatch):
-        monkeypatch.setenv("JOB_TIMEOUT_SECONDS", "300")
+        monkeypatch.setenv("AGENTO_JOB_TIMEOUT_SECONDS", "300")
         monkeypatch.setenv("DISABLE_LLM", "true")
 
         cfg = ConsumerConfig.from_env()
