@@ -91,9 +91,15 @@ class TestInstructionFilesFromScopedConfig:
 
     @pytest.fixture(autouse=True)
     def _patch_observer_db(self, int_db_config):
-        """Make the observer's DatabaseConfig.from_env() return the test DB config."""
+        """Make the observer's DatabaseConfig.from_env() return the test DB config.
+        Two observers need this: the agent_view PopulateInstructionsObserver and
+        the workspace_build BuildFreshnessCheckObserver (the latter fires now on
+        every job via workspace_build_check_before)."""
         with patch(
             "agento.modules.agent_view.src.observers.DatabaseConfig.from_env",
+            return_value=int_db_config,
+        ), patch(
+            "agento.modules.workspace_build.src.observers.DatabaseConfig.from_env",
             return_value=int_db_config,
         ):
             yield
@@ -130,7 +136,8 @@ class TestInstructionFilesFromScopedConfig:
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
              patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
-             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)), \
+             patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()
@@ -173,7 +180,8 @@ class TestInstructionFilesFromScopedConfig:
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
              patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
-             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)), \
+             patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()
@@ -215,7 +223,8 @@ class TestInstructionFilesFromScopedConfig:
 
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
              patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
-             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)):
+             patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)), \
+             patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)
             job = consumer._try_dequeue()

@@ -17,6 +17,18 @@ from agento.framework.workspace import AgentView, Workspace
 from agento.modules.claude.src.output_parser import ClaudeResult
 
 
+@pytest.fixture(autouse=True)
+def _mock_workspace_build_execute():
+    """Consumer now dispatches workspace_build_check_before at job-claim time
+    as a build-freshness check (see test_consumer_build_freshness.py). The
+    observer in workspace_build module calls execute_build under the hood.
+    These tests don't seed a real workspace_build row, so mock execute_build
+    at the import site used by the observer. Behavior is covered by
+    test_consumer_build_freshness.py."""
+    with patch("agento.modules.workspace_build.src.builder.execute_build") as m:
+        yield m
+
+
 def _make_job(**overrides) -> Job:
     defaults = dict(
         id=42,

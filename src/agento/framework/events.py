@@ -289,6 +289,20 @@ class WorkspaceBuildFailedEvent:
     error: str = ""
 
 
+@dataclass
+class WorkspaceBuildCheckEvent:
+    """Dispatched by the consumer before a job runs, to give the
+    ``workspace_build`` module a chance to rebuild the workspace if the
+    resolved scoped config no longer matches the on-disk build. The observer
+    (in the workspace_build module) sets ``error`` to surface failures back to
+    the consumer — necessary because ``EventManager.dispatch`` swallows
+    observer exceptions, and a silent rebuild failure would let the job run
+    with a stale build (the exact bug this event was introduced to fix)."""
+
+    agent_view_id: int
+    error: Exception | None = None
+
+
 # --- Skill events ---
 
 

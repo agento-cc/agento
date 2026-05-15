@@ -369,6 +369,8 @@ class TestConsumerUsesPreBuiltWorkspace:
         with patch("agento.modules.claude.src.runner.TokenClaudeRunner.run", capturing_run), \
              patch("agento.framework.artifacts_dir.ARTIFACTS_DIR", str(tmp_path)), \
              patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)), \
+             patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)), \
+             patch("agento.modules.workspace_build.src.observers.DatabaseConfig.from_env", return_value=int_db_config), \
              patch("agento.modules.agent_view.src.observers.DatabaseConfig.from_env", return_value=int_db_config):
             logger = logging.getLogger("test")
             consumer = Consumer(int_db_config, int_consumer_config, logger)

@@ -5,9 +5,54 @@ import logging
 from pathlib import Path
 
 from agento.framework.config_writer import get_config_writer
+from agento.framework.database_config import DatabaseConfig
+from agento.framework.db import get_connection
 from agento.framework.workspace_paths import BUILD_DIR
 
 logger = logging.getLogger(__name__)
+
+
+class BuildFreshnessCheckObserver:
+    """Rebuild the workspace if the resolved scoped config drifted from the
+    on-disk build. Fires on ``workspace_build_check_before`` dispatched by
+    the consumer at job-claim time.
+
+    Idempotent — ``execute_build`` skips when the checksum matches and the
+    build_dir is intact. Rebuilds otherwise (provider switch, model change,
+    skill changes, instructions, mcp/servers, persistent-path contract drift
+    after an agento-core upgrade).
+
+    Captures exceptions on the event so the consumer can re-raise them
+    (EventManager.dispatch swallows raised exceptions, but a silent rebuild
+    failure would let the job run with a stale build — the exact bug this
+    observer was introduced to prevent)."""
+
+    def execute(self, event) -> None:
+        agent_view_id = getattr(event, "agent_view_id", None)
+        if agent_view_id is None:
+            return
+
+        from .builder import execute_build
+
+        try:
+            conn = get_connection(DatabaseConfig.from_env())
+        except Exception as exc:
+            event.error = exc
+            logger.exception(
+                "BuildFreshnessCheckObserver: could not open DB connection",
+            )
+            return
+
+        try:
+            execute_build(conn, agent_view_id)
+        except Exception as exc:
+            event.error = exc
+            logger.exception(
+                "BuildFreshnessCheckObserver: execute_build failed for "
+                "agent_view_id=%s", agent_view_id,
+            )
+        finally:
+            conn.close()
 
 
 class RefreshBuildCredentialsObserver:

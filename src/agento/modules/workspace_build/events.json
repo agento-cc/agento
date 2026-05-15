@@ -7,5 +7,8 @@
   ],
   "token_auth_failed_after": [
     {"name": "workspace_build_replace_errored_token", "class": "src.observers.ReplaceErroredTokenCredentialsObserver", "order": 100}
+  ],
+  "workspace_build_check_before": [
+    {"name": "workspace_build_freshness_check", "class": "src.observers.BuildFreshnessCheckObserver", "order": 100}
   ]
 }
