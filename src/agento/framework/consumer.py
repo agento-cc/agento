@@ -399,22 +399,9 @@ class Consumer:
         # Per-job artifacts directory (only when agent_view is set)
         current_build = None
         if runtime.agent_view is not None and runtime.workspace is not None:
-            # Freshness check: ask the workspace_build module (via the event
-            # bus, to preserve the framework→module boundary) to rebuild if
-            # the resolved scoped config no longer matches the on-disk build.
-            # The observer is idempotent — when the checksum is unchanged and
-            # the build_dir exists, it's a no-op (~ms). When anything affecting
-            # the build changed (provider switch, model, skills, instructions,
-            # mcp/servers, persistent_paths contract drift across agento-core
-            # upgrades), it rebuilds and updates the `current` symlink.
-            #
-            # Without this, `config:set agent_view/provider` leaves stale
-            # provider files in `current` and the job runs with no MCP tools.
-            #
-            # `dispatch` swallows observer exceptions, so the observer captures
-            # the error on the event and we re-raise here. Job will be marked
-            # FAILED with a clear "rebuild failed" message — strictly better
-            # than the previous "silently runs with stale build" outcome.
+            # Freshness check: observer rebuilds if scoped config drifted
+            # from the on-disk build. `dispatch` swallows exceptions, so the
+            # observer surfaces them via event.error for us to re-raise.
             check_event = WorkspaceBuildCheckEvent(agent_view_id=job.agent_view_id)
             em.dispatch("workspace_build_check_before", check_event)
             if check_event.error is not None:

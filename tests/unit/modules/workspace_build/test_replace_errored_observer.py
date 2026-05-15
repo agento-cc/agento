@@ -68,7 +68,7 @@ def _patch_db(monkeypatch):
         lambda _cfg: MagicMock(),
     )
     monkeypatch.setattr(
-        "agento.framework.database_config.DatabaseConfig.from_env_and_json",
+        "agento.framework.database_config.DatabaseConfig.from_env",
         classmethod(lambda cls: MagicMock()),
     )
 

@@ -115,7 +115,7 @@ The 3-level fallback already works perfectly in Node.js (`config-loader.js`). Py
 2. **Framework config dataclasses** extracted from CronConfig:
    - `DatabaseConfig` — MySQL connection (mysql_host, mysql_port, etc.), duck-typing compatible with `get_connection()`
    - `ConsumerConfig` — concurrency, poll_interval, job_timeout_seconds, disable_llm
-   - Both with `from_env_and_json()` classmethods
+   - Both with `from_env()` classmethods
 
 3. **CronConfig decomposed** — now a thin bridge (`from_resolved()`) that delegates to DatabaseConfig + ConsumerConfig + jira module config. Still exists for backward compatibility but all CLI commands route through the new config system via `_load_full_config()`.
 

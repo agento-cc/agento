@@ -29,8 +29,3 @@ class ConsumerConfig:
             job_timeout_seconds=int(os.environ.get("AGENTO_JOB_TIMEOUT_SECONDS", "1200")),
             disable_llm=os.environ.get("DISABLE_LLM", "0").lower() in ("1", "true", "yes"),
         )
-
-    @classmethod
-    def from_env_and_json(cls, data: dict | None = None) -> ConsumerConfig:
-        """Deprecated: use from_env(). Kept for backward compatibility."""
-        return cls.from_env()

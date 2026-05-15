@@ -55,7 +55,3 @@ class TestConsumerConfigFromEnv:
         assert cfg.concurrency == 1
         assert cfg.poll_interval == 5.0
         assert cfg.job_timeout_seconds == 1200
-
-    def test_backward_compat_alias(self):
-        cfg = ConsumerConfig.from_env_and_json({"consumer": {"concurrency": 99}})
-        assert cfg.concurrency == 1  # json data is ignored

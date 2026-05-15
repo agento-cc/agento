@@ -262,7 +262,7 @@ class TokenRunner(ABC):
         from ..database_config import DatabaseConfig
         from ..db import get_connection
 
-        return get_connection(DatabaseConfig.from_env_and_json())
+        return get_connection(DatabaseConfig.from_env())
 
     def _resolve_token_from_pool(self) -> Token | None:
         """Claim the LRU healthy token for this runner's agent_type (DB-driven)."""

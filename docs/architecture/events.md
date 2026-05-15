@@ -138,11 +138,14 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 
 | Event | Data Class | Fields | When |
 |-------|-----------|--------|------|
+| `workspace_build_check_before` | `WorkspaceBuildCheckEvent` | `agent_view_id, error` | Consumer dispatches at job-claim time, before copying `current/` into the per-job artifacts dir. Observer rebuilds if checksum drifted; sets `error` on failure so consumer can re-raise (dispatch swallows exceptions). |
 | `workspace_build_start_after` | `WorkspaceBuildStartedEvent` | `agent_view_id, build_id` | After build record inserted (status → building) |
 | `workspace_build_complete_after` | `WorkspaceBuildCompletedEvent` | `agent_view_id, build_id, build_dir, checksum, skipped` | After build succeeds (status → ready) or skipped (identical checksum) |
 | `workspace_build_fail_after` | `WorkspaceBuildFailedEvent` | `agent_view_id, build_id, error` | After build fails (status → failed) |
 
 `workspace_build_complete_after` fires both for new builds and for skipped builds (when `skipped=True`, the checksum matched an existing ready build). The `skipped` flag lets observers distinguish the two cases.
+
+`workspace_build_check_before` is the freshness gate: `execute_build` short-circuits when the resolved scoped-config checksum matches the on-disk build (~ms). It rebuilds when anything affecting the build changed — provider switch, model, skills, instructions, mcp/servers, persistent-path contract drift across `agento-core` upgrades.
 
 ### Skill Lifecycle (Phase 10.5a)
 

@@ -27,8 +27,3 @@ class DatabaseConfig:
             mysql_user=os.environ.get("MYSQL_USER", "cron_agent"),
             mysql_password=os.environ.get("MYSQL_PASSWORD", ""),
         )
-
-    @classmethod
-    def from_env_and_json(cls, data: dict | None = None) -> DatabaseConfig:
-        """Deprecated: use from_env(). Kept for backward compatibility."""
-        return cls.from_env()

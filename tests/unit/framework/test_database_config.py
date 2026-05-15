@@ -41,7 +41,3 @@ class TestDatabaseConfigFromEnv:
         assert cfg.mysql_database == "cron_agent"
         assert cfg.mysql_user == "cron_agent"
         assert cfg.mysql_password == ""
-
-    def test_backward_compat_alias(self):
-        cfg = DatabaseConfig.from_env_and_json({"mysql": {"host": "ignored"}})
-        assert cfg.mysql_host == "mysql"  # json data is ignored

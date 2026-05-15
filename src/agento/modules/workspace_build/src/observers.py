@@ -155,7 +155,7 @@ class ReplaceErroredTokenCredentialsObserver:
             return
 
         try:
-            conn = get_connection(DatabaseConfig.from_env_and_json())
+            conn = get_connection(DatabaseConfig.from_env())
         except Exception:
             logger.warning(
                 "Could not open DB connection to resolve replacement token for %s",
