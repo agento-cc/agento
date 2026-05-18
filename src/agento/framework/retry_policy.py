@@ -22,14 +22,45 @@ class RetryDecision:
     reason: str
 
 
-def evaluate(error_class: str | None, attempt: int, max_attempts: int) -> RetryDecision:
+def evaluate(
+    error_class: str | None,
+    attempt: int,
+    max_attempts: int,
+    error_obj: Exception | None = None,
+) -> RetryDecision:
     """Decide whether a failed job should be retried.
 
     Args:
         error_class: The __class__.__name__ of the caught exception.
         attempt: Current attempt number (1-indexed, just completed).
         max_attempts: Maximum allowed attempts.
+        error_obj: The actual exception instance. When the exception carries a
+            ``verdict`` attribute (``JobVerificationFailed``) the verdict's
+            ``retryable`` flag overrides the standard rules — verification
+            vetoes know more than the generic exception name.
     """
+    verdict = getattr(error_obj, "verdict", None)
+    if verdict is not None:
+        if not verdict.retryable:
+            return RetryDecision(
+                should_retry=False,
+                delay_seconds=0,
+                reason=f"Verification veto (non-retryable): {verdict.reason}",
+            )
+        if attempt >= max_attempts:
+            return RetryDecision(
+                should_retry=False,
+                delay_seconds=0,
+                reason=f"Max attempts ({max_attempts}) reached after verification veto",
+            )
+        delay_index = min(attempt - 1, len(BACKOFF_DELAYS) - 1)
+        delay = BACKOFF_DELAYS[delay_index]
+        return RetryDecision(
+            should_retry=True,
+            delay_seconds=delay,
+            reason=f"Verification veto retry {attempt + 1}/{max_attempts} after {delay}s",
+        )
+
     if error_class and error_class in NON_RETRYABLE_ERRORS:
         return RetryDecision(
             should_retry=False,

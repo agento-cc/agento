@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,63 @@ class JobDeadEvent:
     job: Job
     error: Exception
     elapsed_ms: int = 0
+
+
+class VerifyReason(StrEnum):
+    """Reason for a verification veto on a successful-looking job."""
+
+    NO_MCP_CALLS = "no_mcp_calls"
+    TRANSCRIPT_MISSING = "transcript_missing"
+    TRANSCRIPT_PARSE_FAILED = "transcript_parse_failed"
+
+
+@dataclass
+class Verdict:
+    """Verification verdict produced by ``job_finalize_before`` observers.
+
+    Observers set this on the dispatched ``JobFinalizeEvent`` to veto a
+    superficially successful job (rc=0) when channel-agnostic invariants
+    are violated (e.g. the agent made zero ``mcp__toolbox__*`` tool calls).
+    """
+
+    retryable: bool
+    reason: VerifyReason
+    fresh_start: bool = False
+    detail: str | None = None
+
+
+@dataclass
+class JobFinalizeEvent:
+    """Dispatched after rc=0 (before the SUCCESS UPDATE) and again after
+    finalization commits, regardless of outcome.
+
+    Observers on ``job_finalize_before`` may mutate ``verdict`` to veto a
+    success — the consumer then treats the run as a failure
+    (``JobVerificationFailed``) and routes it through the normal retry/dead
+    path. ``job_finalize_after`` carries the same event so downstream
+    observers can read the final verdict (``None`` if the job committed as
+    SUCCESS, otherwise the populated ``Verdict``).
+
+    ``provider`` is the agent provider string (e.g. ``"claude"``, ``"codex"``)
+    that ran this job, taken from the run result. Verification observers use
+    it to resolve the right ``TranscriptReader`` from the framework registry.
+    """
+
+    job: Job
+    job_result: Any = None  # _JobResult — Any avoids circular import with consumer
+    elapsed_ms: int = 0
+    provider: str | None = None
+    verdict: Verdict | None = None
+
+
+class JobVerificationFailed(Exception):
+    """Raised internally by the consumer when a ``job_finalize_before``
+    observer sets a non-None ``Verdict`` on the event. Carries the verdict
+    so the retry policy can honor ``verdict.retryable``."""
+
+    def __init__(self, verdict: Verdict) -> None:
+        super().__init__(f"job verification veto: {verdict.reason.value}")
+        self.verdict = verdict
 
 
 @dataclass

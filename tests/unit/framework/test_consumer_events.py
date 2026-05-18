@@ -14,8 +14,11 @@ from agento.framework.events import (
     JobClaimedEvent,
     JobDeadEvent,
     JobFailedEvent,
+    JobFinalizeEvent,
     JobRetryingEvent,
     JobSucceededEvent,
+    Verdict,
+    VerifyReason,
 )
 from agento.framework.job_models import AgentType, Job
 
@@ -126,6 +129,113 @@ class TestFinalizeJobEvents:
         types = [type(e) for e in _EventCollector.events]
         assert JobFailedEvent in types
         assert JobDeadEvent in types
+
+
+class TestJobFinalizeEvents:
+    """Coverage for the verification-gate events added with app_monitor."""
+
+    def _make_consumer(self):
+        db, consumer = _mock_configs()
+        return Consumer(db, consumer, MagicMock())
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_success_with_no_verdict_dispatches_before_and_after(self, mock_conn):
+        _conn = MagicMock()
+        _conn.cursor.return_value.__enter__.return_value.fetchone.return_value = ("RUNNING",)
+        mock_conn.return_value = _conn
+        em = get_event_manager()
+        em.register("job_finalize_before", ObserverEntry(name="b", observer_class=_EventCollector))
+        em.register("job_finalize_after", ObserverEntry(name="a", observer_class=_EventCollector))
+
+        consumer = self._make_consumer()
+        job = _make_job()
+        result = _JobResult(summary="done")
+
+        consumer._finalize_job(job, None, result, 250)
+
+        types = [type(e) for e in _EventCollector.events]
+        assert types.count(JobFinalizeEvent) == 2  # before + after, same payload
+        for e in _EventCollector.events:
+            assert e.verdict is None
+            assert e.job is job
+            assert e.job_result is result
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_veto_retryable_clears_session_and_routes_to_retry(self, mock_conn):
+        _conn = MagicMock()
+        _conn.cursor.return_value.__enter__.return_value.fetchone.return_value = ("RUNNING",)
+        mock_conn.return_value = _conn
+
+        class _Vetoer:
+            def execute(self, event):
+                event.verdict = Verdict(
+                    retryable=True,
+                    reason=VerifyReason.NO_MCP_CALLS,
+                    fresh_start=True,
+                    detail="zero mcp__toolbox__ calls",
+                )
+
+        em = get_event_manager()
+        em.register("job_finalize_before", ObserverEntry(name="v", observer_class=_Vetoer))
+        em.register("job_finalize_after", ObserverEntry(name="a", observer_class=_EventCollector))
+        em.register("job_fail_after", ObserverEntry(name="f", observer_class=_EventCollector))
+        em.register("job_retry_after", ObserverEntry(name="r", observer_class=_EventCollector))
+
+        consumer = self._make_consumer()
+        job = _make_job(attempt=1, max_attempts=3)
+        result = _JobResult(summary="rc=0 but no MCP", session_id="sess-42")
+
+        consumer._finalize_job(job, None, result, 100)
+
+        types = [type(e) for e in _EventCollector.events]
+        assert JobFailedEvent in types  # vetoed run treated as failure
+        assert JobRetryingEvent in types  # retryable veto → re-queued
+        assert JobDeadEvent not in types
+
+        finalize_after = next(e for e in _EventCollector.events if isinstance(e, JobFinalizeEvent))
+        assert finalize_after.verdict is not None
+        assert finalize_after.verdict.reason == VerifyReason.NO_MCP_CALLS
+        assert finalize_after.verdict.fresh_start is True
+
+        # Confirm session_id was cleared via a dedicated UPDATE (the fix for incident 3368).
+        executed_sql = [
+            call.args[0]
+            for call in _conn.cursor.return_value.__enter__.return_value.execute.call_args_list
+        ]
+        assert any("session_id = NULL" in sql for sql in executed_sql)
+
+    @patch("agento.framework.consumer.get_connection")
+    def test_veto_non_retryable_routes_to_dead(self, mock_conn):
+        _conn = MagicMock()
+        _conn.cursor.return_value.__enter__.return_value.fetchone.return_value = ("RUNNING",)
+        mock_conn.return_value = _conn
+
+        class _Vetoer:
+            def execute(self, event):
+                event.verdict = Verdict(
+                    retryable=False,
+                    reason=VerifyReason.TRANSCRIPT_MISSING,
+                    fresh_start=False,
+                )
+
+        em = get_event_manager()
+        em.register("job_finalize_before", ObserverEntry(name="v", observer_class=_Vetoer))
+        em.register("job_finalize_after", ObserverEntry(name="a", observer_class=_EventCollector))
+        em.register("job_dead_after", ObserverEntry(name="d", observer_class=_EventCollector))
+        em.register("job_retry_after", ObserverEntry(name="r", observer_class=_EventCollector))
+
+        consumer = self._make_consumer()
+        job = _make_job(attempt=1, max_attempts=3)
+
+        consumer._finalize_job(job, None, _JobResult(summary="x"), 50)
+
+        types = [type(e) for e in _EventCollector.events]
+        assert JobDeadEvent in types
+        assert JobRetryingEvent not in types
+
+        finalize_after = next(e for e in _EventCollector.events if isinstance(e, JobFinalizeEvent))
+        assert finalize_after.verdict is not None
+        assert finalize_after.verdict.reason == VerifyReason.TRANSCRIPT_MISSING
 
 
 class TestDequeueEvents:

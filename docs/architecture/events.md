@@ -83,8 +83,12 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 | `job_fail_after` | `JobFailedEvent` | `job, error, elapsed_ms` | On any failure (fires before retry/dead) |
 | `job_retry_after` | `JobRetryingEvent` | `job, error, delay_seconds, elapsed_ms` | After retry scheduled (status → TODO) |
 | `job_dead_after` | `JobDeadEvent` | `job, error, elapsed_ms` | After max retries exhausted (status → DEAD) |
+| `job_finalize_before` | `JobFinalizeEvent` | `job, job_result, elapsed_ms, verdict` | After `rc=0`, **before** the SUCCESS UPDATE. Observers may set `verdict` to veto a "ghost success" (mutable-event pattern) |
+| `job_finalize_after` | `JobFinalizeEvent` | `job, job_result, elapsed_ms, verdict` | After the terminal status (`SUCCESS`/`TODO`/`DEAD`) commits. `verdict=None` means SUCCESS; populated `verdict` means the run was vetoed |
 
 `job_fail_after` fires on every failure, then one of `job_retry_after` or `job_dead_after` also fires.
+
+`job_finalize_before` is the verification gate added to catch incidents where the agent exits `rc=0` without doing meaningful work (e.g. broken MCP registration → zero `mcp__toolbox__*` tool calls). Observers mutate `verdict` (a `Verdict` dataclass with `retryable`, `reason: VerifyReason`, `fresh_start`, `detail`). A non-`None` verdict converts the apparent success into a `JobVerificationFailed` exception which routes through the normal retry/dead path; `verdict.fresh_start=True` additionally clears `job.session_id` so the next retry starts a fresh agent session. The `app_monitor` module ships `VerifyMcpUsageObserver` for this event — see [src/agento/modules/app_monitor/README.md](../../src/agento/modules/app_monitor/README.md).
 
 ### Consumer Lifecycle
 

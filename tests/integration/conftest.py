@@ -178,6 +178,15 @@ def _bootstrap_registries():
         jira_projects=["AI"],
         jira_assignee="agenty@example.com",
     ))
+    # app_monitor: integration tests use fake runners that don't produce real
+    # transcript JSONLs. Setting policy=trust prevents the verifier from
+    # dead-lettering every successful job. Dedicated coverage for the verifier
+    # lives in tests/unit/modules/app_monitor/ + tests/integration/test_app_monitor_wiring.py.
+    from agento.modules.app_monitor.src.constants import (
+        CFG_MISSING_TRANSCRIPT_POLICY,
+        POLICY_TRUST,
+    )
+    set_module_config("app_monitor", {CFG_MISSING_TRANSCRIPT_POLICY: POLICY_TRUST})
     set_module_config("jira_periodic_tasks", PeriodicTasksConfig(
         jira_status="Cykliczne",
         jira_frequency_field="customfield_10709",

@@ -10,5 +10,8 @@
   ],
   "cli_invokers": [
     {"provider": "claude", "class": "src.cli.ClaudeCliInvoker"}
+  ],
+  "transcript_readers": [
+    {"provider": "claude", "class": "src.transcript_reader.ClaudeTranscriptReader"}
   ]
 }

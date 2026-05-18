@@ -1,0 +1,10 @@
+{
+  "missing_transcript_policy": "dead",
+  "alerts/email_to": "",
+  "alerts/smtp_host": "",
+  "alerts/smtp_port": 587,
+  "alerts/smtp_user": "",
+  "alerts/smtp_password": "",
+  "alerts/smtp_from": "",
+  "alerts/smtp_tls": true
+}

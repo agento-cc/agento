@@ -1,0 +1,18 @@
+{
+  "missing_transcript_policy": {
+    "type": "select",
+    "label": "Action when the agent's transcript JSONL is missing or unreadable",
+    "options": [
+      {"value": "dead", "label": "Dead-letter the job (default — surfaces transcript pipeline breakage)"},
+      {"value": "retry", "label": "Retry with a fresh session"},
+      {"value": "trust", "label": "Trust rc=0 — no veto (legacy behavior)"}
+    ]
+  },
+  "alerts/email_to": {"type": "string", "label": "Alert email recipient (empty = alerts disabled)"},
+  "alerts/smtp_host": {"type": "string", "label": "SMTP host (empty = alerts disabled)"},
+  "alerts/smtp_port": {"type": "integer", "label": "SMTP port"},
+  "alerts/smtp_user": {"type": "string", "label": "SMTP user (empty = no auth)"},
+  "alerts/smtp_password": {"type": "obscure", "label": "SMTP password"},
+  "alerts/smtp_from": {"type": "string", "label": "SMTP From address"},
+  "alerts/smtp_tls": {"type": "boolean", "label": "Use STARTTLS"}
+}

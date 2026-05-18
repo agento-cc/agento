@@ -34,8 +34,10 @@ from .events import (
     JobClaimedEvent,
     JobDeadEvent,
     JobFailedEvent,
+    JobFinalizeEvent,
     JobRetryingEvent,
     JobSucceededEvent,
+    JobVerificationFailed,
     TokenAuthFailedEvent,
     WorkerStartedEvent,
     WorkerStoppedEvent,
@@ -453,7 +455,14 @@ class Consumer:
                 credentials_override=token.credentials,
             )
             runner.pid_callback = lambda pid: self._save_pid(job.id, pid)
-            runner.session_id_callback = lambda sid: self._save_session_id(job.id, sid)
+            # Persist session_id to both the DB and the in-memory job — the
+            # verification observer reads ``event.job.session_id`` to locate
+            # the agent's transcript, and would otherwise see ``None`` on the
+            # first attempt (the DB write doesn't refresh the local dataclass).
+            def _on_session_id(sid: str) -> None:
+                self._save_session_id(job.id, sid)
+                job.session_id = sid
+            runner.session_id_callback = _on_session_id
 
             # Resume instead of fresh run if previous attempt left a session_id
             should_resume = (
@@ -585,6 +594,22 @@ class Consumer:
         max_db_retries = 3
         em = get_event_manager()
 
+        # Build the finalize event once; observers on ``job_finalize_before``
+        # may mutate ``.verdict`` to veto an apparent success. We dispatch
+        # exactly once across DB retries (using ``verify_dispatched``) and
+        # then fire ``job_finalize_after`` after we commit a terminal status.
+        # ``provider`` is what the run reported (e.g. "claude") — observers use
+        # it to resolve a provider-specific TranscriptReader from the registry.
+        finalize_event = JobFinalizeEvent(
+            job=job,
+            job_result=job_result,
+            elapsed_ms=elapsed_ms,
+            provider=job_result.agent_type if job_result else None,
+            verdict=None,
+        )
+        verify_dispatched = False
+        finalize_after_pending = False
+
         for db_attempt in range(1, max_db_retries + 1):
             conn = get_connection(self._db_config)
             try:
@@ -607,6 +632,12 @@ class Consumer:
                         },
                     )
                     return
+
+                if error is None and not verify_dispatched:
+                    em.dispatch("job_finalize_before", finalize_event)
+                    verify_dispatched = True
+                    if finalize_event.verdict is not None:
+                        error = JobVerificationFailed(finalize_event.verdict)
 
                 if error is None:
                     with conn.cursor() as cur:
@@ -655,7 +686,9 @@ class Consumer:
                 else:
                     error_class = error.__class__.__name__
                     error_msg = str(error)[:2000]
-                    decision = evaluate_retry(error_class, job.attempt, job.max_attempts)
+                    decision = evaluate_retry(
+                        error_class, job.attempt, job.max_attempts, error_obj=error,
+                    )
 
                     em.dispatch(
                         "job_fail_after",
@@ -666,6 +699,20 @@ class Consumer:
                     session_id = job_result.session_id if job_result else None
                     if session_id is None:
                         session_id = getattr(error, "session_id", None)
+
+                    # Verification veto with ``fresh_start`` → next retry must
+                    # spawn a brand-new claude-cli session (incident 3368).
+                    fresh_start = (
+                        isinstance(error, JobVerificationFailed)
+                        and error.verdict.fresh_start
+                    )
+                    if fresh_start:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "UPDATE job SET session_id = NULL, updated_at = NOW() WHERE id = %s",
+                                (job.id,),
+                            )
+                        session_id = None
 
                     if decision.should_retry:
                         scheduled_after = datetime.now(UTC) + timedelta(seconds=decision.delay_seconds)
@@ -727,6 +774,7 @@ class Consumer:
                             "job_dead_after",
                             JobDeadEvent(job=job, error=error, elapsed_ms=elapsed_ms),
                         )
+                finalize_after_pending = True
                 return  # DB update succeeded
             except Exception:
                 conn.rollback()
@@ -743,3 +791,5 @@ class Consumer:
                     )
             finally:
                 conn.close()
+                if finalize_after_pending:
+                    em.dispatch("job_finalize_after", finalize_event)

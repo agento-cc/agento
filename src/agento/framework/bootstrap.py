@@ -32,6 +32,8 @@ from .router_registry import register_router
 from .runner import Runner
 from .runner_factory import clear as clear_runners
 from .runner_factory import register_runner as register_runner_factory
+from .transcript_reader import TranscriptReader, register_transcript_reader
+from .transcript_reader import clear as clear_transcript_readers
 from .workflows import clear as clear_workflows
 from .workflows import register_workflow
 from .workflows.base import Workflow
@@ -94,6 +96,7 @@ def bootstrap(
     clear_config_writers()
     clear_cli_invokers()
     clear_auth_strategies()
+    clear_transcript_readers()
     clear_commands()
     clear_onboardings()
     clear_routers()
@@ -146,6 +149,7 @@ def bootstrap(
         _load_config_writers(m)
         _load_cli_invokers(m)
         _load_auth_strategies(m)
+        _load_transcript_readers(m)
         _load_commands(m)
         _load_onboarding(m)
         _load_routers(m)
@@ -272,6 +276,24 @@ def _load_config_writers(m: ModuleManifest) -> None:
             logger.debug("Registered config writer %r from module %s", decl["provider"], m.name)
         except Exception:
             logger.exception("Failed to load config writer %r from module %s", decl.get("provider"), m.name)
+
+
+def _load_transcript_readers(m: ModuleManifest) -> None:
+    for decl in m.provides.get("transcript_readers", []):
+        try:
+            cls = import_class(m.path, decl["class"])
+            instance = cls()
+            if not isinstance(instance, TranscriptReader):
+                logger.error(
+                    "TranscriptReader %r from module %s does not implement TranscriptReader protocol, skipping",
+                    decl.get("provider"), m.name,
+                )
+                continue
+            provider = AgentProvider(decl["provider"])
+            register_transcript_reader(provider, instance)
+            logger.debug("Registered transcript reader %r from module %s", decl["provider"], m.name)
+        except Exception:
+            logger.exception("Failed to load transcript reader %r from module %s", decl.get("provider"), m.name)
 
 
 def _load_cli_invokers(m: ModuleManifest) -> None:

@@ -10,5 +10,8 @@
   ],
   "cli_invokers": [
     {"provider": "codex", "class": "src.cli.CodexCliInvoker"}
+  ],
+  "transcript_readers": [
+    {"provider": "codex", "class": "src.transcript_reader.CodexTranscriptReader"}
   ]
 }
