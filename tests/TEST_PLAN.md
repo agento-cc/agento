@@ -130,7 +130,7 @@ Mock: `app.db.get_connection`.
 | `test_upsert_schedules_disables_removed` | Entries not in list → UPDATE enabled=FALSE |
 | `test_upsert_schedules_empty_disables_all` | Empty entries list → all schedules disabled |
 | `test_upsert_schedules_db_error_logged` | On exception → logged as warning, sync continues |
-| `test_upsert_schedules_skipped_in_dry_run` | `_do_sync(dry_run=True)` → `_upsert_schedules` not called |
+| `test_upsert_schedules_skipped_in_dry_run` | `sync_view(dry_run=True)` → `_upsert_schedules` not called |
 
 ---
 

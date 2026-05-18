@@ -113,3 +113,30 @@ def test_cron_entry_command_captures_stderr_to_logfile():
     )
     assert ">/dev/null 2>&1" not in entry.command
     assert "2>>/app/logs/cron-stderr.log" in entry.command
+
+
+def test_cron_entry_includes_agent_view_flag_when_set():
+    """When `agent_view_code` is set, the crontab line must pass
+    `--agent-view <code>` so `publish jira-cron` routes to the right view
+    instead of falling back to ingress (which can only map to ONE view).
+    This is the cron-firing half of the per-view fix."""
+    entry = CronEntry(
+        issue_key="AI-3",
+        summary="Daily",
+        frequency_label="1x dziennie",
+        cron_expression="0 8 * * *",
+        agent_view_code="mieszko",
+    )
+    assert "publish jira-cron AI-3 --agent-view mieszko" in entry.command
+
+
+def test_cron_entry_omits_agent_view_flag_when_empty():
+    """No agent_view_code (zero-views fallback) → legacy line shape, no flag."""
+    entry = CronEntry(
+        issue_key="AI-3",
+        summary="Daily",
+        frequency_label="1x dziennie",
+        cron_expression="0 8 * * *",
+    )
+    assert "--agent-view" not in entry.command
+    assert "publish jira-cron AI-3 " in entry.command or entry.command.rstrip().endswith("publish jira-cron AI-3")

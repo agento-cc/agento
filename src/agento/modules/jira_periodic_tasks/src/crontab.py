@@ -8,7 +8,7 @@ MARKER_END = "# JIRA-SYNC:END"
 
 ENV_FILE = "/opt/cron-agent/env"
 ENVLOAD = f"set -a; source {ENV_FILE}; set +a"
-EXEC_COMMAND_TEMPLATE = f"{ENVLOAD}; cd /workspace && /opt/cron-agent/run.sh publish jira-cron {{issue_key}} >/dev/null 2>>/app/logs/cron-stderr.log"
+EXEC_COMMAND_TEMPLATE = f"{ENVLOAD}; cd /workspace && /opt/cron-agent/run.sh publish jira-cron {{issue_key}}{{agent_view_arg}} >/dev/null 2>>/app/logs/cron-stderr.log"
 
 
 @dataclass
@@ -17,10 +17,12 @@ class CronEntry:
     summary: str
     frequency_label: str
     cron_expression: str
+    agent_view_code: str = ""
 
     @property
     def command(self) -> str:
-        return EXEC_COMMAND_TEMPLATE.format(issue_key=self.issue_key)
+        agent_view_arg = f" --agent-view {self.agent_view_code}" if self.agent_view_code else ""
+        return EXEC_COMMAND_TEMPLATE.format(issue_key=self.issue_key, agent_view_arg=agent_view_arg)
 
     def to_crontab_lines(self) -> str:
         return f"# {self.issue_key}: {self.summary} ({self.frequency_label})\n{self.cron_expression} {self.command}"
@@ -89,3 +91,8 @@ class CrontabManager:
             check=True,
         )
         return True
+
+    def apply_managed(self, entries: list[CronEntry], dry_run: bool = False) -> bool:
+        managed = self.build_managed_block(entries)
+        unmanaged = self.extract_unmanaged(self.get_current())
+        return self.apply(self.assemble(unmanaged, managed), dry_run=dry_run)

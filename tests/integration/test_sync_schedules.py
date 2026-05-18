@@ -42,7 +42,7 @@ class TestSyncScheduleLifecycle:
         with patch("agento.modules.jira_periodic_tasks.src.crontab.subprocess.run", side_effect=_mock_crontab_subprocess):
             crontab_mgr = CrontabManager()
             syncer = JiraCronSync(int_config, int_periodic_config, toolbox, crontab_mgr, logger, db_config=int_db_config)
-            syncer.sync()
+            crontab_mgr.apply_managed(syncer.sync_view())
 
         schedules = fetch_all_schedules()
         assert len(schedules) == 2
@@ -63,7 +63,7 @@ class TestSyncScheduleLifecycle:
         with patch("agento.modules.jira_periodic_tasks.src.crontab.subprocess.run", side_effect=_mock_crontab_subprocess):
             crontab_mgr2 = CrontabManager()
             syncer2 = JiraCronSync(int_config, int_periodic_config, toolbox, crontab_mgr2, logger, db_config=int_db_config)
-            syncer2.sync()
+            crontab_mgr2.apply_managed(syncer2.sync_view())
 
         schedules = fetch_all_schedules()
         by_key = {s["issue_key"]: s for s in schedules}
@@ -93,7 +93,7 @@ class TestSyncScheduleLifecycle:
         with patch("agento.modules.jira_periodic_tasks.src.crontab.subprocess.run", side_effect=_mock_crontab_subprocess):
             crontab_mgr = CrontabManager()
             syncer = JiraCronSync(int_config, int_periodic_config, toolbox, crontab_mgr, logger, db_config=int_db_config)
-            syncer.sync()
+            crontab_mgr.apply_managed(syncer.sync_view())
 
         schedules = fetch_all_schedules()
         assert len(schedules) == 1
@@ -110,7 +110,7 @@ class TestSyncScheduleLifecycle:
         with patch("agento.modules.jira_periodic_tasks.src.crontab.subprocess.run", side_effect=_mock_crontab_subprocess):
             crontab_mgr2 = CrontabManager()
             syncer2 = JiraCronSync(int_config, int_periodic_config, toolbox, crontab_mgr2, logger, db_config=int_db_config)
-            syncer2.sync()
+            crontab_mgr2.apply_managed(syncer2.sync_view())
 
         schedules = fetch_all_schedules()
         assert len(schedules) == 1

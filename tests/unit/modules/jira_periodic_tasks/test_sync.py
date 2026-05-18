@@ -14,7 +14,7 @@ def test_build_jql_without_assignee(sample_config, sample_periodic_config):
     assert jql == 'project = AI AND status = "Cykliczne"'
 
 
-def test_build_jql_with_assignee(sample_periodic_config):
+def test_build_jql_falls_back_to_assignee_when_no_account_id(sample_periodic_config):
     config = JiraConfig(
         toolbox_url="http://toolbox:3001",
         user="bot@test.com",
@@ -24,6 +24,32 @@ def test_build_jql_with_assignee(sample_periodic_config):
     syncer = JiraCronSync(config, sample_periodic_config, MagicMock(), MagicMock(), logging.getLogger("test"))
     jql = syncer.build_jql()
     assert 'AND assignee = "bot@test.com"' in jql
+
+
+def test_build_jql_prefers_account_id_over_display_name(sample_periodic_config):
+    """When both are set, accountId wins — Jira Cloud silently returns 0 results
+    for `assignee = "<display name>"` so accountId is the only reliable form."""
+    config = JiraConfig(
+        toolbox_url="http://toolbox:3001",
+        user="bot@test.com",
+        jira_projects=["AI"],
+        jira_assignee="Mieszko",
+        jira_assignee_account_id="712020:abc-def-123",
+    )
+    syncer = JiraCronSync(config, sample_periodic_config, MagicMock(), MagicMock(), logging.getLogger("test"))
+    jql = syncer.build_jql()
+    assert 'AND assignee = "712020:abc-def-123"' in jql
+    assert "Mieszko" not in jql
+
+
+def test_build_jql_no_account_id_no_assignee_omits_clause(sample_periodic_config):
+    config = JiraConfig(
+        toolbox_url="http://toolbox:3001",
+        jira_projects=["AI"],
+    )
+    syncer = JiraCronSync(config, sample_periodic_config, MagicMock(), MagicMock(), logging.getLogger("test"))
+    jql = syncer.build_jql()
+    assert "assignee" not in jql
 
 
 def test_parse_issues_valid(sample_config, sample_periodic_config, jira_cykliczne):
@@ -59,57 +85,6 @@ def test_parse_issues_empty(sample_config, sample_periodic_config, jira_empty):
     syncer = JiraCronSync(sample_config, sample_periodic_config, MagicMock(), MagicMock(), logging.getLogger("test"))
     entries = syncer.parse_issues(jira_empty)
     assert entries == []
-
-
-def test_full_sync_dry_run(sample_config, sample_periodic_config, jira_cykliczne):
-    toolbox = MagicMock()
-    toolbox.jira_search.return_value = jira_cykliczne
-
-    crontab = CrontabManager()
-    # Mock subprocess calls
-    crontab.get_current = MagicMock(return_value="SHELL=/bin/bash\n")
-    crontab.apply = MagicMock(return_value=True)
-
-    logger = logging.getLogger("test-sync")
-    syncer = JiraCronSync(sample_config, sample_periodic_config, toolbox, crontab, logger)
-    syncer._do_sync(dry_run=True)
-
-    # Verify apply was called with dry_run=True
-    crontab.apply.assert_called_once()
-    _, kwargs = crontab.apply.call_args
-    assert kwargs["dry_run"] is True
-
-
-def test_full_sync_generates_correct_crontab(sample_config, sample_periodic_config, jira_cykliczne):
-    toolbox = MagicMock()
-    toolbox.jira_search.return_value = jira_cykliczne
-
-    crontab = CrontabManager()
-    crontab.get_current = MagicMock(return_value="SHELL=/bin/bash\n")
-    applied_crontab = None
-
-    def capture_apply(new_crontab, dry_run=False):
-        nonlocal applied_crontab
-        applied_crontab = new_crontab
-        return True
-
-    crontab.apply = capture_apply
-
-    logger = logging.getLogger("test-sync")
-    syncer = JiraCronSync(sample_config, sample_periodic_config, toolbox, crontab, logger)
-    syncer._do_sync(dry_run=False)
-
-    assert applied_crontab is not None
-    assert "SHELL=/bin/bash" in applied_crontab
-    assert "JIRA-SYNC:BEGIN" in applied_crontab
-    assert "JIRA-SYNC:END" in applied_crontab
-    assert "AI-2" in applied_crontab
-    assert "*/5 * * * *" in applied_crontab
-    assert "AI-3" in applied_crontab
-    assert "0 8 * * *" in applied_crontab
-    # Skipped issues should not appear
-    assert "AI-4" not in applied_crontab
-    assert "AI-5" not in applied_crontab
 
 
 # ---- Schedules upsert tests ----
@@ -181,6 +156,83 @@ def test_upsert_schedules_empty_disables_all(mock_get_conn, sample_config, sampl
 
 
 @patch("agento.modules.jira_periodic_tasks.src.sync.get_connection")
+def test_upsert_schedules_writes_agent_view_id(mock_get_conn, sample_config, sample_periodic_config):
+    mock_conn, mock_cursor = _mock_connection()
+    mock_get_conn.return_value = mock_conn
+
+    syncer = JiraCronSync(
+        sample_config, sample_periodic_config, MagicMock(), MagicMock(),
+        logging.getLogger("test"), agent_view_id=42, agent_view_code="mieszko",
+    )
+    syncer._upsert_schedules([_sample_entries()[0]])
+
+    insert_call = mock_cursor.execute.call_args_list[0]
+    sql = insert_call[0][0]
+    params = insert_call[0][1]
+    assert "agent_view_id" in sql
+    assert params[0] == 42
+
+
+@patch("agento.modules.jira_periodic_tasks.src.sync.get_connection")
+def test_upsert_schedules_scoped_disable_sweep_per_agent_view(
+    mock_get_conn, sample_config, sample_periodic_config
+):
+    """mieszko's sync must never disable zyga's rows."""
+    mock_conn, mock_cursor = _mock_connection()
+    mock_get_conn.return_value = mock_conn
+
+    syncer = JiraCronSync(
+        sample_config, sample_periodic_config, MagicMock(), MagicMock(),
+        logging.getLogger("test"), agent_view_id=7, agent_view_code="mieszko",
+    )
+    syncer._upsert_schedules(_sample_entries())
+
+    disable_sql = mock_cursor.execute.call_args_list[-1][0][0]
+    disable_params = mock_cursor.execute.call_args_list[-1][0][1]
+    assert "agent_view_id = %s" in disable_sql
+    assert "NOT IN" in disable_sql
+    assert disable_params[0] == 7
+
+
+@patch("agento.modules.jira_periodic_tasks.src.sync.get_connection")
+def test_upsert_schedules_scoped_disable_when_empty_per_agent_view(
+    mock_get_conn, sample_config, sample_periodic_config
+):
+    mock_conn, mock_cursor = _mock_connection()
+    mock_get_conn.return_value = mock_conn
+
+    syncer = JiraCronSync(
+        sample_config, sample_periodic_config, MagicMock(), MagicMock(),
+        logging.getLogger("test"), agent_view_id=9, agent_view_code="zyga",
+    )
+    syncer._upsert_schedules([])
+
+    sql = mock_cursor.execute.call_args[0][0]
+    params = mock_cursor.execute.call_args[0][1]
+    assert "agent_view_id = %s" in sql
+    assert "NOT IN" not in sql
+    assert params == (9,)
+
+
+@patch("agento.modules.jira_periodic_tasks.src.sync.get_connection")
+def test_upsert_schedules_null_agent_view_uses_is_null_predicate(
+    mock_get_conn, sample_config, sample_periodic_config
+):
+    """Fallback path (no agent_views configured) must scope to IS NULL rows only."""
+    mock_conn, mock_cursor = _mock_connection()
+    mock_get_conn.return_value = mock_conn
+
+    syncer = JiraCronSync(
+        sample_config, sample_periodic_config, MagicMock(), MagicMock(),
+        logging.getLogger("test"),
+    )
+    syncer._upsert_schedules(_sample_entries())
+
+    disable_sql = mock_cursor.execute.call_args_list[-1][0][0]
+    assert "agent_view_id IS NULL" in disable_sql
+
+
+@patch("agento.modules.jira_periodic_tasks.src.sync.get_connection")
 def test_upsert_schedules_db_error_logged(mock_get_conn, sample_config, sample_periodic_config, caplog):
     mock_conn, mock_cursor = _mock_connection()
     mock_cursor.execute.side_effect = RuntimeError("DB error")
@@ -194,7 +246,7 @@ def test_upsert_schedules_db_error_logged(mock_get_conn, sample_config, sample_p
     mock_conn.rollback.assert_called_once()
 
 
-def test_sync_emits_single_summary_line(sample_config, sample_periodic_config, jira_cykliczne, caplog):
+def test_sync_view_emits_summary_line(sample_config, sample_periodic_config, jira_cykliczne, caplog):
     toolbox = MagicMock()
     toolbox.jira_search.return_value = jira_cykliczne
 
@@ -206,7 +258,7 @@ def test_sync_emits_single_summary_line(sample_config, sample_periodic_config, j
     syncer = JiraCronSync(sample_config, sample_periodic_config, toolbox, crontab, logger)
 
     with caplog.at_level(logging.INFO):
-        syncer._do_sync(dry_run=True)
+        syncer.sync_view(dry_run=True)
 
     info_records = [r for r in caplog.records if r.levelno == logging.INFO]
     assert len(info_records) == 1
@@ -224,7 +276,7 @@ def test_upsert_schedules_skipped_in_dry_run(mock_get_conn, sample_config, sampl
     crontab.apply = MagicMock(return_value=True)
 
     syncer = JiraCronSync(sample_config, sample_periodic_config, toolbox, crontab, logging.getLogger("test"))
-    syncer._do_sync(dry_run=True)
+    syncer.sync_view(dry_run=True)
 
     # get_connection should NOT have been called (upsert skipped in dry_run)
     mock_get_conn.assert_not_called()

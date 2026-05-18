@@ -45,7 +45,7 @@ class TestCronSync:
         with patch("agento.modules.jira_periodic_tasks.src.crontab.subprocess.run", side_effect=mock_subprocess_run):
             crontab_mgr = CrontabManager()
             syncer = JiraCronSync(int_config, int_periodic_config, toolbox, crontab_mgr, logger, db_config=int_db_config)
-            syncer.sync()
+            crontab_mgr.apply_managed(syncer.sync_view())
 
         # Assert crontab content
         content = applied_crontab["content"]

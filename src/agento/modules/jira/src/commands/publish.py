@@ -61,6 +61,7 @@ class PublishCommand:
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("kind", choices=["jira-cron", "jira-todo", "jira-mention"])
         parser.add_argument("issue_key", nargs="?")
+        parser.add_argument("--agent-view", dest="agent_view", default=None)
 
     def execute(self, args: argparse.Namespace) -> None:
         logger = get_logger("publisher", "/app/logs/publisher.log", stderr=False)
@@ -78,13 +79,27 @@ class PublishCommand:
             conn.close()
 
     def _execute_cron(self, args, logger):
-        """Cron: specific issue_key. Use single enabled agent_view if only one, else routing."""
+        """Cron: specific issue_key. Prefer explicit --agent-view, else single-view heuristic, else routing."""
         if not args.issue_key:
             logger.error("issue_key required for jira-cron")
             sys.exit(1)
 
         db_config, conn = _get_connection_and_bootstrap()
         try:
+            if args.agent_view:
+                from agento.framework.agent_view_runtime import resolve_publish_priority
+                from agento.framework.workspace import get_agent_view_by_code
+
+                av = get_agent_view_by_code(conn, args.agent_view)
+                if av is None:
+                    logger.error("Unknown agent_view code %r", args.agent_view)
+                    sys.exit(1)
+                _publisher.publish_cron(
+                    db_config, args.issue_key, logger,
+                    agent_view_id=av.id, priority=resolve_publish_priority(conn, av.id),
+                )
+                return
+
             agent_view_id, priority = self._resolve_single_agent_view(conn, logger)
             if agent_view_id is not None:
                 _publisher.publish_cron(

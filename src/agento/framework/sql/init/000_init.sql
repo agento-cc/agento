@@ -10,19 +10,6 @@ CREATE TABLE IF NOT EXISTS schema_migration (
     module      VARCHAR(255) NOT NULL DEFAULT 'framework'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Schedule
-CREATE TABLE IF NOT EXISTS schedule (
-    id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    issue_key  VARCHAR(20)  NOT NULL,
-    summary    VARCHAR(500) NOT NULL DEFAULT '',
-    agent_type ENUM('cron', 'todo') NOT NULL,
-    cron_expr  VARCHAR(100) NOT NULL DEFAULT '',
-    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_schedule_issue (issue_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 -- Workspace & Agent View hierarchy
 CREATE TABLE IF NOT EXISTS workspace (
     id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -46,6 +33,23 @@ CREATE TABLE IF NOT EXISTS agent_view (
     KEY idx_agent_view_workspace (workspace_id),
     CONSTRAINT fk_agent_view_workspace
         FOREIGN KEY (workspace_id) REFERENCES workspace(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Schedule
+CREATE TABLE IF NOT EXISTS schedule (
+    id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    issue_key     VARCHAR(20)  NOT NULL,
+    agent_view_id INT UNSIGNED NULL,
+    summary       VARCHAR(500) NOT NULL DEFAULT '',
+    agent_type    ENUM('cron', 'todo') NOT NULL,
+    cron_expr     VARCHAR(100) NOT NULL DEFAULT '',
+    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_schedule_agent_view_issue (agent_view_id, issue_key),
+    KEY idx_schedule_agent_view (agent_view_id),
+    CONSTRAINT fk_schedule_agent_view
+        FOREIGN KEY (agent_view_id) REFERENCES agent_view(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Job
