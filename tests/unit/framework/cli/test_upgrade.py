@@ -208,9 +208,89 @@ class TestUpgradeCommand:
         cmd = UpgradeCommand()
         cmd.execute(Namespace(version="0.6.0", no_build=True, no_restart=False))
 
-        # No `docker compose build` invocation when --no-build set.
+        # No `docker build` or `docker compose build` invocations when --no-build set.
         invocations = [tuple(call.args[0]) for call in mock_run.call_args_list]
         assert not any(
             len(inv) >= 4 and inv[0] == "docker" and "build" in inv
             for inv in invocations
         )
+
+    @patch("agento.framework.cli.upgrade.build_base_images")
+    @patch("agento.framework.cli.upgrade.regenerate_compose")
+    @patch("agento.framework.cli.upgrade.materialize_docker_context")
+    @patch("agento.framework.cli.upgrade.subprocess.run")
+    @patch("agento.framework.cli.upgrade._upgrade_cli", return_value="0.9.4")
+    @patch("agento.framework.cli.upgrade.get_package_version", return_value="0.9.3")
+    @patch("agento.framework.cli.upgrade.find_compose_file")
+    @patch("agento.framework.cli.upgrade.find_project_root")
+    def test_pre_builds_base_images_before_compose_build(
+        self,
+        mock_root,
+        mock_compose,
+        mock_ver,
+        mock_cli,
+        mock_run,
+        mock_materialize,
+        mock_regen,
+        mock_build_base,
+        tmp_path: Path,
+    ):
+        """Regression: without build_base_images, an override that
+        FROM agento-toolbox:<version> fails with 'pull access denied' because
+        the managed base tag was never built."""
+        from argparse import Namespace
+
+        from agento.framework.cli.upgrade import UpgradeCommand
+
+        mock_root.return_value = tmp_path
+        self._setup_project(tmp_path)
+        mock_compose.return_value = tmp_path / "docker" / "docker-compose.yml"
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        cmd = UpgradeCommand()
+        cmd.execute(Namespace(version="0.9.4", no_build=False, no_restart=False))
+
+        # build_base_images must be called with the target version BEFORE
+        # the first `docker compose build`.
+        mock_build_base.assert_called_once_with(tmp_path, "0.9.4")
+        # Sanity: compose builds still happen after.
+        compose_builds = [
+            tuple(call.args[0]) for call in mock_run.call_args_list
+            if len(call.args[0]) >= 4 and call.args[0][:2] == ["docker", "compose"]
+            and "build" in call.args[0]
+        ]
+        assert len(compose_builds) >= 1
+
+    @patch("agento.framework.cli.upgrade.build_base_images")
+    @patch("agento.framework.cli.upgrade.regenerate_compose")
+    @patch("agento.framework.cli.upgrade.materialize_docker_context")
+    @patch("agento.framework.cli.upgrade.subprocess.run")
+    @patch("agento.framework.cli.upgrade._upgrade_cli", return_value="0.9.4")
+    @patch("agento.framework.cli.upgrade.get_package_version", return_value="0.9.3")
+    @patch("agento.framework.cli.upgrade.find_compose_file")
+    @patch("agento.framework.cli.upgrade.find_project_root")
+    def test_no_build_flag_also_skips_base_image_build(
+        self,
+        mock_root,
+        mock_compose,
+        mock_ver,
+        mock_cli,
+        mock_run,
+        mock_materialize,
+        mock_regen,
+        mock_build_base,
+        tmp_path: Path,
+    ):
+        from argparse import Namespace
+
+        from agento.framework.cli.upgrade import UpgradeCommand
+
+        mock_root.return_value = tmp_path
+        self._setup_project(tmp_path)
+        mock_compose.return_value = tmp_path / "docker" / "docker-compose.yml"
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        cmd = UpgradeCommand()
+        cmd.execute(Namespace(version="0.9.4", no_build=True, no_restart=False))
+
+        mock_build_base.assert_not_called()

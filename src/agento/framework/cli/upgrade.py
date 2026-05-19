@@ -23,6 +23,7 @@ from ._project import (
     update_dotenv_value,
 )
 from ._provisioning import (
+    build_base_images,
     bump_agento_version,
     find_links_for_local_install,
     materialize_docker_context,
@@ -188,6 +189,12 @@ class UpgradeCommand:
             log_info("Skipping image build (--no-build).")
         else:
             log_info("Rebuilding Docker images locally...")
+            # Build managed agento-<service>:<version> tags directly first so
+            # a docker-compose.override.yml that re-bases on the managed tag
+            # (FROM agento-toolbox:${AGENTO_VERSION}) has a base to layer on.
+            # Without this, compose merges the override's build: section over
+            # ours and the managed Dockerfile is never built.
+            build_base_images(project_root, version)
             result = subprocess.run([*compose, "build", "sandbox"])
             if result.returncode != 0:
                 log_error("Failed to build sandbox image.")

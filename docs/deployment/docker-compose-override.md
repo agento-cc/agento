@@ -47,6 +47,33 @@ services:
 
 Make sure to attach custom services to `agento-net` if they need to communicate with Agento containers.
 
+## Extending a managed image (custom Dockerfile)
+
+To layer extra dependencies on top of a managed image (toolbox, sandbox, or cron), point your override at a custom Dockerfile that uses the managed tag as its base:
+
+```yaml
+# docker/docker-compose.override.yml
+services:
+  toolbox:
+    build:
+      context: ..
+      dockerfile: docker/toolbox-custom/Dockerfile
+      args:
+        AGENTO_VERSION: ${AGENTO_VERSION:-latest}
+    image: my-toolbox-custom:latest
+```
+
+```dockerfile
+# docker/toolbox-custom/Dockerfile
+ARG AGENTO_VERSION=latest
+FROM agento-toolbox:${AGENTO_VERSION}
+
+RUN npm install --no-save webdriverio @playwright/test
+RUN npx playwright install chromium
+```
+
+`agento install` and `agento upgrade` build the managed `agento-<service>:<version>` base images directly (via `docker build`) **before** running `docker compose build`, so the `FROM agento-toolbox:${AGENTO_VERSION}` reference always resolves. Without this pre-build step, an override that defines its own `build:` section would completely replace the managed build, leaving the base tag missing and the override build would fail with `pull access denied` on Docker Hub.
+
 ## Combining multiple overrides
 
 You can add volumes, env vars, and new services in the same file:

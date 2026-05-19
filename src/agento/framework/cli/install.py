@@ -17,6 +17,7 @@ from ._env import parse_env_file
 from ._output import cyan, log_error, log_info, log_warn
 from ._project import compose_file_flags, resolve_host_ids, update_dotenv_value
 from ._provisioning import (
+    build_base_images,
     find_links_for_local_install,
     materialize_docker_context,
     regenerate_compose,
@@ -286,9 +287,11 @@ def _run_post_install(project_dir: Path) -> None:
 
     compose_cmd = ["docker", "compose", *flags]
 
-    # Build sandbox first (cron's FROM ${SANDBOX_IMAGE} depends on it),
-    # then toolbox + cron in a single pass.
+    # Build managed agento-<service>:<version> tags directly first so a
+    # docker-compose.override.yml that re-bases on the managed tag
+    # (FROM agento-toolbox:${AGENTO_VERSION}) has a base to layer on.
     log_info("Building Docker images (first run can take a few minutes)...")
+    build_base_images(project_dir, get_package_version())
     result = subprocess.run([*compose_cmd, "build", "sandbox"])
     if result.returncode != 0:
         log_error("Failed to build sandbox image. Run 'docker compose build' manually.")

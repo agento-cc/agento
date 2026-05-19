@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from agento.framework.cli._provisioning import (
+    build_base_images,
     bump_agento_version,
     detect_python_version,
     enumerate_enabled_extensions,
@@ -323,3 +325,161 @@ class TestRegenerateCompose:
         # Neither raw placeholder nor stray comment marker for it.
         assert "extension_mounts_sandbox" not in content
         assert "extension_mounts_cron" not in content
+
+
+class TestBuildBaseImages:
+    """build_base_images guarantees agento-<service>:<version> tags exist before
+    docker compose build runs — so an override that re-bases on the managed
+    tag (e.g. FROM agento-toolbox:${AGENTO_VERSION}) doesn't fail to pull."""
+
+    def _seed_project(self, tmp_path: Path) -> Path:
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "docker" / ".env").write_text(
+            "AGENTO_VERSION=0.9.4\nHOST_UID=1500\nHOST_GID=2500\n"
+        )
+        ctx = tmp_path / ".agento" / "docker"
+        (ctx / "sandbox").mkdir(parents=True)
+        (ctx / "toolbox").mkdir(parents=True)
+        (ctx / "cron").mkdir(parents=True)
+        return tmp_path
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_builds_three_services_in_order(self, mock_run, tmp_path: Path):
+        proj = self._seed_project(tmp_path)
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.4")
+
+        invocations = [list(call.args[0]) for call in mock_run.call_args_list]
+        # Exactly three docker build invocations, sandbox → toolbox → cron.
+        assert len(invocations) == 3
+        tags = [inv[inv.index("-t") + 1] for inv in invocations]
+        assert tags == [
+            "agento-sandbox:0.9.4",
+            "agento-toolbox:0.9.4",
+            "agento-cron:0.9.4",
+        ]
+        # Each invocation starts with `docker build`.
+        for inv in invocations:
+            assert inv[:2] == ["docker", "build"]
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_passes_host_uid_gid_to_sandbox_and_toolbox(
+        self, mock_run, tmp_path: Path
+    ):
+        proj = self._seed_project(tmp_path)
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.4")
+
+        invocations = [list(call.args[0]) for call in mock_run.call_args_list]
+        for inv in invocations[:2]:  # sandbox, toolbox
+            assert "--build-arg" in inv
+            assert "HOST_UID=1500" in inv
+            assert "HOST_GID=2500" in inv
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_passes_sandbox_image_arg_to_cron(self, mock_run, tmp_path: Path):
+        proj = self._seed_project(tmp_path)
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.4")
+
+        cron_inv = list(mock_run.call_args_list[2].args[0])
+        assert "SANDBOX_IMAGE=agento-sandbox:0.9.4" in cron_inv
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_uses_agento_docker_context_paths(self, mock_run, tmp_path: Path):
+        proj = self._seed_project(tmp_path)
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.4")
+
+        invocations = [list(call.args[0]) for call in mock_run.call_args_list]
+        contexts = [inv[-1] for inv in invocations]
+        assert contexts == [
+            str(proj / ".agento" / "docker" / "sandbox"),
+            str(proj / ".agento" / "docker" / "toolbox"),
+            str(proj / ".agento" / "docker" / "cron"),
+        ]
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_exits_on_build_failure(self, mock_run, tmp_path: Path):
+        proj = self._seed_project(tmp_path)
+        mock_run.return_value = type("R", (), {"returncode": 1})()
+
+        import pytest
+
+        with pytest.raises(SystemExit) as exc:
+            build_base_images(proj, "0.9.4")
+        assert exc.value.code == 1
+        # Should fail fast on first failure — exactly one call.
+        assert mock_run.call_count == 1
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_falls_back_to_default_host_ids_when_env_missing(
+        self, mock_run, tmp_path: Path
+    ):
+        # docker/.env without HOST_UID/HOST_GID — should default to 1000/1000.
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "docker" / ".env").write_text("AGENTO_VERSION=0.9.4\n")
+        ctx = tmp_path / ".agento" / "docker"
+        for s in ("sandbox", "toolbox", "cron"):
+            (ctx / s).mkdir(parents=True)
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(tmp_path, "0.9.4")
+
+        sandbox_inv = list(mock_run.call_args_list[0].args[0])
+        assert "HOST_UID=1000" in sandbox_inv
+        assert "HOST_GID=1000" in sandbox_inv
+
+
+class TestBuildBaseImagesTemplateDriftGuard:
+    """Catches future docker-compose.yml template changes that add build args
+    without updating build_base_images."""
+
+    def test_helper_matches_template_build_args(self):
+        import re
+
+        from agento.framework.cli._templates import get_template
+
+        template = get_template("docker-compose.yml")
+        lines = template.splitlines()
+        # Walk the template line-by-line; track current service and whether
+        # we're inside its `args:` block; collect ARG_NAME keys per service.
+        service_re = re.compile(r"^  (\w+):\s*$")
+        arg_re = re.compile(r"^        ([A-Z_]+):\s*")
+        actual: dict[str, set[str]] = {}
+        current_service: str | None = None
+        in_args = False
+        for line in lines:
+            m = service_re.match(line)
+            if m:
+                current_service = m.group(1)
+                in_args = False
+                actual.setdefault(current_service, set())
+                continue
+            if current_service is None:
+                continue
+            if line.startswith("      args:"):
+                in_args = True
+                continue
+            if in_args:
+                arg_m = arg_re.match(line)
+                if arg_m:
+                    actual[current_service].add(arg_m.group(1))
+                elif not line.startswith("        "):
+                    in_args = False
+
+        # build_base_images currently passes these per service. Drift guard.
+        expected = {
+            "sandbox": {"HOST_UID", "HOST_GID"},
+            "toolbox": {"HOST_UID", "HOST_GID"},
+            "cron": {"SANDBOX_IMAGE"},
+        }
+        for service, args in expected.items():
+            assert actual.get(service) == args, (
+                f"build_base_images is out of sync with template for {service}: "
+                f"template={actual.get(service)}, helper={args}"
+            )

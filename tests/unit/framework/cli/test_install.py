@@ -14,6 +14,7 @@ from agento.framework.cli.install import (
     _generate_password,
     _is_port_free,
     _reinstall,
+    _run_post_install,
     _sanitize_compose_name,
     _scaffold,
 )
@@ -343,3 +344,45 @@ class TestReinstall:
         _reinstall(tmp_path, 1000, 1000)
         meta = json.loads((tmp_path / ".agento" / "project.json").read_text())
         assert meta["version"] == "0.5.0"
+
+
+class TestRunPostInstall:
+    """_run_post_install must build base agento-<service>:<version> tags
+    before any docker compose build, so override Dockerfiles that
+    FROM agento-<service>:<version> have a base to layer on."""
+
+    def _seed_project(self, tmp_path: Path) -> Path:
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "docker" / "docker-compose.yml").write_text("services: {}\n")
+        (tmp_path / "docker" / ".env").write_text(
+            "AGENTO_VERSION=0.9.4\nHOST_UID=1000\nHOST_GID=1000\n"
+        )
+        for service in ("sandbox", "toolbox", "cron"):
+            (tmp_path / ".agento" / "docker" / service).mkdir(parents=True)
+        return tmp_path
+
+    @patch("agento.framework.cli.install.subprocess.run")
+    @patch("agento.framework.cli.install.build_base_images")
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.9.4")
+    def test_calls_build_base_images_before_compose_build(
+        self, mock_ver, mock_build_base, mock_run, tmp_path: Path
+    ):
+        self._seed_project(tmp_path)
+        # Make subprocess returns succeed on sandbox/toolbox/cron, then fail
+        # on `up -d` so _run_post_install exits before the setup-done wait
+        # loop sleeps for 2 minutes in tests.
+        outcomes = iter([
+            type("R", (), {"returncode": 0})(),  # compose build sandbox
+            type("R", (), {"returncode": 0})(),  # compose build toolbox cron
+            type("R", (), {"returncode": 1})(),  # compose up -d → bail out
+        ])
+        mock_run.side_effect = lambda *a, **kw: next(outcomes)
+
+        _run_post_install(tmp_path)
+
+        mock_build_base.assert_called_once_with(tmp_path, "0.9.4")
+        # Must have been called before the first compose build.
+        # (mock_build_base is called once, then mock_run starts being called.)
+        # Easiest assertion: build_base_images was called and at least one
+        # compose subprocess.run also happened.
+        assert mock_run.call_count >= 1

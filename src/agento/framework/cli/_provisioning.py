@@ -15,9 +15,13 @@ from __future__ import annotations
 import importlib.resources as ires
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from ..module_status import read_module_status, resolve_module_source
+from ._env import parse_env_file
+from ._output import log_error, log_info
 from ._templates import get_package_version, get_template
 
 _AGENTO_REQUIRES_PYTHON = ">=3.12"
@@ -287,6 +291,52 @@ def render_compose(
     )
     rendered = rendered.replace("{{ python_version }}", python_version)
     return rendered
+
+
+def build_base_images(project_dir: Path, version: str) -> None:
+    """Build the managed ``agento-<service>:<version>`` base images.
+
+    Runs ``docker build`` directly against ``.agento/docker/<service>/Dockerfile``
+    rather than ``docker compose build``, so a user override in
+    ``docker-compose.override.yml`` cannot shadow the managed base build.
+    Without this, an override that defines its own ``build:`` section (e.g. a
+    custom toolbox Dockerfile that ``FROM agento-toolbox:<version>``) leaves
+    the base tag missing and the override build fails with "pull access denied"
+    on Docker Hub.
+
+    Call AFTER ``materialize_docker_context()`` and BEFORE any
+    ``docker compose build``. Build args mirror
+    ``src/agento/framework/cli/templates/docker-compose.yml`` — kept in sync by
+    ``TestBuildBaseImagesTemplateDriftGuard``.
+    """
+    env_path = project_dir / "docker" / ".env"
+    env = parse_env_file(env_path) if env_path.is_file() else {}
+    host_uid = env.get("HOST_UID", "1000")
+    host_gid = env.get("HOST_GID", "1000")
+    sandbox_tag = f"agento-sandbox:{version}"
+    ctx_root = project_dir / ".agento" / "docker"
+
+    host_ids = [
+        "--build-arg", f"HOST_UID={host_uid}",
+        "--build-arg", f"HOST_GID={host_gid}",
+    ]
+    # Order matters: sandbox before cron (cron's FROM resolves SANDBOX_IMAGE).
+    specs = [
+        ("sandbox", ctx_root / "sandbox", host_ids),
+        ("toolbox", ctx_root / "toolbox", host_ids),
+        ("cron", ctx_root / "cron",
+            ["--build-arg", f"SANDBOX_IMAGE={sandbox_tag}"]),
+    ]
+
+    for service, ctx, args in specs:
+        tag = f"agento-{service}:{version}"
+        log_info(f"Building base image {tag}...")
+        result = subprocess.run(
+            ["docker", "build", "-t", tag, *args, str(ctx)]
+        )
+        if result.returncode != 0:
+            log_error(f"Failed to build base image {tag}.")
+            sys.exit(result.returncode)
 
 
 def regenerate_compose(project_dir: Path) -> None:
