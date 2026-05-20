@@ -20,7 +20,7 @@ from .artifacts_dir import (
     get_current_build_dir,
     prepare_artifacts_dir,
 )
-from .bootstrap import dispatch_shutdown, get_module_config
+from .bootstrap import bootstrap, dispatch_shutdown, get_module_config
 from .channels.registry import get_channel
 from .consumer_config import ConsumerConfig
 from .database_config import DatabaseConfig
@@ -109,6 +109,8 @@ class Consumer:
         self._db_config = db_config
         self._consumer_config = consumer_config
         self._token_resolver = TokenResolver()
+        self._active_jobs = 0
+        self._active_jobs_lock = threading.Lock()
 
     def run(self) -> None:
         """Main loop. Blocks until SIGTERM/SIGINT."""
@@ -136,10 +138,14 @@ class Consumer:
             try:
                 self._execute_job(job)
             finally:
+                with self._active_jobs_lock:
+                    self._active_jobs -= 1
                 semaphore.release()
 
         try:
             while not self._shutdown.is_set():
+                self._maybe_reload_bootstrap()
+
                 if not semaphore.acquire(timeout=self._consumer_config.poll_interval):
                     continue  # timed out waiting for a free slot
                 if self._shutdown.is_set():
@@ -147,6 +153,8 @@ class Consumer:
                     break
                 job = self._try_dequeue()
                 if job:
+                    with self._active_jobs_lock:
+                        self._active_jobs += 1
                     executor.submit(_run_and_release, job)
                 else:
                     semaphore.release()
@@ -157,6 +165,32 @@ class Consumer:
             executor.shutdown(wait=True, cancel_futures=False)
             dispatch_shutdown()
             self.logger.info("Consumer stopped.")
+
+    def _maybe_reload_bootstrap(self) -> None:
+        """Re-bootstrap from disk + DB when no jobs are active.
+
+        Magento-style live reload: each tick re-reads modules.json, manifests,
+        and core_config_data so `mo:en/mo:di` and config changes apply within
+        one poll cycle. Skipped while workers are busy to avoid clearing the
+        event manager mid-dispatch.
+        """
+        with self._active_jobs_lock:
+            if self._active_jobs > 0:
+                return
+        try:
+            conn = get_connection(self._db_config)
+        except Exception as exc:
+            self.logger.warning(
+                "Re-bootstrap skipped: DB connection error (%s)", type(exc).__name__
+            )
+            return
+        try:
+            dispatch_shutdown()
+            bootstrap(db_conn=conn, quiet=True)
+        except Exception:
+            self.logger.exception("Re-bootstrap failed — continuing with previous registry")
+        finally:
+            conn.close()
 
     def _handle_signal(self, signum: int, frame: object) -> None:
         sig_name = signal.Signals(signum).name

@@ -79,6 +79,7 @@ def bootstrap(
     user_dir: str = USER_MODULES_DIR,
     *,
     db_conn=None,
+    quiet: bool = False,
 ) -> list[ModuleManifest]:
     """Scan core + user modules, populate all registries, resolve config.
 
@@ -89,6 +90,8 @@ def bootstrap(
     Args:
         db_conn: Optional DB connection for loading core_config_data overrides.
                  When None (e.g. in tests), only ENV + config.json + defaults are used.
+        quiet: When True, downgrade the final "loaded N module(s)" log to DEBUG
+               (used by the consumer's per-tick re-bootstrap to avoid log spam).
     """
     channel_registry.clear()
     clear_workflows()
@@ -167,7 +170,8 @@ def bootstrap(
     for m in manifests:
         em.dispatch("module_ready_after", ModuleReadyEvent(name=m.name, path=m.path))
 
-    logger.info(
+    log = logger.debug if quiet else logger.info
+    log(
         "Bootstrap: loaded %d module(s): %s",
         len(manifests),
         ", ".join(m.name for m in manifests),

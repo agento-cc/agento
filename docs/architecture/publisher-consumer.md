@@ -17,6 +17,7 @@ MySQL (jobs table)
     │
     ▼
 Consumer (loop, poll every 5s)
+    │  re-bootstrap from disk + DB each tick when idle
     │  SELECT FOR UPDATE SKIP LOCKED
     │
     ▼
@@ -79,6 +80,15 @@ Configured via environment variables (set in `docker/.cron.env` or `docker-compo
 | `AGENTO_WORKSPACE_DIR` | /workspace | Base directory for per-run directories |
 
 > **Naming:** Framework knobs use the `AGENTO_*` prefix so they survive the cron entrypoint's env-var whitelist (the consumer is launched via `su - agent`, which wipes the parent env). See [cron-env-contract.md](cron-env-contract.md).
+
+## Hot-Reload
+
+Every `AGENTO_CONSUMER_POLL_INTERVAL` (5s default), when no jobs are active, the consumer re-runs `bootstrap()` from disk + DB. `agento mo:en` / `agento mo:di`, `agento config:set`, and edits under `app/code/<vendor>/<name>/` apply live within one poll cycle — no container restart required.
+
+**Caveats:**
+- Python's `sys.modules` cache means edits to *core* module code (`src/agento/modules/`) require a process restart. User modules in `app/code/` re-execute on each load (via `spec_from_file_location`) and pick up edits live.
+- Under `max_workers > 1` with continuous load, reload waits for an idle window (no active workers) to avoid clearing the event manager mid-dispatch.
+- A `bootstrap()` cost of ~150-200ms per tick amortizes well at `poll_interval ≥ 1s`. Don't drop the interval below 1s without measuring.
 
 ## Events
 
