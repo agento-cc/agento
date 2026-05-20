@@ -24,6 +24,7 @@ class TokenClaudeRunner(TokenRunner):
         return {}
 
     def _build_command(self, prompt: str, model: str | None = None) -> list[str]:
+        # .mcp.json is resolved relative to subprocess cwd (per-job artifacts dir)
         cmd = [
             "claude", "-p", prompt,
             "--dangerously-skip-permissions",
@@ -37,6 +38,7 @@ class TokenClaudeRunner(TokenRunner):
         return cmd
 
     def _build_resume_command(self, session_id: str, model: str | None = None) -> list[str]:
+        # .mcp.json is resolved relative to subprocess cwd (per-job artifacts dir)
         cmd = [
             "claude", "--resume", session_id,
             "-p", "Continue working from where you left off.",
