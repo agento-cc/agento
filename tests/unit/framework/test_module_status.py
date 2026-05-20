@@ -124,3 +124,28 @@ class TestResolveModuleSource:
         # An empty package directory (no __init__.py) does not count.
         (tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "halfbaked").mkdir(parents=True)
         assert resolve_module_source("halfbaked", tmp_path) == "missing"
+
+    def test_core_module_bundled_in_agento_package(self, tmp_path: Path):
+        core = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "agento" / "modules" / "app_monitor"
+        core.mkdir(parents=True)
+        (core / "module.json").write_text("{}")
+        assert resolve_module_source("app_monitor", tmp_path) == "core"
+
+    def test_core_under_alternate_python_minor(self, tmp_path: Path):
+        core = tmp_path / ".venv" / "lib" / "python3.13" / "site-packages" / "agento" / "modules" / "app_monitor"
+        core.mkdir(parents=True)
+        (core / "module.json").write_text("{}")
+        assert resolve_module_source("app_monitor", tmp_path) == "core"
+
+    def test_local_takes_precedence_over_core(self, tmp_path: Path):
+        local = tmp_path / "app" / "code" / "app_monitor"
+        local.mkdir(parents=True)
+        (local / "module.json").write_text("{}")
+        core = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "agento" / "modules" / "app_monitor"
+        core.mkdir(parents=True)
+        (core / "module.json").write_text("{}")
+        assert resolve_module_source("app_monitor", tmp_path) == "local"
+
+    def test_core_dir_without_manifest_is_not_core(self, tmp_path: Path):
+        (tmp_path / ".venv" / "lib" / "python3.12" / "site-packages" / "agento" / "modules" / "stub").mkdir(parents=True)
+        assert resolve_module_source("stub", tmp_path) == "missing"

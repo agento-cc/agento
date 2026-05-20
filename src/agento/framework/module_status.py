@@ -17,7 +17,7 @@ from .module_loader import ModuleManifest
 
 logger = logging.getLogger(__name__)
 
-ModuleSource = Literal["local", "pypi", "missing"]
+ModuleSource = Literal["local", "pypi", "core", "missing"]
 
 _DOCKER_PATH = Path("/app/etc/modules.json")
 
@@ -95,16 +95,20 @@ def resolve_module_source(
     """Determine where a module is sourced from.
 
     - ``"local"``: ``<project_dir>/app/code/<name>/module.json`` exists.
-    - ``"pypi"``: package importable from ``<venv>/lib/python*/site-packages/<name>/``.
-    - ``"missing"``: neither.
+    - ``"core"``: bundled in ``<venv>/lib/python*/site-packages/agento/modules/<name>/module.json``.
+    - ``"pypi"``: top-level package at ``<venv>/lib/python*/site-packages/<name>/__init__.py``.
+    - ``"missing"``: none of the above.
 
-    The local check wins when both exist (Magento-like override semantics).
+    The local check wins (Magento-like override semantics); core beats pypi.
     """
     if (project_dir / "app" / "code" / name / "module.json").is_file():
         return "local"
 
     venv = venv_path or (project_dir / ".venv")
     if venv.is_dir():
+        for site_packages in venv.glob("lib/python*/site-packages"):
+            if (site_packages / "agento" / "modules" / name / "module.json").is_file():
+                return "core"
         for site_packages in venv.glob("lib/python*/site-packages"):
             if (site_packages / name / "__init__.py").is_file():
                 return "pypi"
