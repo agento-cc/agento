@@ -17,7 +17,7 @@ from .module_loader import ModuleManifest
 
 logger = logging.getLogger(__name__)
 
-ModuleSource = Literal["local", "pypi", "core", "missing"]
+ModuleSource = Literal["local", "core", "pypi", "missing"]
 
 _DOCKER_PATH = Path("/app/etc/modules.json")
 
