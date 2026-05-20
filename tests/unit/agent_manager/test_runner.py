@@ -91,6 +91,8 @@ class TestTokenClaudeRunner:
         assert cmd == [
             "claude", "-p", "Hello world",
             "--dangerously-skip-permissions",
+            "--mcp-config", ".mcp.json",
+            "--strict-mcp-config",
             "--output-format", "stream-json",
             "--verbose",
         ]
@@ -100,7 +102,10 @@ class TestTokenClaudeRunner:
         cmd = runner._build_command("Hello world", model="claude-sonnet-4-20250514")
         assert cmd == [
             "claude", "-p", "Hello world",
-            "--dangerously-skip-permissions", "--output-format", "stream-json",
+            "--dangerously-skip-permissions",
+            "--mcp-config", ".mcp.json",
+            "--strict-mcp-config",
+            "--output-format", "stream-json",
             "--verbose",
             "--model", "claude-sonnet-4-20250514",
         ]
@@ -117,6 +122,8 @@ class TestTokenClaudeRunner:
             "claude", "--resume", "sess-123",
             "-p", "Continue working from where you left off.",
             "--dangerously-skip-permissions",
+            "--mcp-config", ".mcp.json",
+            "--strict-mcp-config",
             "--output-format", "stream-json",
             "--verbose",
         ]

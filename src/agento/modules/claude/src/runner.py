@@ -27,6 +27,8 @@ class TokenClaudeRunner(TokenRunner):
         cmd = [
             "claude", "-p", prompt,
             "--dangerously-skip-permissions",
+            "--mcp-config", ".mcp.json",
+            "--strict-mcp-config",
             "--output-format", "stream-json",
             "--verbose",
         ]
@@ -39,6 +41,8 @@ class TokenClaudeRunner(TokenRunner):
             "claude", "--resume", session_id,
             "-p", "Continue working from where you left off.",
             "--dangerously-skip-permissions",
+            "--mcp-config", ".mcp.json",
+            "--strict-mcp-config",
             "--output-format", "stream-json",
             "--verbose",
         ]
