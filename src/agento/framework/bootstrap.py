@@ -20,7 +20,13 @@ from .config_writer import clear as clear_config_writers
 from .dependency_resolver import resolve_order, validate_dependencies
 from .event_manager import Observer, ObserverEntry, get_event_manager
 from .event_manager import clear as clear_event_manager
-from .events import ModuleLoadedEvent, ModuleReadyEvent, ModuleRegisterEvent, ModuleShutdownEvent
+from .events import (
+    ModuleLoadedEvent,
+    ModuleReadyEvent,
+    ModuleRegisterEvent,
+    ModuleReloadEvent,
+    ModuleShutdownEvent,
+)
 from .job_models import AgentType
 from .module_loader import ModuleManifest, import_class, scan_modules
 from .module_status import filter_enabled
@@ -72,6 +78,13 @@ def dispatch_shutdown() -> None:
     em = get_event_manager()
     for m in reversed(_MANIFESTS):
         em.dispatch("module_shutdown_before", ModuleShutdownEvent(name=m.name, path=m.path))
+
+
+def dispatch_reload() -> None:
+    """Dispatch module_reload_before in reverse dependency order (per-tick hot-reload, distinct from shutdown)."""
+    em = get_event_manager()
+    for m in reversed(_MANIFESTS):
+        em.dispatch("module_reload_before", ModuleReloadEvent(name=m.name, path=m.path))
 
 
 def bootstrap(

@@ -20,7 +20,7 @@ from .artifacts_dir import (
     get_current_build_dir,
     prepare_artifacts_dir,
 )
-from .bootstrap import bootstrap, dispatch_shutdown, get_module_config
+from .bootstrap import bootstrap, dispatch_reload, dispatch_shutdown, get_module_config
 from .channels.registry import get_channel
 from .consumer_config import ConsumerConfig
 from .database_config import DatabaseConfig
@@ -29,6 +29,7 @@ from .event_manager import get_event_manager
 from .events import (
     AgentViewRunFinishedEvent,
     AgentViewRunStartedEvent,
+    ConsumerReloadedEvent,
     ConsumerStartedEvent,
     ConsumerStoppingEvent,
     JobClaimedEvent,
@@ -185,8 +186,15 @@ class Consumer:
             )
             return
         try:
-            dispatch_shutdown()
-            bootstrap(db_conn=conn, quiet=True)
+            # Distinct from shutdown: observers expecting graceful-shutdown semantics must NOT subscribe to module_reload_before.
+            dispatch_reload()
+            start = time.monotonic()
+            manifests = bootstrap(db_conn=conn, quiet=True)
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            get_event_manager().dispatch(
+                "consumer_reload_after",
+                ConsumerReloadedEvent(module_count=len(manifests), elapsed_ms=elapsed_ms),
+            )
         except Exception:
             self.logger.exception("Re-bootstrap failed — continuing with previous registry")
         finally:

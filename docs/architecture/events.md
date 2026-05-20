@@ -96,6 +96,7 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 |-------|-----------|--------|------|
 | `consumer_start_after` | `ConsumerStartedEvent` | *(none)* | Consumer main loop begins |
 | `consumer_stop_before` | `ConsumerStoppingEvent` | *(none)* | Consumer begins graceful shutdown |
+| `consumer_reload_after` | `ConsumerReloadedEvent` | `module_count, elapsed_ms` | After per-tick hot-reload completes successfully (skipped when bootstrap raises) |
 
 ### Module Lifecycle
 
@@ -105,6 +106,7 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 | `module_load_after` | `ModuleLoadedEvent` | `name, path` | After capabilities registered |
 | `module_ready_after` | `ModuleReadyEvent` | `name, path` | All modules loaded, safe to query registries |
 | `module_shutdown_before` | `ModuleShutdownEvent` | `name, path` | Graceful shutdown (reverse dependency order) |
+| `module_reload_before` | `ModuleReloadEvent` | `name, path` | Per-tick consumer hot-reload (reverse dependency order). Distinct from `module_shutdown_before` — observers expecting genuine shutdown semantics must NOT subscribe here. |
 
 ### Config & Setup Lifecycle
 
@@ -184,6 +186,8 @@ Event data objects are **mutable** — observers can modify fields. Execution or
 ```
 
 Shutdown dispatches `module_shutdown_before` in **reverse** dependency order.
+
+On consumer hot-reload (per-tick re-bootstrap when idle), `module_reload_before` fires in **reverse** dependency order before the registry clear, then `consumer_reload_after` fires once the new manifests are loaded.
 
 ## Source Files
 

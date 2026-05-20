@@ -89,6 +89,9 @@ Every `AGENTO_CONSUMER_POLL_INTERVAL` (5s default), when no jobs are active, the
 - Python's `sys.modules` cache means edits to *core* module code (`src/agento/modules/`) require a process restart. User modules in `app/code/` re-execute on each load (via `spec_from_file_location`) and pick up edits live.
 - Under `max_workers > 1` with continuous load, reload waits for an idle window (no active workers) to avoid clearing the event manager mid-dispatch.
 - A `bootstrap()` cost of ~150-200ms per tick amortizes well at `poll_interval ≥ 1s`. Don't drop the interval below 1s without measuring.
+- **User-module top-level side effects re-execute every reload.** `spec_from_file_location` + `exec_module` re-runs `app/code/<vendor>/<name>/src/*.py` each tick, so module-level network calls, file writes, or thread spawns will run every poll cycle. Keep top-level code import-only; do real initialization inside class constructors or observer `execute()` methods.
+
+**Lifecycle events:** `module_reload_before` fires in reverse dependency order before the registry clear; `consumer_reload_after` fires after the new manifests load. Observers needing genuine shutdown semantics should subscribe to `module_shutdown_before` (fires only on real consumer shutdown), not to `module_reload_before`.
 
 ## Events
 

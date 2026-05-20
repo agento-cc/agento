@@ -22,6 +22,14 @@ class ConsumerStoppingEvent:
     """Dispatched when the consumer begins graceful shutdown."""
 
 
+@dataclass
+class ConsumerReloadedEvent:
+    """Dispatched after consumer hot-reload re-bootstrap succeeds."""
+
+    module_count: int
+    elapsed_ms: int
+
+
 # --- Job lifecycle events ---
 
 
@@ -229,6 +237,14 @@ class ModuleReadyEvent:
 @dataclass
 class ModuleShutdownEvent:
     """Dispatched during graceful shutdown (reverse dependency order)."""
+
+    name: str
+    path: Path
+
+
+@dataclass
+class ModuleReloadEvent:
+    """Dispatched on per-tick consumer hot-reload (reverse dependency order)."""
 
     name: str
     path: Path

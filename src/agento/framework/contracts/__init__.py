@@ -12,6 +12,7 @@ from ..encryptor import Encryptor
 from ..event_manager import EventManager, Observer, ObserverEntry
 from ..events import (
     ConfigSavedEvent,
+    ConsumerReloadedEvent,
     ConsumerStartedEvent,
     ConsumerStoppingEvent,
     CrontabInstalledEvent,
@@ -26,6 +27,7 @@ from ..events import (
     ModuleLoadedEvent,
     ModuleReadyEvent,
     ModuleRegisterEvent,
+    ModuleReloadEvent,
     ModuleShutdownEvent,
     RoutingAmbiguousEvent,
     RoutingFailedEvent,
@@ -46,6 +48,7 @@ __all__ = [
     "Channel",
     "Command",
     "ConfigSavedEvent",
+    "ConsumerReloadedEvent",
     "ConsumerStartedEvent",
     "ConsumerStoppingEvent",
     "CrontabInstalledEvent",
@@ -68,6 +71,7 @@ __all__ = [
     "ModuleLoadedEvent",
     "ModuleReadyEvent",
     "ModuleRegisterEvent",
+    "ModuleReloadEvent",
     "ModuleShutdownEvent",
     "Observer",
     "ObserverEntry",
