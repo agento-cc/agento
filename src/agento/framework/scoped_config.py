@@ -336,11 +336,14 @@ class ScopedConfig:
         return self._workspace_id
 
     def _resolve_config_json(self, path: str) -> str | None:
-        parts = path.split("/")
-        module_name = parts[0]
-
         from .bootstrap import get_manifests
         from .config_resolver import read_config_defaults
+        from .core_config import _parse_config_path
+
+        parsed = _parse_config_path(path)
+        if parsed is None:
+            return None
+        module_name, tool_name, field_name = parsed
 
         module_path = None
         for m in get_manifests():
@@ -354,31 +357,30 @@ class ScopedConfig:
         if not defaults:
             return None
 
-        if "tools" in parts and len(parts) >= 4:
-            # module/tools/tool_name/field
-            tool_name = parts[2]
-            field_name = parts[3]
+        if tool_name is not None:
             val = defaults.get("tools", {}).get(tool_name, {}).get(field_name)
-        elif len(parts) >= 2:
-            field_name = parts[1]
-            val = defaults.get(field_name)
         else:
-            return None
+            # field_name may contain '/' (e.g. agent_view's "identity/ssh_private_key")
+            # — config.json stores the verbatim key.
+            val = defaults.get(field_name)
 
         return str(val) if val is not None else None
 
     @staticmethod
     def _path_to_env_key(path: str) -> str:
-        parts = path.split("/")
-        module_name = parts[0]
+        """Map a DB config path to its CONFIG__* env-var name.
 
-        if "tools" in parts and len(parts) >= 4:
-            tool_name = parts[2]
-            field_name = parts[3]
+        Slashes inside the field name (slash-keyed schema fields) become
+        ``__`` so the env var stays a valid POSIX identifier — e.g.
+        ``agent_view/identity/ssh_private_key`` → ``CONFIG__AGENT_VIEW__IDENTITY__SSH_PRIVATE_KEY``.
+        """
+        from .core_config import _parse_config_path
+
+        parsed = _parse_config_path(path)
+        if parsed is None:
+            module_name = path.partition("/")[0]
+            return f"CONFIG__{module_name}".upper().replace("-", "_")
+        module_name, tool_name, field_name = parsed
+        if tool_name is not None:
             return _env_key_tool(module_name, tool_name, field_name)
-
-        if len(parts) >= 2:
-            field_name = parts[1]
-            return _env_key(module_name, field_name)
-
-        return f"CONFIG__{module_name}".upper().replace("-", "_")
+        return _env_key(module_name, field_name)

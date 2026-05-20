@@ -17,10 +17,13 @@ def _validate_config_path(path: str, scope: str = Scope.DEFAULT) -> bool:
     system.json (module fields) or module.json tool fields.
     """
     from ..config_schema import allowed_scopes, is_scope_allowed
-    from ..core_config import _find_module_dir
+    from ..core_config import _find_module_dir, _parse_config_path
 
-    parts = path.split("/")
-    module_name = parts[0]
+    parsed = _parse_config_path(path)
+    if parsed is None:
+        print(f"Error: Invalid config path '{path}'.")
+        return False
+    module_name, tool_name, field_name = parsed
 
     module_dir = _find_module_dir(module_name)
     if module_dir is None:
@@ -28,8 +31,7 @@ def _validate_config_path(path: str, scope: str = Scope.DEFAULT) -> bool:
         return False
 
     # Tool config paths (module/tools/tool_name/field)
-    if len(parts) == 4 and parts[1] == "tools":
-        _, _, tool_name, field_name = parts
+    if tool_name is not None:
         field_def = _load_tool_field_schema(module_dir, tool_name, field_name)
         if field_def is None:
             return True
@@ -40,26 +42,25 @@ def _validate_config_path(path: str, scope: str = Scope.DEFAULT) -> bool:
             return False
         return True
 
-    # Module config paths (module/field) — validate against system.json
-    if len(parts) == 2:
-        field_name = parts[1]
-        system_path = module_dir / "system.json"
-        if system_path.exists():
-            try:
-                system = json.loads(system_path.read_text())
-            except (ValueError, OSError):
-                return True
-            if field_name not in system:
-                known = ", ".join(sorted(system.keys()))
-                print(f"Error: Field '{field_name}' not found in {module_name}/system.json")
-                print(f"  Available fields: {known}")
-                return False
-            field_def = system[field_name]
-            if isinstance(field_def, dict) and not is_scope_allowed(field_def, scope):
-                scopes = ", ".join(allowed_scopes(field_def)) or "none"
-                print(f"Error: Field '{field_name}' cannot be set at scope '{scope}' "
-                      f"(allowed: {scopes})")
-                return False
+    # Module config paths (module/field) — validate against system.json.
+    # field_name may contain '/' (slash-keyed schema fields).
+    system_path = module_dir / "system.json"
+    if system_path.exists():
+        try:
+            system = json.loads(system_path.read_text())
+        except (ValueError, OSError):
+            return True
+        if field_name not in system:
+            known = ", ".join(sorted(system.keys()))
+            print(f"Error: Field '{field_name}' not found in {module_name}/system.json")
+            print(f"  Available fields: {known}")
+            return False
+        field_def = system[field_name]
+        if isinstance(field_def, dict) and not is_scope_allowed(field_def, scope):
+            scopes = ", ".join(allowed_scopes(field_def)) or "none"
+            print(f"Error: Field '{field_name}' cannot be set at scope '{scope}' "
+                  f"(allowed: {scopes})")
+            return False
 
     return True
 
@@ -82,13 +83,16 @@ def _load_tool_field_schema(module_dir, tool_name: str, field_name: str) -> dict
 
 def _validate_config_value(path: str, value: str) -> bool:
     """Validate config value against system.json options for select fields. Returns False if invalid."""
-    from ..core_config import _find_module_dir
+    from ..core_config import _find_module_dir, _parse_config_path
 
-    parts = path.split("/")
-    if len(parts) != 2:
+    parsed = _parse_config_path(path)
+    if parsed is None:
+        return True
+    module_name, tool_name, field_name = parsed
+    if tool_name is not None:
+        # Tool-field option validation is not handled here today; keep behaviour.
         return True
 
-    module_name, field_name = parts
     module_dir = _find_module_dir(module_name)
     if module_dir is None:
         return True

@@ -96,7 +96,7 @@ def config_get_tree(conn, prefix: str) -> list[dict]:
             )
         else:
             scope, sid, path, value, enc = row
-        display = "****" if enc else value
+        display = "****" if (enc or is_path_obscure(path)) else value
         scope_label = labels.get((scope, sid), "")
         results.append({
             "scope": scope, "scope_id": sid, "scope_label": scope_label,
@@ -166,6 +166,36 @@ def _find_module_dir(module_name: str) -> Path | None:
     return None
 
 
+def _parse_config_path(path: str) -> tuple[str, str | None, str] | None:
+    """Parse a config path into (module, tool_or_None, field).
+
+    Shapes:
+      "module/tools/{tool}/{field}"       -> (module, tool, field)   (tool form)
+      "module/{field-with-or-without-/}"  -> (module, None, field)   (module form)
+
+    Returns None for malformed paths (no '/', trailing '/', empty module/field,
+    or `tools/` prefix that is not exactly 4-part).
+
+    Note: the schema permits ``/`` inside a field name (e.g. agent_view's
+    ``identity/ssh_private_key``), so the module-form field may itself contain
+    slashes — it is matched verbatim against ``system.json`` keys.
+    """
+    if "/" not in path:
+        return None
+    module, _, rest = path.partition("/")
+    if not module or not rest or rest.endswith("/"):
+        return None
+    head, sep, tail = rest.partition("/")
+    if head == "tools":
+        if not sep or not tail or "/" not in tail:
+            return None
+        tool, _, field = tail.partition("/")
+        if not tool or not field or "/" in field:
+            return None
+        return module, tool, field
+    return module, None, rest
+
+
 def _is_obscure_field(module_name: str, tool_name: str, field_name: str) -> bool:
     """Check if a field is marked as obscure in module.json."""
     module_dir = _find_module_dir(module_name)
@@ -210,14 +240,13 @@ def _is_obscure_module_config(module_name: str, field_name: str) -> bool:
 
 def is_path_obscure(path: str) -> bool:
     """Check if a config path refers to an obscure field based on schema."""
-    parts = path.split("/")
-    if len(parts) == 4 and parts[1] == "tools":
-        module_name, _, tool_name, field_name = parts
+    parsed = _parse_config_path(path)
+    if parsed is None:
+        return False
+    module_name, tool_name, field_name = parsed
+    if tool_name is not None:
         return _is_obscure_field(module_name, tool_name, field_name)
-    if len(parts) == 2:
-        module_name, field_name = parts
-        return _is_obscure_module_config(module_name, field_name)
-    return False
+    return _is_obscure_module_config(module_name, field_name)
 
 
 def config_set_auto_encrypt(
@@ -231,17 +260,6 @@ def config_set_auto_encrypt(
     """
     from .scoped_config import scoped_config_set
 
-    parts = path.split("/")
-    encrypted = False
-
-    # Parse path: module/tools/tool_name/field_name
-    if len(parts) == 4 and parts[1] == "tools":
-        module_name, _, tool_name, field_name = parts
-        encrypted = _is_obscure_field(module_name, tool_name, field_name)
-    # Parse path: module/field_name (module-level config)
-    elif len(parts) == 2:
-        module_name, field_name = parts
-        encrypted = _is_obscure_module_config(module_name, field_name)
-
+    encrypted = is_path_obscure(path)
     scoped_config_set(conn, path, value, scope=scope, scope_id=scope_id, encrypted=encrypted)
     return encrypted

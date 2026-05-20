@@ -83,13 +83,20 @@ def _coerce_type(value: str, field_type: str) -> Any:
 
 
 def _env_key(module_name: str, field_name: str) -> str:
-    """Build ENV var name: CONFIG__{MODULE}__{FIELD} uppercase, hyphens -> underscores."""
-    return f"CONFIG__{module_name}__{field_name}".upper().replace("-", "_")
+    """Build ENV var name: CONFIG__{MODULE}__{FIELD}.
+
+    Uppercased, with ``-`` → ``_`` and ``/`` → ``__`` so slash-keyed schema
+    fields (e.g. ``identity/ssh_private_key``) produce valid POSIX env names.
+    """
+    return f"CONFIG__{module_name}__{field_name}".upper().replace("-", "_").replace("/", "__")
 
 
 def _env_key_tool(module_name: str, tool_name: str, field_name: str) -> str:
     """Build ENV var name for tool field."""
-    return f"CONFIG__{module_name}__TOOLS__{tool_name}__{field_name}".upper().replace("-", "_")
+    return (
+        f"CONFIG__{module_name}__TOOLS__{tool_name}__{field_name}"
+        .upper().replace("-", "_").replace("/", "__")
+    )
 
 
 def _db_path(module_name: str, field_name: str) -> str:
