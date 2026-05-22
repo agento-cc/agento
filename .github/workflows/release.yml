@@ -92,7 +92,7 @@ jobs:
           VERSION=$(echo "${{ github.event.release.tag_name }}" | sed 's/^v//')
           installed=false
           for i in $(seq 1 20); do
-            uv pip install "agento-core==${VERSION}" && installed=true && break
+            uv pip install --refresh "agento-core==${VERSION}" && installed=true && break
             echo "PyPI not ready yet, retrying in 30s... (attempt $i/20)"
             sleep 30
           done
