@@ -8,6 +8,8 @@ services:
       args:
         HOST_UID: ${HOST_UID:-501}
         HOST_GID: ${HOST_GID:-20}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-~2.1.142}
+        CODEX_VERSION: ${CODEX_VERSION:-~0.128.0}
     image: agento-sandbox:latest
     container_name: agento-sandbox
     volumes:

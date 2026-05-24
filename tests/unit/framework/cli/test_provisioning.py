@@ -652,6 +652,30 @@ class TestSandboxDockerfilePinDriftGuard:
             # confirm the marker hasn't been pre-substituted in the template.
             assert "{{ sandbox_package_args }}" in compose_tmpl
 
+    def test_dev_compose_defaults_match_di_json_defaults(self):
+        """Dev compose (docker/docker-compose.dev.yml) is a repo-local
+        convenience used by agento devs to iterate. It's NOT rendered from the
+        template — it hardcodes build args — so it must be kept in sync with
+        di.json defaults manually. Skip cleanly when run outside the repo
+        (e.g. against an installed wheel)."""
+        from pathlib import Path
+
+        dev_compose = (
+            Path(__file__).resolve().parents[4] / "docker" / "docker-compose.dev.yml"
+        )
+        if not dev_compose.is_file():
+            return
+        dev_text = dev_compose.read_text()
+        for pkg in enumerate_sandbox_packages():
+            expected = (
+                f"{pkg.version_env_key}: "
+                f"${{{pkg.version_env_key}:-{pkg.default_range}}}"
+            )
+            assert expected in dev_text, (
+                f"docker/docker-compose.dev.yml missing or stale build arg "
+                f"for {pkg.version_env_key} (expected '{expected}')"
+            )
+
 
 class TestEnumerateSandboxPackages:
     """Registry enumeration is the single source of truth for which agents the
