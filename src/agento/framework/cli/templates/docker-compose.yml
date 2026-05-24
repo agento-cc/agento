@@ -10,6 +10,7 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+        # {{ sandbox_package_args }}
     image: agento-sandbox:${AGENTO_VERSION:-latest}
     volumes:
       - ../workspace:/workspace

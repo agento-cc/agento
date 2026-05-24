@@ -30,8 +30,14 @@ RUN apt-get update && \
 
 ENV EDITOR=nano
 
-# Install both CLI tools globally
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+# Install both CLI tools globally — soft-pinned to a tested range so a stray
+# upstream patch (e.g. Anthropic's claude-code 2.1.69 silently changing .mcp.json
+# trust behavior) can't slip in unannounced. Tilde locks the minor; customers
+# bump via docker/.env without an agento release. Defaults kept in sync with
+# CLAUDE_CODE_VERSION_DEFAULT / CODEX_VERSION_DEFAULT in cli/_provisioning.py.
+ARG CLAUDE_CODE_VERSION=~2.1.142
+ARG CODEX_VERSION=~0.128.0
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"
 
 # Create non-root user matching host UID
 # Handle case where UID already exists (e.g., node user is UID 1000)

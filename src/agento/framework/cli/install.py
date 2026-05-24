@@ -18,6 +18,7 @@ from ._output import cyan, log_error, log_info, log_warn
 from ._project import compose_file_flags, resolve_host_ids, update_dotenv_value
 from ._provisioning import (
     build_base_images,
+    enumerate_sandbox_packages,
     find_links_for_local_install,
     materialize_docker_context,
     regenerate_compose,
@@ -143,10 +144,18 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
     with contextlib.suppress(Exception):
         extract_sql_files(project_dir / "docker" / "sql")
 
-    # Render docker/.env from template
+    # Render docker/.env from template. Sandbox CLI pins come from each agent
+    # module's `sandbox_packages` di.json declaration — no hardcoded provider
+    # list here. At fresh-install time only core modules contribute (project
+    # filesystem doesn't exist yet).
+    sandbox_packages = enumerate_sandbox_packages()
+    pin_lines = "".join(
+        f"{pkg.version_env_key}={pkg.default_range}\n" for pkg in sandbox_packages
+    )
+    config_with_pins = {**config, "sandbox_package_pins": pin_lines}
     try:
         env_template = get_template("env.example")
-        env_content = env_template.format_map(config)
+        env_content = env_template.format_map(config_with_pins)
         (project_dir / "docker" / ".env").write_text(env_content)
     except TemplateNotFoundError:
         lines = [
@@ -158,6 +167,7 @@ def _scaffold(project_dir: Path, project_name: str, config: dict[str, str]) -> N
             f"TZ={config['timezone']}",
             f"HOST_UID={config['host_uid']}",
             f"HOST_GID={config['host_gid']}",
+            *(f"{pkg.version_env_key}={pkg.default_range}" for pkg in sandbox_packages),
             "# Set to 1 to disable LLM API calls (mocks agent output, for testing)",
             "DISABLE_LLM=0",
             "",
@@ -240,6 +250,13 @@ def _reinstall(project_dir: Path, host_uid: int, host_gid: int) -> None:
             update_dotenv_value(env_path, "HOST_UID", str(host_uid))
         if "HOST_GID" not in existing:
             update_dotenv_value(env_path, "HOST_GID", str(host_gid))
+        # Backfill agent CLI pins for projects that predate the pin landing.
+        # Never overwrite — a customer may have intentionally bumped to a newer
+        # tested version ahead of the agento default. The set of pins to
+        # backfill comes from each agent module's sandbox_packages declaration.
+        for pkg in enumerate_sandbox_packages(project_dir):
+            if pkg.version_env_key not in existing:
+                update_dotenv_value(env_path, pkg.version_env_key, pkg.default_range)
     else:
         log_warn("docker/.env not found — skipping version update.")
 

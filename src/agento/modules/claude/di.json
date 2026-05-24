@@ -13,5 +13,15 @@
   ],
   "transcript_readers": [
     {"provider": "claude", "class": "src.transcript_reader.ClaudeTranscriptReader"}
+  ],
+  "sandbox_packages": [
+    {
+      "provider": "claude",
+      "manager": "npm",
+      "package": "@anthropic-ai/claude-code",
+      "binary": "claude",
+      "version_env_key": "CLAUDE_CODE_VERSION",
+      "default_range": "~2.1.142"
+    }
   ]
 }

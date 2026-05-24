@@ -156,6 +156,10 @@ class TestScaffold:
         assert "TZ=America/New_York" in env_content
         assert "HOST_UID=501" in env_content
         assert "HOST_GID=20" in env_content
+        # CLI pins come from each agent module's sandbox_packages di.json —
+        # claude + codex ship with the framework.
+        assert "CLAUDE_CODE_VERSION=~" in env_content
+        assert "CODEX_VERSION=~" in env_content
         assert "DISABLE_LLM=0" in env_content
         assert "{" not in env_content
 
@@ -256,6 +260,9 @@ class TestInstallCommandBasic:
         assert "MYSQL_ROOT_PASSWORD=" in env
         assert "cronagent_pass" not in env
         assert "cronagent_root" not in env
+        # Sandbox CLI pins seeded so customers can edit them post-install.
+        assert "CLAUDE_CODE_VERSION=" in env
+        assert "CODEX_VERSION=" in env
 
         # Provisioning was invoked between scaffold and post-install runtime.
         mock_provision.assert_called_once()
@@ -344,6 +351,46 @@ class TestReinstall:
         _reinstall(tmp_path, 1000, 1000)
         meta = json.loads((tmp_path / ".agento" / "project.json").read_text())
         assert meta["version"] == "0.5.0"
+
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_backfills_missing_cli_pins(self, mock_ver, mock_provision, tmp_path: Path):
+        # Simulate a project installed before the CLI pins landed: env has
+        # no CLAUDE_CODE_VERSION / CODEX_VERSION. _reinstall must backfill them.
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "docker" / ".env").write_text(
+            "AGENTO_VERSION=0.4.0\nHOST_UID=1000\nHOST_GID=1000\n"
+        )
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "x"\ndependencies = ["agento-core==0.4.0"]\n'
+        )
+        (tmp_path / ".agento").mkdir()
+        (tmp_path / ".agento" / "project.json").write_text('{"name":"x","version":"0.4.0"}')
+
+        _reinstall(tmp_path, 1000, 1000)
+
+        env = (tmp_path / "docker" / ".env").read_text()
+        assert "CLAUDE_CODE_VERSION=~" in env
+        assert "CODEX_VERSION=~" in env
+
+    @patch("agento.framework.cli.install._provision_project", return_value=True)
+    @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
+    def test_reinstall_preserves_existing_cli_pins(self, mock_ver, mock_provision, tmp_path: Path):
+        # A customer may have pinned a newer or older CLI than the agento
+        # default. _reinstall must NOT overwrite their choice — sticky pin.
+        self._scaffold_project(tmp_path)
+        env_path = tmp_path / "docker" / ".env"
+        # Override the scaffold defaults with a customer choice.
+        text = env_path.read_text()
+        text = text.replace("CLAUDE_CODE_VERSION=~2.1.142", "CLAUDE_CODE_VERSION=~2.1.200")
+        text = text.replace("CODEX_VERSION=~0.128.0", "CODEX_VERSION=~0.999.0")
+        env_path.write_text(text)
+
+        _reinstall(tmp_path, 1000, 1000)
+
+        env = env_path.read_text()
+        assert "CLAUDE_CODE_VERSION=~2.1.200" in env
+        assert "CODEX_VERSION=~0.999.0" in env
 
 
 class TestRunPostInstall:

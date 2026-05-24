@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
 from ._env import parse_env_file
 from ._output import log_error, log_info, log_warn
@@ -25,8 +26,10 @@ from ._project import (
 from ._provisioning import (
     build_base_images,
     bump_agento_version,
+    enumerate_sandbox_packages,
     find_links_for_local_install,
     materialize_docker_context,
+    parse_semver_floor,
     regenerate_compose,
     write_project_pyproject,
 )
@@ -77,6 +80,35 @@ def _upgrade_cli(version: str | None) -> str | None:
                         return ver
                     installed_version = ver
     return installed_version or version or get_package_version()
+
+
+def _backfill_or_warn_cli_pin(
+    env_path: Path,
+    existing: dict[str, str],
+    *,
+    key: str,
+    default: str,
+    display: str,
+) -> None:
+    """Backfill a missing CLI version pin, or warn when the existing one is older.
+
+    Stale-pin policy is sticky-by-default: never overwrite a customer's value
+    (they may have a reason — security pin, test version, downgrade). Only log
+    a warning so they can decide whether to bump.
+    """
+    if key not in existing:
+        update_dotenv_value(env_path, key, default)
+        log_info(f"{key} backfilled to {default}")
+        return
+
+    current = parse_semver_floor(existing[key])
+    target = parse_semver_floor(default)
+    if current is not None and target is not None and current < target:
+        log_warn(
+            f"{key}={existing[key]} is older than this release's tested default "
+            f"{default}. To bump: edit docker/.env and rebuild "
+            f"({display} pin)."
+        )
 
 
 class UpgradeCommand:
@@ -162,6 +194,20 @@ class UpgradeCommand:
             if "HOST_GID" not in existing:
                 update_dotenv_value(env_path, "HOST_GID", str(host_gid))
                 log_info(f"HOST_GID backfilled to {host_gid}")
+
+        # Backfill agent CLI pins for deployments that predate them. Then
+        # warn — but never overwrite — when a customer's existing pin is
+        # older than this release's default. The customer may have left it
+        # intentionally; we just surface the gap so they know they're behind
+        # the version we just smoke-tested. The list of pins to manage comes
+        # from each agent module's sandbox_packages declaration.
+        for pkg in enumerate_sandbox_packages(project_root):
+            _backfill_or_warn_cli_pin(
+                env_path, existing,
+                key=pkg.version_env_key,
+                default=pkg.default_range,
+                display=pkg.binary,
+            )
 
         # Bump the agento-core pin in the project's pyproject.toml. If the
         # project predates the per-project pyproject layout, write a fresh one.

@@ -294,3 +294,101 @@ class TestUpgradeCommand:
         cmd.execute(Namespace(version="0.9.4", no_build=True, no_restart=False))
 
         mock_build_base.assert_not_called()
+
+
+class TestBackfillOrWarnCliPin:
+    """Verifies the sticky-pin policy: backfill when missing, warn when stale,
+    never overwrite an existing value (customers may have intentionally pinned)."""
+
+    def test_backfills_when_missing(self, tmp_path: Path):
+        from agento.framework.cli.upgrade import _backfill_or_warn_cli_pin
+
+        env = tmp_path / ".env"
+        env.write_text("AGENTO_VERSION=0.5.0\n")
+        existing = {"AGENTO_VERSION": "0.5.0"}
+
+        _backfill_or_warn_cli_pin(
+            env, existing,
+            key="CLAUDE_CODE_VERSION",
+            default="~2.1.142",
+            display="claude-code",
+        )
+
+        assert "CLAUDE_CODE_VERSION=~2.1.142" in env.read_text()
+
+    def test_warns_when_pin_is_older_than_default(self, tmp_path: Path, capsys):
+        from agento.framework.cli.upgrade import _backfill_or_warn_cli_pin
+
+        env = tmp_path / ".env"
+        env.write_text("CLAUDE_CODE_VERSION=~2.1.100\n")
+        existing = {"CLAUDE_CODE_VERSION": "~2.1.100"}
+
+        _backfill_or_warn_cli_pin(
+            env, existing,
+            key="CLAUDE_CODE_VERSION",
+            default="~2.1.142",
+            display="claude-code",
+        )
+
+        # Sticky: customer's pin is preserved.
+        assert "CLAUDE_CODE_VERSION=~2.1.100" in env.read_text()
+        assert "~2.1.142" not in env.read_text()
+        # Warning surfaced so customer knows they're behind.
+        out = capsys.readouterr()
+        combined = out.out + out.err
+        assert "~2.1.100" in combined
+        assert "~2.1.142" in combined
+
+    def test_silent_when_pin_is_newer_than_default(self, tmp_path: Path, capsys):
+        from agento.framework.cli.upgrade import _backfill_or_warn_cli_pin
+
+        env = tmp_path / ".env"
+        env.write_text("CLAUDE_CODE_VERSION=~2.1.200\n")
+        existing = {"CLAUDE_CODE_VERSION": "~2.1.200"}
+
+        _backfill_or_warn_cli_pin(
+            env, existing,
+            key="CLAUDE_CODE_VERSION",
+            default="~2.1.142",
+            display="claude-code",
+        )
+
+        # Sticky: customer is ahead, no warning.
+        assert "CLAUDE_CODE_VERSION=~2.1.200" in env.read_text()
+        out = capsys.readouterr()
+        combined = out.out + out.err
+        assert "older than" not in combined
+
+    def test_silent_when_pin_matches_default(self, tmp_path: Path, capsys):
+        from agento.framework.cli.upgrade import _backfill_or_warn_cli_pin
+
+        env = tmp_path / ".env"
+        env.write_text("CLAUDE_CODE_VERSION=~2.1.142\n")
+        existing = {"CLAUDE_CODE_VERSION": "~2.1.142"}
+
+        _backfill_or_warn_cli_pin(
+            env, existing,
+            key="CLAUDE_CODE_VERSION",
+            default="~2.1.142",
+            display="claude-code",
+        )
+
+        out = capsys.readouterr()
+        assert "older than" not in (out.out + out.err)
+
+    def test_unparseable_pin_does_not_crash(self, tmp_path: Path):
+        from agento.framework.cli.upgrade import _backfill_or_warn_cli_pin
+
+        env = tmp_path / ".env"
+        env.write_text("CLAUDE_CODE_VERSION=latest\n")
+        existing = {"CLAUDE_CODE_VERSION": "latest"}
+
+        # Comparison skipped silently; pin preserved.
+        _backfill_or_warn_cli_pin(
+            env, existing,
+            key="CLAUDE_CODE_VERSION",
+            default="~2.1.142",
+            display="claude-code",
+        )
+
+        assert "CLAUDE_CODE_VERSION=latest" in env.read_text()

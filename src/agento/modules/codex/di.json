@@ -13,5 +13,15 @@
   ],
   "transcript_readers": [
     {"provider": "codex", "class": "src.transcript_reader.CodexTranscriptReader"}
+  ],
+  "sandbox_packages": [
+    {
+      "provider": "codex",
+      "manager": "npm",
+      "package": "@openai/codex",
+      "binary": "codex",
+      "version_env_key": "CODEX_VERSION",
+      "default_range": "~0.128.0"
+    }
   ]
 }

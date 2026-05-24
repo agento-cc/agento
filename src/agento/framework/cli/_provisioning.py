@@ -13,10 +13,12 @@ GHCR pulls.
 from __future__ import annotations
 
 import importlib.resources as ires
+import json
 import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..module_status import read_module_status, resolve_module_source
@@ -26,11 +28,173 @@ from ._templates import get_package_version, get_template
 
 _AGENTO_REQUIRES_PYTHON = ">=3.12"
 
+
+@dataclass(frozen=True)
+class SandboxPackage:
+    """One agent CLI declaration sourced from a module's ``di.json``.
+
+    Agent modules declare ``sandbox_packages`` alongside ``runtimes`` /
+    ``cli_invokers`` to advertise the CLI binary they need installed in the
+    sandbox image, plus a pin range. The framework enumerates these
+    declarations at install/upgrade/doctor time and propagates pins to
+    ``docker/.env``, the sandbox build args, and the doctor check — no
+    framework-side ``if provider == "claude"`` branches.
+    """
+
+    provider: str
+    manager: str  # "npm" today; shape supports apt/pip if a future agent needs them
+    package: str
+    binary: str
+    version_env_key: str
+    default_range: str
+
+
 # Matches a uv.lock package source line:
 #   source = { registry = "<path-or-url>" }
 # Captures the path/URL so we can spot relative/absolute filesystem paths
 # that won't resolve inside the cron container.
 _LOCK_REGISTRY_LINE = re.compile(r'^source = \{ registry = "([^"]+)" \}', re.MULTILINE)
+
+# Matches the floor of a semver range like "~2.1.142", "^2.1.0", "2.1.142", etc.
+# Captures (major, minor, patch). Used to compare a customer's pinned range
+# against a new default, and to extract the floor for stale-pin warnings.
+_SEMVER_FLOOR = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def parse_semver_floor(value: str) -> tuple[int, int, int] | None:
+    """Extract (major, minor, patch) from a semver string or range.
+
+    Accepts plain semver ("2.1.142"), npm tilde ("~2.1.142"), caret ("^2.1.0"),
+    and version output strings ("2.1.126 (Claude Code)"). Returns None when no
+    semver triple is present, so callers can distinguish "unparseable" from a
+    real comparison and skip silently instead of crashing on a malformed pin.
+    """
+    m = _SEMVER_FLOOR.search(value)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _parse_sandbox_packages_from_di(di_json: Path) -> list[SandboxPackage]:
+    """Read ``sandbox_packages`` from one module's ``di.json``. Returns [] on absence/error."""
+    try:
+        data = json.loads(di_json.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    decls = data.get("sandbox_packages", [])
+    if not isinstance(decls, list):
+        return []
+    out: list[SandboxPackage] = []
+    for d in decls:
+        if not isinstance(d, dict):
+            continue
+        try:
+            out.append(SandboxPackage(
+                provider=d["provider"],
+                manager=d.get("manager", "npm"),
+                package=d["package"],
+                binary=d["binary"],
+                version_env_key=d["version_env_key"],
+                default_range=d["default_range"],
+            ))
+        except KeyError:
+            # Malformed entry — surface as a hard error so a typo doesn't
+            # silently drop an agent's pin.
+            raise RuntimeError(
+                f"Malformed sandbox_packages entry in {di_json}: {d!r}"
+            ) from None
+    return out
+
+
+def _iter_module_dirs(project_root: Path | None) -> list[Path]:
+    """Yield module directories the framework would enumerate at install/upgrade time.
+
+    Order matters for shadowing rules — same as ``resolve_module_source``:
+    local (``app/code/``) wins, then core (framework's bundled modules), then
+    PyPI extensions in the project venv. When ``project_root`` is None (fresh
+    install — project doesn't exist yet) only core modules contribute.
+    """
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    if project_root is not None:
+        app_code = project_root / "app" / "code"
+        if app_code.is_dir():
+            for entry in sorted(app_code.iterdir()):
+                if entry.is_dir() and (entry / "module.json").is_file():
+                    dirs.append(entry)
+                    seen.add(entry.name)
+
+    # Core modules ship inside the installed wheel under agento.modules.
+    try:
+        core_root = ires.files("agento.modules")
+    except (FileNotFoundError, ModuleNotFoundError):
+        core_root = None
+    if core_root is not None:
+        for entry in sorted(core_root.iterdir(), key=lambda e: e.name):
+            if entry.name.startswith("_") or not entry.is_dir():
+                continue
+            if entry.name in seen:
+                continue
+            # ires.files returns Traversable; we need a real Path for parsers.
+            with ires.as_file(entry) as p:
+                if (p / "module.json").is_file():
+                    dirs.append(Path(p))
+                    seen.add(entry.name)
+
+    if project_root is not None:
+        venv = project_root / ".venv"
+        for site_packages in venv.glob("lib/python*/site-packages"):
+            # PyPI extensions live at <site-packages>/<name>/module.json (the
+            # package itself acts as a module).
+            for entry in sorted(site_packages.iterdir()):
+                if entry.name.startswith("_") or not entry.is_dir():
+                    continue
+                if entry.name in seen:
+                    continue
+                if (entry / "module.json").is_file():
+                    dirs.append(entry)
+                    seen.add(entry.name)
+
+    return dirs
+
+
+def enumerate_sandbox_packages(project_root: Path | None = None) -> list[SandboxPackage]:
+    """Enumerate ``sandbox_packages`` declarations across all reachable modules.
+
+    Scans core modules (bundled with the framework), local modules
+    (``<project>/app/code/``), and PyPI-installed extensions
+    (``<project>/.venv/lib/python*/site-packages/``). When ``project_root`` is
+    None, only core modules are scanned — matches fresh-install where the
+    project filesystem doesn't exist yet.
+
+    Filters out modules disabled via ``app/etc/modules.json`` (when present).
+    Raises ``RuntimeError`` on duplicate ``version_env_key`` across modules so
+    a copy-paste collision surfaces immediately instead of one agent silently
+    overwriting another's pin in ``docker/.env``.
+    """
+    status: dict[str, bool] = {}
+    if project_root is not None:
+        status_path = project_root / "app" / "etc" / "modules.json"
+        if status_path.is_file():
+            status = read_module_status(status_path)
+
+    packages: list[SandboxPackage] = []
+    by_env_key: dict[str, str] = {}
+    for module_dir in _iter_module_dirs(project_root):
+        # Default-enabled when modules.json is absent or doesn't list this module.
+        if status and not status.get(module_dir.name, True):
+            continue
+        for pkg in _parse_sandbox_packages_from_di(module_dir / "di.json"):
+            prior = by_env_key.get(pkg.version_env_key)
+            if prior is not None and prior != module_dir.name:
+                raise RuntimeError(
+                    f"duplicate sandbox_packages.version_env_key {pkg.version_env_key!r} "
+                    f"declared by both {prior!r} and {module_dir.name!r}"
+                )
+            by_env_key[pkg.version_env_key] = module_dir.name
+            packages.append(pkg)
+    return packages
 
 
 def find_links_for_local_install() -> list[str]:
@@ -263,6 +427,7 @@ def render_compose(
     *,
     python_version: str,
     extensions: list[str],
+    sandbox_packages: list[SandboxPackage],
 ) -> str:
     """Substitute placeholders in the docker-compose template.
 
@@ -271,6 +436,9 @@ def render_compose(
     - line ``      # {{ extension_mounts_sandbox }}`` — replaced with mount
       lines for each enabled PyPI extension (or removed when none).
     - line ``      # {{ extension_mounts_cron }}`` — same, for the cron service.
+    - line ``        # {{ sandbox_package_args }}`` — replaced with one
+      ``<KEY>: ${<KEY>:-<default>}`` per ``sandbox_packages`` entry (or removed
+      when no agent module ships one).
     """
     def mount_block(target_path: str) -> str:
         if not extensions:
@@ -281,6 +449,15 @@ def render_compose(
         ]
         return "\n".join(lines) + "\n"
 
+    def sandbox_args_block() -> str:
+        if not sandbox_packages:
+            return ""
+        lines = [
+            f"        {pkg.version_env_key}: ${{{pkg.version_env_key}:-{pkg.default_range}}}"
+            for pkg in sandbox_packages
+        ]
+        return "\n".join(lines) + "\n"
+
     rendered = template.replace(
         "      # {{ extension_mounts_sandbox }}\n",
         mount_block("/opt/agento-src"),
@@ -288,6 +465,10 @@ def render_compose(
     rendered = rendered.replace(
         "      # {{ extension_mounts_cron }}\n",
         mount_block("/opt/agento-src"),
+    )
+    rendered = rendered.replace(
+        "        # {{ sandbox_package_args }}\n",
+        sandbox_args_block(),
     )
     rendered = rendered.replace("{{ python_version }}", python_version)
     return rendered
@@ -320,9 +501,15 @@ def build_base_images(project_dir: Path, version: str) -> None:
         "--build-arg", f"HOST_UID={host_uid}",
         "--build-arg", f"HOST_GID={host_gid}",
     ]
+    sandbox_args = list(host_ids)
+    for pkg in enumerate_sandbox_packages(project_dir):
+        sandbox_args.extend([
+            "--build-arg",
+            f"{pkg.version_env_key}={env.get(pkg.version_env_key, pkg.default_range)}",
+        ])
     # Order matters: sandbox before cron (cron's FROM resolves SANDBOX_IMAGE).
     specs = [
-        ("sandbox", ctx_root / "sandbox", host_ids),
+        ("sandbox", ctx_root / "sandbox", sandbox_args),
         ("toolbox", ctx_root / "toolbox", host_ids),
         ("cron", ctx_root / "cron",
             ["--build-arg", f"SANDBOX_IMAGE={sandbox_tag}"]),
@@ -344,11 +531,20 @@ def regenerate_compose(project_dir: Path) -> None:
 
     Reads enabled extensions from ``app/etc/modules.json``, detects the
     project venv's Python version, substitutes mount lines, writes the result.
+    Sandbox build args (CLI version pins) are sourced from each agent module's
+    ``sandbox_packages`` di.json declaration — adding a new agent requires no
+    framework edit here.
     """
     py_ver = detect_python_version(project_dir / ".venv")
     extensions = enumerate_enabled_extensions(project_dir)
+    sandbox_packages = enumerate_sandbox_packages(project_dir)
     template = get_template("docker-compose.yml")
-    rendered = render_compose(template, python_version=py_ver, extensions=extensions)
+    rendered = render_compose(
+        template,
+        python_version=py_ver,
+        extensions=extensions,
+        sandbox_packages=sandbox_packages,
+    )
     out = project_dir / "docker" / "docker-compose.yml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)

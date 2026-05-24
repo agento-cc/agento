@@ -74,6 +74,60 @@ RUN npx playwright install chromium
 
 `agento install` and `agento upgrade` build the managed `agento-<service>:<version>` base images directly (via `docker build`) **before** running `docker compose build`, so the `FROM agento-toolbox:${AGENTO_VERSION}` reference always resolves. Without this pre-build step, an override that defines its own `build:` section would completely replace the managed build, leaving the base tag missing and the override build would fail with `pull access denied` on Docker Hub.
 
+## Pinning agent CLI versions
+
+The sandbox image installs agent CLIs from npm (today: `@anthropic-ai/claude-code` and `@openai/codex`). Without a pin, every rebuild grabs `latest` — and upstream patch releases sometimes ship behavior changes (e.g. claude-code 2.1.69 silently disabled `.mcp.json` trust auto-approval). Agento soft-pins each agent's CLI from that agent's own module declaration in `di.json`:
+
+```jsonc
+// src/agento/modules/claude/di.json (shipped with the framework)
+{
+  "runtimes": [ /* ... */ ],
+  "cli_invokers": [ /* ... */ ],
+  "sandbox_packages": [
+    {
+      "provider": "claude",
+      "manager": "npm",
+      "package": "@anthropic-ai/claude-code",
+      "binary": "claude",
+      "version_env_key": "CLAUDE_CODE_VERSION",
+      "default_range": "~2.1.142"
+    }
+  ]
+}
+```
+
+At install/upgrade time, the framework enumerates every enabled module's `sandbox_packages` and writes one line per declaration to `docker/.env`:
+
+```bash
+# docker/.env (seeded by agento install — one line per declared agent)
+CLAUDE_CODE_VERSION=~2.1.142
+CODEX_VERSION=~0.128.0
+```
+
+The tilde range allows patch upgrades within the tested minor and forbids minor jumps. Each `agento` release ships a new tested default (in the module's `di.json`), but **`agento upgrade` never overwrites your existing `docker/.env` pin** — if it sees an older value, it logs a warning and moves on. Bump it intentionally when you're ready.
+
+To test a new upstream release without waiting for an agento release:
+
+```bash
+# Edit docker/.env to set the new range
+# Then rebuild the sandbox image and restart:
+agento upgrade --no-restart
+cd docker && docker compose build sandbox && docker compose up -d sandbox
+```
+
+`agento doctor` (run from inside the project) compares the live `<binary> --version` from the running sandbox against the pin for every enabled agent module and warns if they drift — usually meaning someone edited the pin but didn't rebuild.
+
+### Adding a new agent
+
+To register a new agent (e.g. OpenCode, Hermes), drop a module under `app/code/<name>/` with a `module.json` and a `di.json` that declares `sandbox_packages` (plus the usual `runtimes`/`cli_invokers`/etc.). On the next `agento upgrade`:
+
+- `docker/.env` gains a `<KEY>=<default_range>` line for the new agent
+- `docker-compose.yml` gains a `<KEY>: ${<KEY>:-<default>}` build arg under the sandbox service
+- `agento doctor` adds a `<binary> pin` row
+- The framework needs zero edits
+
+*(Current limitation: the sandbox Dockerfile still hardcodes the `npm install -g` line for claude + codex. Until a follow-up makes it data-driven, a third agent's CLI binary won't actually be installed into the image — the pin propagation is in place, but the install line in [src/agento/framework/docker/sandbox/Dockerfile](../../src/agento/framework/docker/sandbox/Dockerfile) also needs the new package added. That's the one remaining framework edit.)*
+
 ## Combining multiple overrides
 
 You can add volumes, env vars, and new services in the same file:

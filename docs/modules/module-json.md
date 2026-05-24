@@ -112,6 +112,16 @@ Registers capabilities your module provides — channels, workflows, runtimes, C
   "config_writers": [
     {"provider": "claude", "class": "src.config.ClaudeConfigWriter"}
   ],
+  "sandbox_packages": [
+    {
+      "provider": "claude",
+      "manager": "npm",
+      "package": "@anthropic-ai/claude-code",
+      "binary": "claude",
+      "version_env_key": "CLAUDE_CODE_VERSION",
+      "default_range": "~2.1.142"
+    }
+  ],
   "commands": [
     {"name": "sync", "class": "src.commands.sync.SyncCommand"},
     {"name": "publish", "class": "src.commands.publish.PublishCommand"}
@@ -127,8 +137,24 @@ Each section is optional — include only what your module provides. The `onboar
 | `workflows` | `type`, `class` | Workflow registry — `get_workflow_class(AgentType)` |
 | `runtimes` | `provider`, `class` | Runner factory — `create_runner(AgentProvider)` |
 | `config_writers` | `provider`, `class` | Config writer registry — `get_config_writer(AgentProvider)` |
+| `sandbox_packages` | `provider`, `manager`, `package`, `binary`, `version_env_key`, `default_range` | Sandbox CLI version registry — drives `docker/.env` pin seeding, sandbox `--build-arg`s, and the `agento doctor` pin check |
 | `commands` | `name`, `class` | CLI command registry — adds `bin/agento <name>` subcommand |
 | `onboarding` | (single class path string) | Onboarding registry — interactive setup during `setup:upgrade` |
+
+#### `sandbox_packages`
+
+Declares the CLI binary your agent module needs installed in the sandbox image, plus a soft version pin. The framework enumerates these declarations at install/upgrade/doctor time — no framework code branches on provider name.
+
+| Field | Required | Description |
+|---|---|---|
+| `provider` | yes | Stable identifier, matches `runtimes.provider` for the same agent |
+| `manager` | yes | Package manager (`"npm"` today; shape future-proofs apt/pip) |
+| `package` | yes | Full package spec (e.g. `@anthropic-ai/claude-code`) |
+| `binary` | yes | CLI binary name on `$PATH` — used for `<binary> --version` doctor checks and the doctor row label |
+| `version_env_key` | yes | UPPERCASE name of the env var seeded in `docker/.env` and consumed by the sandbox Dockerfile `ARG`. Must be unique across all modules |
+| `default_range` | yes | npm-style semver range (tilde recommended), used when the customer hasn't set the env var |
+
+The current sandbox Dockerfile hardcodes `RUN npm install -g @anthropic-ai/claude-code @openai/codex`, so a third-party agent module needs that line extended too until the Dockerfile becomes data-driven. The registry contract for pin propagation is in place today.
 
 #### `config_writers`
 

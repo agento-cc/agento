@@ -5,8 +5,12 @@ import argparse
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
+from ._env import parse_env_file
 from ._output import log_error
+from ._project import compose_file_flags, find_project_root
+from ._provisioning import enumerate_sandbox_packages, parse_semver_floor
 
 
 def _check_binary(name: str, version_args: list[str] | None = None) -> tuple[bool, str]:
@@ -47,6 +51,62 @@ def _check_python() -> tuple[bool, str]:
     version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     ok = sys.version_info >= (3, 11)
     return ok, f"Python {version}" + ("" if ok else " (requires >=3.11)")
+
+
+def _check_sandbox_cli_pin(
+    project_root: Path,
+    *,
+    binary: str,
+    pin_key: str,
+) -> tuple[bool, str]:
+    """Compare the live ``<binary> --version`` in the sandbox to the docker/.env pin.
+
+    Returns ``(ok, info)`` where ``ok`` reflects whether we could verify
+    alignment. ``ok=True`` covers both "in range" and "no live data to check"
+    (sandbox not running / project not initialised). ``ok=False`` is reserved
+    for actual drift between the pin and what's installed inside the image,
+    which usually means someone edited docker/.env without rebuilding.
+    """
+    env_path = project_root / "docker" / ".env"
+    env = parse_env_file(env_path)
+    pinned = env.get(pin_key)
+    if not pinned:
+        return True, f"{pin_key} not set in docker/.env"
+
+    flags = compose_file_flags(project_root)
+    if not flags:
+        return True, f"pinned {pinned} (sandbox not built yet)"
+
+    try:
+        result = subprocess.run(
+            ["docker", "compose", *flags, "exec", "-T", "sandbox", binary, "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return True, f"pinned {pinned} (sandbox not running)"
+
+    if result.returncode != 0:
+        return True, f"pinned {pinned} (sandbox not running)"
+
+    live = (result.stdout or result.stderr).strip().splitlines()[0] if (result.stdout or result.stderr) else ""
+    live_floor = parse_semver_floor(live)
+    pin_floor = parse_semver_floor(pinned)
+    if live_floor is None or pin_floor is None:
+        return True, f"pinned {pinned}, live {live or 'unknown'}"
+    # Tilde range allows >=pin_floor <pin_floor.major.(pin_floor.minor+1).0.
+    # Anything outside that window means someone edited the pin (or the
+    # Dockerfile ARG default drifted) without rebuilding the sandbox.
+    in_range = (
+        live_floor >= pin_floor
+        and live_floor[0] == pin_floor[0]
+        and live_floor[1] == pin_floor[1]
+    )
+    if in_range:
+        return True, f"pinned {pinned}, live {live}"
+    return False, (
+        f"pinned {pinned}, live {live} — rebuild sandbox "
+        "(docker compose build sandbox)"
+    )
 
 
 class DoctorCommand:
@@ -93,6 +153,17 @@ class DoctorCommand:
         # npm
         ok, info = _check_binary("npm")
         checks.append(("npm", ok, info))
+
+        # Agent CLI pins inside the sandbox (skipped silently outside a
+        # project). The list of agents to check comes from each agent module's
+        # sandbox_packages declaration — no hardcoded provider names here.
+        project_root = find_project_root()
+        if project_root is not None:
+            for pkg in enumerate_sandbox_packages(project_root):
+                ok, info = _check_sandbox_cli_pin(
+                    project_root, binary=pkg.binary, pin_key=pkg.version_env_key,
+                )
+                checks.append((f"{pkg.binary} pin", ok, info))
 
         # Display results
         for name, ok, info in checks:

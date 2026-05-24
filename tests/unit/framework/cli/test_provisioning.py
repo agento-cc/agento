@@ -5,13 +5,18 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from agento.framework.cli._provisioning import (
+    SandboxPackage,
     build_base_images,
     bump_agento_version,
     detect_python_version,
     enumerate_enabled_extensions,
+    enumerate_sandbox_packages,
     localize_lockfile_for_container,
     materialize_docker_context,
+    parse_semver_floor,
     regenerate_compose,
     render_compose,
     write_project_pyproject,
@@ -135,12 +140,16 @@ class TestRenderCompose:
     )
 
     def test_substitutes_python_version(self):
-        out = render_compose(self.TEMPLATE, python_version="3.13", extensions=[])
+        out = render_compose(
+            self.TEMPLATE, python_version="3.13", extensions=[], sandbox_packages=[],
+        )
         assert "python3.13" in out
         assert "PY=3.13" in out
 
     def test_no_extensions_removes_placeholder_line(self):
-        out = render_compose(self.TEMPLATE, python_version="3.12", extensions=[])
+        out = render_compose(
+            self.TEMPLATE, python_version="3.12", extensions=[], sandbox_packages=[],
+        )
         assert "extension_mounts_cron" not in out
         # Placeholder line is gone — no orphan comment markers in output.
         assert "# " not in out.split("environment:")[0].splitlines()[-1]
@@ -150,6 +159,7 @@ class TestRenderCompose:
             self.TEMPLATE,
             python_version="3.12",
             extensions=["ext_a", "ext_b"],
+            sandbox_packages=[],
         )
         assert "/site-packages/ext_a:/opt/agento-src/ext_a:ro" in out
         assert "/site-packages/ext_b:/opt/agento-src/ext_b:ro" in out
@@ -326,6 +336,19 @@ class TestRegenerateCompose:
         assert "extension_mounts_sandbox" not in content
         assert "extension_mounts_cron" not in content
 
+    def test_includes_sandbox_package_pins_from_core_modules(self, tmp_path: Path):
+        # Core agent modules ship sandbox_packages declarations — regenerate_compose
+        # must inject those into the sandbox build-args block (or the sandbox image
+        # would have no CLI version pinning at all).
+        proj = self._seed_project(tmp_path)
+        regenerate_compose(proj)
+        content = (proj / "docker" / "docker-compose.yml").read_text()
+        # The marker line must not survive rendering.
+        assert "sandbox_package_args" not in content
+        # Claude + codex ship with the framework; both should appear under sandbox.args.
+        assert "CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-" in content
+        assert "CODEX_VERSION: ${CODEX_VERSION:-" in content
+
 
 class TestBuildBaseImages:
     """build_base_images guarantees agento-<service>:<version> tags exist before
@@ -336,6 +359,7 @@ class TestBuildBaseImages:
         (tmp_path / "docker").mkdir()
         (tmp_path / "docker" / ".env").write_text(
             "AGENTO_VERSION=0.9.4\nHOST_UID=1500\nHOST_GID=2500\n"
+            "CLAUDE_CODE_VERSION=~2.1.150\nCODEX_VERSION=~0.130.0\n"
         )
         ctx = tmp_path / ".agento" / "docker"
         (ctx / "sandbox").mkdir(parents=True)
@@ -408,8 +432,6 @@ class TestBuildBaseImages:
         proj = self._seed_project(tmp_path)
         mock_run.return_value = type("R", (), {"returncode": 1})()
 
-        import pytest
-
         with pytest.raises(SystemExit) as exc:
             build_base_images(proj, "0.9.4")
         assert exc.value.code == 1
@@ -437,17 +459,29 @@ class TestBuildBaseImages:
 
 class TestBuildBaseImagesTemplateDriftGuard:
     """Catches future docker-compose.yml template changes that add build args
-    without updating build_base_images."""
+    without updating build_base_images.
 
-    def test_helper_matches_template_build_args(self):
+    Renders the template against the current core registry, then parses the
+    output for build-arg keys per service. Both sides (template + helper) read
+    from the same di.json declarations, so the assertion is that any agent
+    module shipping a sandbox_packages entry shows up in BOTH the rendered
+    compose and the loop in build_base_images."""
+
+    def test_helper_matches_rendered_template_build_args(self):
         import re
 
         from agento.framework.cli._templates import get_template
 
         template = get_template("docker-compose.yml")
-        lines = template.splitlines()
-        # Walk the template line-by-line; track current service and whether
-        # we're inside its `args:` block; collect ARG_NAME keys per service.
+        core_packages = enumerate_sandbox_packages()
+        rendered = render_compose(
+            template,
+            python_version="3.12",
+            extensions=[],
+            sandbox_packages=core_packages,
+        )
+
+        lines = rendered.splitlines()
         service_re = re.compile(r"^  (\w+):\s*$")
         arg_re = re.compile(r"^        ([A-Z_]+):\s*")
         actual: dict[str, set[str]] = {}
@@ -472,14 +506,371 @@ class TestBuildBaseImagesTemplateDriftGuard:
                 elif not line.startswith("        "):
                     in_args = False
 
-        # build_base_images currently passes these per service. Drift guard.
+        # Sandbox args = static (HOST_UID/HOST_GID) + one env key per registered
+        # sandbox_package. Toolbox/cron are agent-agnostic.
+        registry_keys = {pkg.version_env_key for pkg in core_packages}
         expected = {
-            "sandbox": {"HOST_UID", "HOST_GID"},
+            "sandbox": {"HOST_UID", "HOST_GID"} | registry_keys,
             "toolbox": {"HOST_UID", "HOST_GID"},
             "cron": {"SANDBOX_IMAGE"},
         }
         for service, args in expected.items():
             assert actual.get(service) == args, (
-                f"build_base_images is out of sync with template for {service}: "
-                f"template={actual.get(service)}, helper={args}"
+                f"rendered template out of sync with helper for {service}: "
+                f"template={actual.get(service)}, expected={args}"
             )
+
+
+class TestParseSemverFloor:
+    def test_plain_semver(self):
+        assert parse_semver_floor("2.1.142") == (2, 1, 142)
+
+    def test_tilde_range(self):
+        assert parse_semver_floor("~2.1.142") == (2, 1, 142)
+
+    def test_caret_range(self):
+        assert parse_semver_floor("^2.1.0") == (2, 1, 0)
+
+    def test_version_output_string(self):
+        # claude --version emits e.g. "2.1.126 (Claude Code)"
+        assert parse_semver_floor("2.1.126 (Claude Code)") == (2, 1, 126)
+
+    def test_codex_output_string(self):
+        # codex --version emits e.g. "codex-cli 0.128.0"
+        assert parse_semver_floor("codex-cli 0.128.0") == (0, 128, 0)
+
+    def test_unparseable_returns_none(self):
+        assert parse_semver_floor("latest") is None
+        assert parse_semver_floor("") is None
+
+
+class TestBuildBaseImagesCliPins:
+    """build_base_images must propagate sandbox_packages pins from docker/.env
+    to the sandbox image, falling back to each module's default_range when the
+    .env doesn't set them. Pin propagation is driven by the di.json registry,
+    not by hardcoded provider names."""
+
+    def _seed_with_env(self, tmp_path: Path, env_text: str) -> Path:
+        (tmp_path / "docker").mkdir()
+        (tmp_path / "docker" / ".env").write_text(env_text)
+        ctx = tmp_path / ".agento" / "docker"
+        for s in ("sandbox", "toolbox", "cron"):
+            (ctx / s).mkdir(parents=True)
+        return tmp_path
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_propagates_env_pins_to_sandbox_build(
+        self, mock_run, tmp_path: Path,
+    ):
+        proj = self._seed_with_env(
+            tmp_path,
+            "HOST_UID=1000\nHOST_GID=1000\n"
+            "CLAUDE_CODE_VERSION=~2.1.150\nCODEX_VERSION=~0.130.0\n",
+        )
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.6")
+
+        sandbox_inv = list(mock_run.call_args_list[0].args[0])
+        assert "CLAUDE_CODE_VERSION=~2.1.150" in sandbox_inv
+        assert "CODEX_VERSION=~0.130.0" in sandbox_inv
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_falls_back_to_module_defaults_when_env_missing_pins(
+        self, mock_run, tmp_path: Path,
+    ):
+        # .env exists but only carries non-CLI keys — should fall back to the
+        # default_range declared in each agent module's di.json.
+        proj = self._seed_with_env(tmp_path, "HOST_UID=1000\nHOST_GID=1000\n")
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.6")
+
+        sandbox_inv = list(mock_run.call_args_list[0].args[0])
+        for pkg in enumerate_sandbox_packages(proj):
+            assert f"{pkg.version_env_key}={pkg.default_range}" in sandbox_inv
+
+    @patch("agento.framework.cli._provisioning.subprocess.run")
+    def test_does_not_pass_cli_pins_to_toolbox_or_cron(
+        self, mock_run, tmp_path: Path,
+    ):
+        proj = self._seed_with_env(
+            tmp_path,
+            "CLAUDE_CODE_VERSION=~2.1.150\nCODEX_VERSION=~0.130.0\n",
+        )
+        mock_run.return_value = type("R", (), {"returncode": 0})()
+
+        build_base_images(proj, "0.9.6")
+
+        # Toolbox and cron Dockerfiles don't accept these ARGs; passing them
+        # would be harmless but noisy. Keep the scope tight to sandbox.
+        pin_keys = [pkg.version_env_key for pkg in enumerate_sandbox_packages(proj)]
+        for idx in (1, 2):
+            inv = list(mock_run.call_args_list[idx].args[0])
+            for key in pin_keys:
+                assert not any(a.startswith(f"{key}=") for a in inv)
+
+
+class TestSandboxDockerfilePinDriftGuard:
+    """Catches drift between agent modules' di.json default_range and the
+    sandbox Dockerfile's ARG defaults.
+
+    di.json is the source of truth — the Dockerfile stays static today (a
+    Jinja2 follow-up is planned) so its ARG defaults must match what the
+    framework would propagate via --build-arg. Without this guard, a plain
+    ``docker build .agento/docker/sandbox`` would silently install a different
+    version than ``agento install`` does."""
+
+    def test_dockerfile_arg_defaults_match_di_json_defaults(self):
+        import importlib.resources as ires
+        import re
+
+        from agento.framework.cli._templates import get_template
+
+        ctx = ires.files("agento.framework.docker") / "sandbox" / "Dockerfile"
+        text = ctx.read_text()
+        compose_tmpl = get_template("docker-compose.yml")
+
+        for pkg in enumerate_sandbox_packages():
+            m = re.search(
+                rf"^ARG\s+{re.escape(pkg.version_env_key)}=(\S+)",
+                text, re.MULTILINE,
+            )
+            assert m is not None, (
+                f"sandbox Dockerfile missing ARG {pkg.version_env_key} "
+                f"(declared by an agent module's sandbox_packages)"
+            )
+            assert m.group(1) == pkg.default_range, (
+                f"Dockerfile pin {pkg.version_env_key}={m.group(1)} != "
+                f"di.json default_range {pkg.default_range}"
+            )
+
+            # Compose template renders the same default via render_compose,
+            # but a `docker compose build` without going through render_compose
+            # would still need the rendered output to match. The render is
+            # exercised by TestBuildBaseImagesTemplateDriftGuard; here we just
+            # confirm the marker hasn't been pre-substituted in the template.
+            assert "{{ sandbox_package_args }}" in compose_tmpl
+
+
+class TestEnumerateSandboxPackages:
+    """Registry enumeration is the single source of truth for which agents the
+    sandbox image needs to install. Tests cover: core-only enumeration, the
+    user app/code/ overlay, modules.json disable, duplicate version_env_key
+    detection, and the empty-list path."""
+
+    def test_core_modules_alone_yield_claude_and_codex(self):
+        # Without a project root, only framework-shipped core modules contribute.
+        # Claude and codex both declare sandbox_packages.
+        pkgs = enumerate_sandbox_packages()
+        keys = {p.version_env_key for p in pkgs}
+        assert "CLAUDE_CODE_VERSION" in keys
+        assert "CODEX_VERSION" in keys
+        # Each entry has the expected dataclass shape.
+        for p in pkgs:
+            assert isinstance(p, SandboxPackage)
+            assert p.manager == "npm"
+            assert p.binary
+            assert p.package
+
+    def _seed_project_with_local_module(
+        self, tmp_path: Path, *, name: str, env_key: str, default: str,
+    ) -> Path:
+        mod = tmp_path / "app" / "code" / name
+        mod.mkdir(parents=True)
+        (mod / "module.json").write_text(json.dumps({"name": name, "version": "0.1.0"}))
+        (mod / "di.json").write_text(json.dumps({
+            "sandbox_packages": [{
+                "provider": name,
+                "manager": "npm",
+                "package": f"@example/{name}-cli",
+                "binary": name,
+                "version_env_key": env_key,
+                "default_range": default,
+            }]
+        }))
+        return tmp_path
+
+    def test_local_module_overlays_on_core(self, tmp_path: Path):
+        # A local module under app/code/ adds its sandbox_packages to whatever
+        # the core modules declare — neither shadows the other when env keys
+        # are distinct.
+        proj = self._seed_project_with_local_module(
+            tmp_path, name="hermes", env_key="HERMES_VERSION", default="~1.0.0",
+        )
+        pkgs = enumerate_sandbox_packages(proj)
+        keys = {p.version_env_key for p in pkgs}
+        assert "HERMES_VERSION" in keys
+        # Core modules still contribute.
+        assert "CLAUDE_CODE_VERSION" in keys
+
+    def test_disabled_local_module_is_excluded(self, tmp_path: Path):
+        proj = self._seed_project_with_local_module(
+            tmp_path, name="hermes", env_key="HERMES_VERSION", default="~1.0.0",
+        )
+        (proj / "app" / "etc").mkdir(parents=True, exist_ok=True)
+        (proj / "app" / "etc" / "modules.json").write_text(
+            json.dumps({"hermes": False, "claude": True, "codex": True})
+        )
+
+        pkgs = enumerate_sandbox_packages(proj)
+        keys = {p.version_env_key for p in pkgs}
+        assert "HERMES_VERSION" not in keys
+        # Explicitly-enabled core modules still appear.
+        assert "CLAUDE_CODE_VERSION" in keys
+
+    def test_modules_default_enabled_when_absent_from_status(self, tmp_path: Path):
+        # modules.json doesn't list hermes — default-enabled stance kicks in.
+        proj = self._seed_project_with_local_module(
+            tmp_path, name="hermes", env_key="HERMES_VERSION", default="~1.0.0",
+        )
+        (proj / "app" / "etc").mkdir(parents=True, exist_ok=True)
+        (proj / "app" / "etc" / "modules.json").write_text(
+            json.dumps({"claude": True})  # hermes absent → defaults to enabled
+        )
+
+        pkgs = enumerate_sandbox_packages(proj)
+        keys = {p.version_env_key for p in pkgs}
+        assert "HERMES_VERSION" in keys
+
+    def test_duplicate_env_key_across_modules_raises(self, tmp_path: Path):
+        # Two distinct modules declaring the same version_env_key would
+        # silently overwrite each other's pin in docker/.env — make this
+        # a hard error so a copy-paste collision is caught early.
+        proj = self._seed_project_with_local_module(
+            tmp_path, name="dupe1", env_key="CLAUDE_CODE_VERSION", default="~9.9.9",
+        )
+        # CLAUDE_CODE_VERSION is already claimed by the core claude module.
+        with pytest.raises(RuntimeError, match="duplicate sandbox_packages"):
+            enumerate_sandbox_packages(proj)
+
+    def test_malformed_entry_raises(self, tmp_path: Path):
+        # Missing required fields in a declaration must not be silently dropped.
+        mod = tmp_path / "app" / "code" / "broken"
+        mod.mkdir(parents=True)
+        (mod / "module.json").write_text(json.dumps({"name": "broken"}))
+        (mod / "di.json").write_text(json.dumps({
+            "sandbox_packages": [{"provider": "broken"}]  # missing everything else
+        }))
+
+        with pytest.raises(RuntimeError, match="Malformed sandbox_packages"):
+            enumerate_sandbox_packages(tmp_path)
+
+    def test_module_without_sandbox_packages_is_skipped(self, tmp_path: Path):
+        mod = tmp_path / "app" / "code" / "no_sandbox"
+        mod.mkdir(parents=True)
+        (mod / "module.json").write_text(json.dumps({"name": "no_sandbox"}))
+        (mod / "di.json").write_text(json.dumps({"runtimes": []}))
+
+        # Should not raise; only core packages come back.
+        pkgs = enumerate_sandbox_packages(tmp_path)
+        assert all(p.provider != "no_sandbox" for p in pkgs)
+
+
+class TestRenderComposeWithSandboxPackages:
+    """The sandbox build-args block is rendered from the registry. Test the
+    renderer in isolation: 0 packages removes the marker line; N packages
+    expands into N indented `KEY: ${KEY:-default}` lines under `args:`."""
+
+    TEMPLATE = (
+        "services:\n"
+        "  sandbox:\n"
+        "    build:\n"
+        "      context: ./sandbox\n"
+        "      args:\n"
+        "        HOST_UID: ${HOST_UID:-1000}\n"
+        "        # {{ sandbox_package_args }}\n"
+        "    image: agento-sandbox:latest\n"
+    )
+
+    def test_zero_packages_removes_marker_line(self):
+        out = render_compose(
+            self.TEMPLATE, python_version="3.12", extensions=[], sandbox_packages=[],
+        )
+        assert "sandbox_package_args" not in out
+        # HOST_UID stays on its own line; no stray blank line where the marker was.
+        assert "HOST_UID: ${HOST_UID:-1000}\n    image:" in out
+
+    def test_single_package_renders_one_line(self):
+        pkg = SandboxPackage(
+            provider="claude", manager="npm", package="@anthropic-ai/claude-code",
+            binary="claude", version_env_key="CLAUDE_CODE_VERSION", default_range="~2.1.142",
+        )
+        out = render_compose(
+            self.TEMPLATE, python_version="3.12", extensions=[], sandbox_packages=[pkg],
+        )
+        assert "CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-~2.1.142}" in out
+        assert "sandbox_package_args" not in out
+
+    def test_multiple_packages_render_in_order(self):
+        pkgs = [
+            SandboxPackage(
+                provider="claude", manager="npm", package="@anthropic-ai/claude-code",
+                binary="claude", version_env_key="CLAUDE_CODE_VERSION",
+                default_range="~2.1.142",
+            ),
+            SandboxPackage(
+                provider="codex", manager="npm", package="@openai/codex",
+                binary="codex", version_env_key="CODEX_VERSION",
+                default_range="~0.128.0",
+            ),
+            SandboxPackage(
+                provider="hermes", manager="npm", package="@example/hermes",
+                binary="hermes", version_env_key="HERMES_VERSION",
+                default_range="~1.0.0",
+            ),
+        ]
+        out = render_compose(
+            self.TEMPLATE, python_version="3.12", extensions=[], sandbox_packages=pkgs,
+        )
+        # Each pin renders once, in declared order.
+        positions = [
+            out.index("CLAUDE_CODE_VERSION:"),
+            out.index("CODEX_VERSION:"),
+            out.index("HERMES_VERSION:"),
+        ]
+        assert positions == sorted(positions)
+
+
+class TestNewAgentRegistersWithoutFrameworkEdit:
+    """Pins the registry contract: dropping a new agent module under app/code/
+    with a sandbox_packages entry must make it discoverable to all CLI
+    commands without editing any framework file.
+
+    (The Dockerfile templating follow-up will extend this to actual npm
+    installation; this PR keeps the Dockerfile static so a new agent's CLI
+    won't be installed in the image yet — but the registry contract is in
+    place, which is the structural fix.)"""
+
+    def test_new_agent_appears_in_enumeration_and_rendered_compose(
+        self, tmp_path: Path,
+    ):
+        from agento.framework.cli._templates import get_template
+
+        mod = tmp_path / "app" / "code" / "hermes"
+        mod.mkdir(parents=True)
+        (mod / "module.json").write_text(json.dumps({"name": "hermes", "version": "0.1.0"}))
+        (mod / "di.json").write_text(json.dumps({
+            "sandbox_packages": [{
+                "provider": "hermes",
+                "manager": "npm",
+                "package": "@example/hermes-cli",
+                "binary": "hermes",
+                "version_env_key": "HERMES_VERSION",
+                "default_range": "~1.0.0",
+            }]
+        }))
+
+        # 1. Enumeration includes the new agent.
+        pkgs = enumerate_sandbox_packages(tmp_path)
+        hermes = next((p for p in pkgs if p.version_env_key == "HERMES_VERSION"), None)
+        assert hermes is not None
+        assert hermes.binary == "hermes"
+        assert hermes.default_range == "~1.0.0"
+
+        # 2. Rendered compose carries the new build arg.
+        template = get_template("docker-compose.yml")
+        rendered = render_compose(
+            template, python_version="3.12", extensions=[], sandbox_packages=pkgs,
+        )
+        assert "HERMES_VERSION: ${HERMES_VERSION:-~1.0.0}" in rendered
