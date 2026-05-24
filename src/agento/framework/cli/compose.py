@@ -39,13 +39,22 @@ class UpCommand:
         return "Start the agento runtime (Docker Compose)"
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
-        pass
+        parser.add_argument(
+            "--force-recreate",
+            action="store_true",
+            dest="force_recreate",
+            help="Recreate containers even if their configuration/image is unchanged",
+        )
 
     def execute(self, args: argparse.Namespace) -> None:
         compose = _get_compose_cmd()
 
+        cmd = [*compose, "up", "-d"]
+        if getattr(args, "force_recreate", False):
+            cmd.append("--force-recreate")
+
         log_info("Starting containers...")
-        result = subprocess.run([*compose, "up", "-d"])
+        result = subprocess.run(cmd)
         if result.returncode != 0:
             log_error("Failed to start containers.")
             sys.exit(result.returncode)
