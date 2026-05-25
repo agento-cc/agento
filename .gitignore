@@ -71,4 +71,8 @@ docker/docker-compose.yml
 .claude/
 .worktrees/
 
+# Agent-specific config (private skills, sub-agents, etc.)
+.agents/
+.codex/
+
 .mcp

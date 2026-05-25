@@ -11,6 +11,7 @@ class CodexCliInvoker:
     ) -> list[str]:
         cmd = [
             "codex", "exec", prompt,
+            "--json",
             "--dangerously-bypass-approvals-and-sandbox",
             "--skip-git-repo-check",
         ]

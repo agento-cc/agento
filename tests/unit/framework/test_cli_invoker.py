@@ -99,6 +99,7 @@ class TestCodexCliInvokerImpl:
         cmd = CodexCliInvoker().headless_command("hi")
         assert cmd == [
             "codex", "exec", "hi",
+            "--json",
             "--dangerously-bypass-approvals-and-sandbox",
             "--skip-git-repo-check",
         ]

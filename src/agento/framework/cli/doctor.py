@@ -93,9 +93,11 @@ def _check_sandbox_cli_pin(
     pin_floor = parse_semver_floor(pinned)
     if live_floor is None or pin_floor is None:
         return True, f"pinned {pinned}, live {live or 'unknown'}"
-    # Tilde range allows >=pin_floor <pin_floor.major.(pin_floor.minor+1).0.
-    # Anything outside that window means someone edited the pin (or the
-    # Dockerfile ARG default drifted) without rebuilding the sandbox.
+    # Accept any patch within the pinned minor (>=pin_floor, same major+minor).
+    # Defaults are exact pins, so live should equal pin in practice; the window
+    # is kept for back-compat with tilde-style customer pins. Anything outside
+    # the window means someone edited the pin (or the Dockerfile ARG default
+    # drifted) without rebuilding the sandbox.
     in_range = (
         live_floor >= pin_floor
         and live_floor[0] == pin_floor[0]

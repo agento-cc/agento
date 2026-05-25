@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # test.sh — Validate JSON configs + run all test suites
-# Usage: bin/test.sh
+# Usage:
+#   bin/test           # run everything, including @pytest.mark.slow (real codex CLI etc.)
+#   bin/test --fast    # skip slow tests (pytest -m "not slow")
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -12,6 +14,23 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'
+
+fast_mode=0
+for arg in "$@"; do
+  case "$arg" in
+    --fast) fast_mode=1 ;;
+    -h|--help)
+      echo "Usage: bin/test [--fast]"
+      echo "  --fast    Skip slow tests (real CLI / paid APIs)"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      echo "Usage: bin/test [--fast]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 pass=0
 fail=0
@@ -26,7 +45,7 @@ check() {
 }
 
 # ============================================================
-echo -e "${CYAN}[1/6] JSON Config Validation${NC}"
+echo -e "${CYAN}[1/7] JSON Config Validation${NC}"
 echo "========================================"
 
 json_errors=0
@@ -125,7 +144,7 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[2/6] Ruff Lint${NC}"
+echo -e "${CYAN}[2/7] Ruff Lint${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR"
@@ -139,7 +158,7 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[3/6] Basedpyright${NC}"
+echo -e "${CYAN}[3/7] Basedpyright${NC}"
 echo "========================================"
 
 if uv run basedpyright 2>&1; then
@@ -152,7 +171,7 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[4/6] ESLint (Toolbox)${NC}"
+echo -e "${CYAN}[4/7] ESLint (Toolbox)${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR/src/agento/toolbox"
@@ -167,11 +186,11 @@ cd "$PROJECT_DIR"
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[5/6] Python Tests${NC}"
+echo -e "${CYAN}[5/7] Python Tests — unit + integration${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR"
-if uv run pytest -q 2>&1; then
+if uv run pytest -q -m "not slow" 2>&1; then
   ((pass++)) || true
 else
   ((fail++)) || true
@@ -180,7 +199,24 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[6/6] JS Toolbox Tests${NC}"
+if [ "$fast_mode" -eq 1 ]; then
+  echo -e "${CYAN}[6/7] Python e2e Tests ${DIM}(--fast)${NC}"
+  echo "========================================"
+  echo -e "  ${DIM}-- skipped --${NC}"
+else
+  echo -e "${CYAN}[6/7] Python e2e Tests${NC}"
+  echo "========================================"
+  if uv run pytest -q -m "slow" 2>&1; then
+    ((pass++)) || true
+  else
+    ((fail++)) || true
+  fi
+fi
+
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[7/7] JS Toolbox Tests${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR/src/agento/toolbox"

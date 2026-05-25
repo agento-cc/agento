@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agento.framework.agent_manager.errors import AuthenticationError
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.runner import Runner
 from agento.modules.claude.src.runner import TokenClaudeRunner
 from agento.modules.codex.src.runner import TokenCodexRunner
+
+_CODEX_FIXTURES = Path(__file__).parents[2] / "fixtures" / "codex"
 
 
 def _make_completed_process(
@@ -218,12 +222,23 @@ class TestTokenCodexRunner:
     def test_build_command(self):
         runner = TokenCodexRunner(dry_run=True)
         cmd = runner._build_command("Hello world")
-        assert cmd == ["codex", "exec", "Hello world", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+        assert cmd == [
+            "codex", "exec", "Hello world",
+            "--json",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+        ]
 
     def test_build_command_with_model(self):
         runner = TokenCodexRunner(dry_run=True)
         cmd = runner._build_command("Hello world", model="o3")
-        assert cmd == ["codex", "exec", "Hello world", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "--model", "o3"]
+        assert cmd == [
+            "codex", "exec", "Hello world",
+            "--json",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+            "--model", "o3",
+        ]
 
     def test_build_resume_command(self):
         runner = TokenCodexRunner(dry_run=True)
@@ -231,6 +246,7 @@ class TestTokenCodexRunner:
         assert cmd == [
             "codex", "exec", "resume", "sess-456",
             "Continue working from where you left off.",
+            "--json",
             "--dangerously-bypass-approvals-and-sandbox",
             "--skip-git-repo-check",
         ]
@@ -241,56 +257,6 @@ class TestTokenCodexRunner:
         assert "--model" in cmd
         assert "o3" in cmd
 
-    def test_try_parse_session_id(self):
-        runner = TokenCodexRunner(dry_run=True)
-        assert runner._try_parse_session_id("session id: abc-123\n") == "abc-123"
-        assert runner._try_parse_session_id("model: o3\n") is None
-        assert runner._try_parse_session_id("session id:\n") is None
-
-    def test_parse_output_returns_raw(self):
-        runner = TokenCodexRunner(dry_run=True)
-        result = runner._parse_output("some codex output")
-        assert result.raw_output == "some codex output"
-        assert result.input_tokens is None
-
-    def test_parse_output_extracts_header(self):
-        raw = (
-            "OpenAI Codex v0.45.0 (research preview)\n"
-            "--------\n"
-            "workdir: /workspace\n"
-            "model: gpt-5.2-codex\n"
-            "provider: openai\n"
-            "approval: never\n"
-            "sandbox: read-only\n"
-            "session id: 019cbcfa-837a-7130-b776-15ac3d39b1ad\n"
-            "--------\n"
-            "user\nczesc\ncodex\nCzesc!\n"
-            "tokens used\n6,374\nCzesc!\n"
-        )
-        runner = TokenCodexRunner(dry_run=True)
-        result = runner._parse_output(raw)
-
-        assert result.model == "gpt-5.2-codex"
-        assert result.subtype == "019cbcfa-837a-7130-b776-15ac3d39b1ad"
-        assert result.input_tokens == 6374
-        assert result.raw_output == raw
-
-    def test_parse_output_no_tokens(self):
-        raw = "model: o3\nsession id: abc-123\nsome output\n"
-        runner = TokenCodexRunner(dry_run=True)
-        result = runner._parse_output(raw)
-
-        assert result.model == "o3"
-        assert result.subtype == "abc-123"
-        assert result.input_tokens is None
-
-    def test_parse_output_fallback_on_garbage(self):
-        runner = TokenCodexRunner(dry_run=True)
-        result = runner._parse_output("totally unexpected output")
-        assert result.raw_output == "totally unexpected output"
-        assert result.model is None
-        assert result.input_tokens is None
-
     def test_run_executes_subprocess(self, agent_config):
         runner = TokenCodexRunner(
             config=agent_config,
@@ -298,14 +264,168 @@ class TestTokenCodexRunner:
             credentials_override={"subscription_key": "sk-openai-test"},
         )
         runner._record_usage = MagicMock()
+        stream = (
+            '{"type":"thread.started","thread_id":"sess-x"}\n'
+            '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"codex result output"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0}}\n'
+        )
         runner._execute_process = MagicMock(
-            return_value=_make_completed_process(stdout="codex result output"),
+            return_value=_make_completed_process(stdout=stream),
         )
 
         result = runner.run("test prompt")
 
-        assert result.raw_output == "codex result output"
+        assert "codex result output" in result.raw_output
         assert result.agent_type == "codex"
+
+
+class TestTokenCodexRunnerJsonOutput:
+    """NDJSON-mode parsing (codex exec --json).
+
+    These cover the post-migration contract: stdout carries newline-delimited
+    JSON events; auth failure is signalled only by a structured ``turn.failed``
+    event whose ``error.message`` matches an anchored auth phrase. The bare
+    substring ``"401"`` anywhere in MCP payloads (e.g. order numbers) must NOT
+    trigger AuthenticationError — that was the production bug being fixed.
+    """
+
+    def test_build_command_includes_json_flag(self):
+        runner = TokenCodexRunner(dry_run=True)
+        cmd = runner._build_command("Hello world")
+        assert "--json" in cmd
+
+    def test_build_resume_command_includes_json_flag(self):
+        runner = TokenCodexRunner(dry_run=True)
+        cmd = runner._build_resume_command("sess-456")
+        assert "--json" in cmd
+
+    def test_try_parse_session_id_from_thread_started(self):
+        runner = TokenCodexRunner(dry_run=True)
+        line = '{"type":"thread.started","thread_id":"019e585e-aaa-bbb-ccc"}'
+        assert runner._try_parse_session_id(line) == "019e585e-aaa-bbb-ccc"
+
+    def test_try_parse_session_id_ignores_other_events(self):
+        runner = TokenCodexRunner(dry_run=True)
+        assert runner._try_parse_session_id('{"type":"turn.started"}') is None
+        assert runner._try_parse_session_id('{"type":"item.completed","item":{}}') is None
+
+    def test_try_parse_session_id_ignores_non_json(self):
+        runner = TokenCodexRunner(dry_run=True)
+        assert runner._try_parse_session_id("not json") is None
+        assert runner._try_parse_session_id("") is None
+
+    def test_parse_output_simple_success(self):
+        raw = (_CODEX_FIXTURES / "success_simple.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)
+
+        assert result.subtype == "019e585e-526a-7943-b543-160dddddc56e"
+        assert result.input_tokens == 1234
+        # output_tokens covers visible reply + reasoning tokens
+        assert result.output_tokens == 50
+        assert "Hello! I'm ready to help." in result.raw_output
+
+    def test_parse_output_does_NOT_raise_on_substring_401_in_mcp_payload(self):
+        """Regression guard for the production token-poisoning bug.
+
+        The string ``401`` appears inside an mcp_tool_call payload (order id
+        substring). The legacy text parser scanned the whole blob and
+        false-positive'd. The JSON parser must only inspect structured
+        ``turn.failed`` events.
+        """
+        raw = (_CODEX_FIXTURES / "mcp_payload_with_401_substring.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)  # must NOT raise
+
+        assert result.subtype == "019e585e-ab85-7cb1-bdc5-33a5877cb247"
+        assert result.input_tokens == 101854
+        assert "353043085362789" in result.raw_output
+
+    def test_parse_output_raises_authentication_error_on_turn_failed_401(self):
+        raw = (_CODEX_FIXTURES / "auth_failure.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            runner._parse_output(raw)
+
+        assert "401" in str(exc_info.value)
+
+    def test_parse_output_no_turn_completed_returns_partial_result(self):
+        """If codex dies mid-stream (no turn.completed), parser still extracts
+        what's available without raising. Token usage is None; raw_output has
+        whatever agent_message text was emitted."""
+        raw = (_CODEX_FIXTURES / "no_turn_completed.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)
+
+        assert result.subtype == "019e5862-b829-7552-8007-11e34c456a93"
+        assert result.input_tokens is None
+        assert result.output_tokens is None
+        assert "Toolbox not reachable" in result.raw_output
+
+    def test_parse_output_only_thread_started(self):
+        """Process killed right after thread.started — we still get the session
+        id (so the consumer can resume), no tokens, empty agent text."""
+        raw = (_CODEX_FIXTURES / "thread_started_only.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)
+
+        assert result.subtype == "019e5872-aaaa-bbbb-cccc-ddddeeeeffff"
+        assert result.input_tokens is None
+        assert result.raw_output == ""
+
+    def test_parse_output_skips_malformed_lines(self):
+        """Defensive against partial flushes — a non-JSON line in the stream
+        must be skipped, not crash the parser."""
+        raw = (
+            '{"type":"thread.started","thread_id":"sess-x"}\n'
+            'GARBAGE LINE NOT JSON\n'
+            '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"hi"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0}}\n'
+        )
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)
+
+        assert result.subtype == "sess-x"
+        assert result.input_tokens == 10
+        assert result.output_tokens == 2
+        assert "hi" in result.raw_output
+
+    def test_parse_output_real_success_with_mcp_calls(self):
+        """Real captured sample — order lookup w/ multiple toolbox MCP calls."""
+        raw = (_CODEX_FIXTURES / "real_success_with_mcp.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)
+
+        assert result.subtype == "019e585e-ab85-7cb1-bdc5-33a5877cb247"
+        # turn.completed.usage.input_tokens
+        assert result.input_tokens == 101854
+        # output_tokens (1904) + reasoning_output_tokens (833)
+        assert result.output_tokens == 1904 + 833
+        # raw_output is the concatenated agent_message text(s) from item.completed
+        assert "353043085362789" in result.raw_output
+
+    def test_extract_raw_uses_stdout_only_not_stderr(self):
+        """The new parser MUST NOT concatenate stderr. Codex log lines on
+        stderr (Rust tracing output) contain '401' substrings that would
+        false-positive substring-based auth detection — we sidestep that
+        entirely by ignoring stderr."""
+        runner = TokenCodexRunner(dry_run=True)
+        proc = _make_completed_process(
+            stdout='{"type":"thread.started","thread_id":"s"}\n',
+            stderr="ERROR codex_api: HTTP error: 401 Unauthorized\n",
+        )
+
+        raw = runner._extract_raw(proc)
+
+        assert "401" not in raw
+        assert "thread.started" in raw
 
 
 class TestSubprocessTimeout:

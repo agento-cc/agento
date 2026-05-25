@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019e5862-b829-7552-8007-11e34c456a93"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc 'command -v docker'","aggregated_output":"","exit_code":1,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_8","type":"agent_message","text":"Toolbox not reachable from this sandbox."}}

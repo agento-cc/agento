@@ -158,8 +158,8 @@ class TestScaffold:
         assert "HOST_GID=20" in env_content
         # CLI pins come from each agent module's sandbox_packages di.json —
         # claude + codex ship with the framework.
-        assert "CLAUDE_CODE_VERSION=~" in env_content
-        assert "CODEX_VERSION=~" in env_content
+        assert "CLAUDE_CODE_VERSION=2." in env_content
+        assert "CODEX_VERSION=0." in env_content
         assert "DISABLE_LLM=0" in env_content
         assert "{" not in env_content
 
@@ -370,8 +370,8 @@ class TestReinstall:
         _reinstall(tmp_path, 1000, 1000)
 
         env = (tmp_path / "docker" / ".env").read_text()
-        assert "CLAUDE_CODE_VERSION=~" in env
-        assert "CODEX_VERSION=~" in env
+        assert "CLAUDE_CODE_VERSION=2." in env
+        assert "CODEX_VERSION=0." in env
 
     @patch("agento.framework.cli.install._provision_project", return_value=True)
     @patch("agento.framework.cli.install.get_package_version", return_value="0.5.0")
@@ -382,15 +382,15 @@ class TestReinstall:
         env_path = tmp_path / "docker" / ".env"
         # Override the scaffold defaults with a customer choice.
         text = env_path.read_text()
-        text = text.replace("CLAUDE_CODE_VERSION=~2.1.142", "CLAUDE_CODE_VERSION=~2.1.200")
-        text = text.replace("CODEX_VERSION=~0.128.0", "CODEX_VERSION=~0.999.0")
+        text = text.replace("CLAUDE_CODE_VERSION=2.1.142", "CLAUDE_CODE_VERSION=2.1.200")
+        text = text.replace("CODEX_VERSION=0.128.0", "CODEX_VERSION=0.999.0")
         env_path.write_text(text)
 
         _reinstall(tmp_path, 1000, 1000)
 
         env = env_path.read_text()
-        assert "CLAUDE_CODE_VERSION=~2.1.200" in env
-        assert "CODEX_VERSION=~0.999.0" in env
+        assert "CLAUDE_CODE_VERSION=2.1.200" in env
+        assert "CODEX_VERSION=0.999.0" in env
 
 
 class TestRunPostInstall:
