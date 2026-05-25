@@ -30,7 +30,7 @@ fi
 
 # Persist Docker env vars for agent user (su - wipes the environment, cron has its own env)
 ENV_FILE=/opt/cron-agent/env
-env | grep -E '^(MYSQL_|TZ=|DISABLE_LLM=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=)' > "$ENV_FILE"
+env | grep -E '^(MYSQL_|TZ=|DISABLE_LLM=|DISABLE_AUTOUPDATER=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=)' > "$ENV_FILE"
 chmod 644 "$ENV_FILE"
 
 # Minimal crontab header — setup:upgrade populates the AGENTO:BEGIN/END block,

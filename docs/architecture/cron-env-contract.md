@@ -10,7 +10,7 @@ The cron container's entrypoint persists docker-injected env into
 `/opt/cron-agent/env`:
 
 ```bash
-env | grep -E '^(MYSQL_|TZ=|DISABLE_LLM=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=)' > "$ENV_FILE"
+env | grep -E '^(MYSQL_|TZ=|DISABLE_LLM=|DISABLE_AUTOUPDATER=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=)' > "$ENV_FILE"
 ```
 
 It then starts the consumer under the unprivileged `agent` user:
@@ -41,6 +41,7 @@ So the whitelist is not a security boundary — it's a *parsing* boundary.
 | `PYTHONPATH`        | Python module resolution | No — Python convention |
 | `PROVIDER`          | Default agent provider for `agento run` | Could be renamed; not broken today |
 | `DISABLE_LLM`       | Test/dev dry-run flag | Could be renamed; not broken today |
+| `DISABLE_AUTOUPDATER` | Disables claude-code's built-in self-updater so the image's pinned version isn't silently superseded at runtime. Set to `1` via the sandbox Dockerfile `ENV`. | No — external (claude-code) convention |
 
 Anything not matching one of the above is dropped before the consumer sees it.
 
