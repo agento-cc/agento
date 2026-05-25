@@ -138,3 +138,49 @@ class TestUsageSummary:
         assert summary.token_id == 1
         assert summary.total_tokens == 50000
         assert summary.call_count == 10
+
+
+class TestTokenTypeAndPriority:
+    def test_from_row_populates_type_and_priority(self):
+        row = {
+            "id": 1, "agent_type": "codex", "label": "x",
+            "type": "codex_access_token", "priority": 5,
+            "credentials": None,  # _decrypt_credentials handles None
+            "model": None, "token_limit": 0, "enabled": True,
+            "status": "ok", "error_msg": None,
+            "expires_at": None, "used_at": None,
+            "created_at": datetime(2026, 1, 1),
+            "updated_at": datetime(2026, 1, 1),
+        }
+        t = Token.from_row(row)
+        assert t.type == "codex_access_token"
+        assert t.priority == 5
+
+    def test_from_row_defaults_type_to_oauth_when_missing(self):
+        """Defensive: if a row pre-dates migration 022, treat as oauth/priority=0."""
+        row = {
+            "id": 1, "agent_type": "codex", "label": "x",
+            "credentials": None, "model": None, "token_limit": 0, "enabled": True,
+            "status": "ok", "error_msg": None, "expires_at": None, "used_at": None,
+            "created_at": datetime(2026, 1, 1), "updated_at": datetime(2026, 1, 1),
+        }
+        t = Token.from_row(row)
+        assert t.type == "oauth"
+        assert t.priority == 0
+
+    def test_from_row_defaults_when_columns_are_null(self):
+        """Defensive: a NULL value in the type/priority column (e.g. rogue
+        direct-SQL edit) must still resolve to the same safe defaults — this is
+        the case `row.get(...) or default` handles that `row.get(..., default)`
+        would not.
+        """
+        row = {
+            "id": 1, "agent_type": "codex", "label": "x",
+            "type": None, "priority": None,
+            "credentials": None, "model": None, "token_limit": 0, "enabled": True,
+            "status": "ok", "error_msg": None, "expires_at": None, "used_at": None,
+            "created_at": datetime(2026, 1, 1), "updated_at": datetime(2026, 1, 1),
+        }
+        t = Token.from_row(row)
+        assert t.type == "oauth"
+        assert t.priority == 0

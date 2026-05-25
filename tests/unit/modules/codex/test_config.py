@@ -2,10 +2,34 @@
 from __future__ import annotations
 
 import tomllib
+from datetime import datetime
 
 import pytest
 
+from agento.framework.agent_manager.models import AgentProvider, Token, TokenStatus
 from agento.modules.codex.src.config import CodexConfigWriter
+
+_EPOCH = datetime(2000, 1, 1)
+
+
+def _make_token(credentials: dict) -> Token:
+    return Token(
+        id=1,
+        agent_type=AgentProvider.CODEX,
+        type="oauth",
+        label="test",
+        credentials=credentials,
+        model=None,
+        token_limit=0,
+        enabled=True,
+        status=TokenStatus.OK,
+        priority=0,
+        error_msg=None,
+        expires_at=None,
+        used_at=None,
+        created_at=_EPOCH,
+        updated_at=_EPOCH,
+    )
 
 
 @pytest.fixture
@@ -131,7 +155,35 @@ class TestInjectRuntimeParams:
 
 
 class TestWriteCredentials:
-    def test_writes_auth_json_from_raw_auth(self, writer, work_dir):
+    def _make_token(self, type_: str, credentials: dict, **kwargs):
+        return Token(
+            id=kwargs.get("id", 1),
+            agent_type=AgentProvider.CODEX,
+            type=type_,
+            label=kwargs.get("label", "test"),
+            credentials=credentials,
+            model=None,
+            token_limit=0,
+            enabled=True,
+            status=TokenStatus.OK,
+            priority=0,
+            error_msg=None,
+            expires_at=None,
+            used_at=None,
+            created_at=_EPOCH,
+            updated_at=_EPOCH,
+        )
+
+    def test_oauth_writes_raw_auth_json(self, writer, work_dir):
+        raw = {"tokens": {"access_token": "x", "refresh_token": "y"}}
+        token = self._make_token("oauth", {
+            "raw_auth": raw, "subscription_key": "x", "refresh_token": "y",
+        })
+        writer.write_credentials(work_dir, token)
+        import json as _json
+        assert _json.loads((work_dir / ".codex" / "auth.json").read_text()) == raw
+
+    def test_oauth_sets_chmod_600(self, writer, work_dir):
         raw = {"tokens": {"access_token": "codex-access", "refresh_token": "codex-refresh"}}
         creds = {
             "subscription_key": "codex-access",
@@ -141,20 +193,62 @@ class TestWriteCredentials:
             "id_token": "idtok",
             "raw_auth": raw,
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, self._make_token("oauth", creds))
 
         path = work_dir / ".codex" / "auth.json"
         assert path.is_file()
-        import json as _json
-        assert _json.loads(path.read_text()) == raw
         assert (path.stat().st_mode & 0o777) == 0o600
 
-    def test_skips_without_raw_auth(self, writer, work_dir, caplog):
+    def test_oauth_skips_without_raw_auth(self, writer, work_dir, caplog):
         import logging
         with caplog.at_level(logging.WARNING, logger="agento.modules.codex.src.config"):
-            writer.write_credentials(work_dir, {"subscription_key": "codex-access"})
+            writer.write_credentials(work_dir, self._make_token("oauth", {"subscription_key": "codex-access"}))
         assert not (work_dir / ".codex" / "auth.json").exists()
         assert "raw_auth" in caplog.text
+
+    def test_openai_api_key_writes_no_auth_json(self, writer, work_dir):
+        token = self._make_token("openai_api_key", {"api_key": "sk-X"})
+        writer.write_credentials(work_dir, token)
+        assert not (work_dir / ".codex" / "auth.json").exists()
+
+    def test_codex_access_token_invokes_codex_login_with_stdin(self, writer, work_dir, monkeypatch):
+        import subprocess
+        from unittest.mock import MagicMock
+        fake_run = MagicMock(return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""))
+        monkeypatch.setattr("agento.modules.codex.src.config.subprocess.run", fake_run)
+
+        token = self._make_token("codex_access_token", {
+            "access_token": "eyJ.payload.sig", "expires_at": 9999999999})
+        writer.write_credentials(work_dir, token)
+
+        fake_run.assert_called_once()
+        call_args = fake_run.call_args
+        assert call_args[0][0] == ["codex", "login", "--with-access-token"]
+        assert call_args.kwargs.get("input") == "eyJ.payload.sig"
+        env = call_args.kwargs.get("env") or {}
+        assert env.get("HOME") == str(work_dir)
+        assert "eyJ.payload.sig" not in " ".join(call_args[0][0])
+
+    def test_codex_access_token_raises_on_nonzero_exit(self, writer, work_dir, monkeypatch, caplog):
+        import logging
+        import subprocess
+        from unittest.mock import MagicMock
+
+        from agento.framework.agent_manager.errors import AuthenticationError
+
+        fake_run = MagicMock(return_value=subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="invalid agent identity JWT format"))
+        monkeypatch.setattr("agento.modules.codex.src.config.subprocess.run", fake_run)
+
+        token = self._make_token("codex_access_token", {
+            "access_token": "eyJ.bad.sig", "expires_at": 9999999999})
+        with (
+            caplog.at_level(logging.WARNING, logger="agento.modules.codex.src.config"),
+            pytest.raises(AuthenticationError),
+        ):
+            writer.write_credentials(work_dir, token)
+        assert "eyJ.bad.sig" not in caplog.text
 
 
 class TestOwnedPaths:
@@ -220,11 +314,31 @@ class TestCaptureRefreshedCredentials:
             "refresh_token": refresh_token,
             "subscription_key": access_token,
         }
+        token.type = "oauth"
         token.agent_type = AgentProvider.CODEX
         token.label = "my-codex"
         token.token_limit = 0
         token.model = None
         return token
+
+    def _make_typed_token(self, type_: str, credentials: dict):
+        return Token(
+            id=1,
+            agent_type=AgentProvider.CODEX,
+            type=type_,
+            label="test",
+            credentials=credentials,
+            model=None,
+            token_limit=0,
+            enabled=True,
+            status=TokenStatus.OK,
+            priority=0,
+            error_msg=None,
+            expires_at=None,
+            used_at=None,
+            created_at=_EPOCH,
+            updated_at=_EPOCH,
+        )
 
     def test_noop_when_no_auth_json(self, writer, work_dir):
         from unittest.mock import MagicMock, patch
@@ -273,4 +387,26 @@ class TestCaptureRefreshedCredentials:
         assert saved_creds["raw_auth"] == refreshed
         assert saved_creds["refresh_token"] == "tok-B"
         assert saved_creds["subscription_key"] == "acc-B"
+
+    def test_noop_for_codex_access_token_type(self, writer, work_dir):
+        import json
+        from unittest.mock import MagicMock, patch
+        codex_dir = work_dir / ".codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "auth.json").write_text(json.dumps({
+            "tokens": {"refresh_token": "rotated", "access_token": "rotated-acc"}}))
+
+        token = self._make_typed_token("codex_access_token", {
+            "access_token": "eyJ.x.sig", "expires_at": 9999999999})
+        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_noop_for_openai_api_key_type(self, writer, work_dir):
+        """API-key rows have no rotated auth.json; capture must skip."""
+        from unittest.mock import MagicMock, patch
+        token = self._make_typed_token("openai_api_key", {"api_key": "sk-X"})
+        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
 

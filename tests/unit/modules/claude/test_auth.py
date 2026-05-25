@@ -142,3 +142,31 @@ class TestClaudeAuthStrategy:
         assert result.subscription_key == "sk-x"
         assert result.raw_auth is not None
         assert result.raw_auth["claude_json"] == {}
+
+
+class TestRegisterFromApiKey:
+    def test_accepts_sk_ant_prefix(self):
+        result = ClaudeAuthStrategy().register_from_api_key("sk-ant-abc123")
+        assert result == {"api_key": "sk-ant-abc123"}
+
+    def test_rejects_empty(self):
+        with pytest.raises(AuthenticationError):
+            ClaudeAuthStrategy().register_from_api_key("")
+
+    def test_rejects_whitespace_only(self):
+        with pytest.raises(AuthenticationError):
+            ClaudeAuthStrategy().register_from_api_key("   ")
+
+    def test_rejects_openai_proj_prefix(self):
+        """OpenAI keys (sk-proj-...) must not be accepted as Anthropic keys."""
+        with pytest.raises(AuthenticationError, match="Anthropic"):
+            ClaudeAuthStrategy().register_from_api_key("sk-proj-XXXX")
+
+    def test_rejects_openai_svcacct_prefix(self):
+        """OpenAI service-account keys (sk-svcacct-...) must not be accepted."""
+        with pytest.raises(AuthenticationError, match="Anthropic"):
+            ClaudeAuthStrategy().register_from_api_key("sk-svcacct-XXXX")
+
+    def test_strips_surrounding_whitespace(self):
+        result = ClaudeAuthStrategy().register_from_api_key("  sk-ant-abc  ")
+        assert result == {"api_key": "sk-ant-abc"}

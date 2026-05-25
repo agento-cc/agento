@@ -13,6 +13,7 @@ from .token_store import (
     mark_token_error,
     register_token,
     select_token,
+    set_token_priority,
 )
 from .usage_store import get_usage_summaries, get_usage_summary, record_usage
 
@@ -38,4 +39,5 @@ __all__ = [
     "register_token",
     "save_credentials",
     "select_token",
+    "set_token_priority",
 ]

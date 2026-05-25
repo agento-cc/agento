@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .agent_manager.models import AgentProvider
+
+if TYPE_CHECKING:
+    from .agent_manager.models import Token
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +59,15 @@ class ConfigWriter(Protocol):
         """
         ...
 
-    def write_credentials(self, build_dir: Path, credentials: dict) -> None:
+    def write_credentials(self, build_dir: Path, token: Token) -> None:
         """Materialize provider-specific OAuth credential files into ``build_dir``.
 
-        The ``credentials`` dict is the decrypted payload from ``oauth_token.credentials``
-        (flat fields: ``subscription_key``, ``refresh_token``, ``expires_at``,
-        ``subscription_type``, ``id_token``, ``raw_auth``). Each provider rewrites
-        it into the format its CLI expects (e.g. Claude's ``.claude/.credentials.json``
-        with the ``claudeAiOauth`` nested structure, or Codex's ``.codex/auth.json``).
+        The ``token.credentials`` dict is the decrypted payload from
+        ``oauth_token.credentials`` (flat fields: ``subscription_key``,
+        ``refresh_token``, ``expires_at``, ``subscription_type``, ``id_token``,
+        ``raw_auth``). Each provider rewrites it into the format its CLI expects
+        (e.g. Claude's ``.claude/.credentials.json`` with the ``claudeAiOauth``
+        nested structure, or Codex's ``.codex/auth.json``).
         Default: no-op (agent doesn't need on-disk credentials).
         """
         ...

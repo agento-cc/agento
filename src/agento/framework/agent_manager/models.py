@@ -20,12 +20,14 @@ class TokenStatus(Enum):
 class Token:
     id: int
     agent_type: AgentProvider
+    type: str
     label: str
     credentials: dict | None
     model: str | None
     token_limit: int
     enabled: bool
     status: TokenStatus
+    priority: int
     error_msg: str | None
     expires_at: datetime | None
     used_at: datetime | None
@@ -37,12 +39,14 @@ class Token:
         return cls(
             id=row["id"],
             agent_type=AgentProvider(row["agent_type"]),
+            type=row.get("type") or "oauth",
             label=row["label"],
             credentials=_decrypt_credentials(row.get("credentials")),
             model=row.get("model"),
             token_limit=row["token_limit"],
             enabled=bool(row["enabled"]),
             status=TokenStatus(row.get("status", "ok") or "ok"),
+            priority=int(row.get("priority") or 0),
             error_msg=row.get("error_msg"),
             expires_at=row.get("expires_at"),
             used_at=row.get("used_at"),

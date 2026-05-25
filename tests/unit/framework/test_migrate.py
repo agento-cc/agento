@@ -157,6 +157,24 @@ class TestApplyMigration:
         with pytest.raises(pymysql.err.OperationalError):
             apply_migration(conn, "004_test", sql_file)
 
+    def test_migration_022_idempotent_on_duplicate_column(self, tmp_path):
+        """Re-running 022 after partial application must not crash."""
+        import pymysql.err
+
+        from agento.framework.migrate import apply_migration
+
+        sql_file = tmp_path / "022_oauth_token_type_priority.sql"
+        sql_file.write_text(
+            "ALTER TABLE oauth_token ADD COLUMN type VARCHAR(32) NOT NULL DEFAULT 'oauth';"
+        )
+        conn, cursor = _mock_conn()
+        cursor.execute.side_effect = [
+            pymysql.err.OperationalError(1060, "Duplicate column name 'type'"),
+            None,  # INSERT into schema_migration
+        ]
+        apply_migration(conn, "022_oauth_token_type_priority", sql_file)
+        conn.commit.assert_called_once()
+
 
 class TestMigrate:
     @patch("agento.framework.migrate.apply_migration")

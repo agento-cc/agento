@@ -15,6 +15,7 @@ from agento.framework.agent_manager.token_store import (
     mark_token_error,
     register_token,
     select_token,
+    set_token_priority,
 )
 
 
@@ -49,10 +50,12 @@ _PLAINTEXT_CREDS = {"subscription_key": "sk-test"}
 _SAMPLE_ROW = {
     "id": 1,
     "agent_type": "claude",
+    "type": "oauth",
     "label": "prod-1",
     "credentials": _ENCRYPTED_BLOB,
     "model": "claude-sonnet-4-20250514",
     "token_limit": 100000,
+    "priority": 0,
     "enabled": True,
     "status": "ok",
     "error_msg": None,
@@ -109,10 +112,11 @@ class TestRegisterToken:
         assert "INSERT INTO oauth_token" in insert_call[0][0]
         assert "credentials" in insert_call[0][0]
         params = insert_call[0][1]
-        assert params[0] == "codex"
-        assert params[1] == "codex-1"
-        assert params[2].startswith("aes256:")
-        assert params[3] == 50000
+        assert params[0] == "codex"   # agent_type
+        assert params[1] == "oauth"   # type (default)
+        assert params[2] == "codex-1" # label
+        assert params[3].startswith("aes256:")  # encrypted credentials
+        assert params[4] == 50000     # token_limit
 
     def test_register_resets_status_and_clears_error_on_refresh(self):
         conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW)
@@ -120,8 +124,8 @@ class TestRegisterToken:
         register_token(conn, AgentProvider.CLAUDE, "prod-1", _PLAINTEXT_CREDS)
 
         insert_sql = cursor.execute.call_args_list[0][0][0]
-        assert "status = 'ok'" in insert_sql
-        assert "error_msg = NULL" in insert_sql
+        assert "status" in insert_sql and "'ok'" in insert_sql
+        assert "error_msg" in insert_sql and "NULL" in insert_sql
 
     def test_pulls_expires_at_from_credentials_epoch(self):
         conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW)
@@ -250,7 +254,7 @@ class TestSelectToken:
         select_token(conn, AgentProvider.CLAUDE)
 
         select_sql = _cursor.execute.call_args_list[0][0][0]
-        assert "ORDER BY used_at IS NULL DESC" in select_sql
+        assert "used_at IS NULL DESC" in select_sql
 
     def test_filters_by_agent_type(self):
         conn, cursor = _mock_conn_with_fetches([{"id": 1}, _SAMPLE_ROW])
@@ -337,3 +341,61 @@ class TestTokenStatusMapping:
         token = get_token(conn, 1)
         assert token.status == TokenStatus.ERROR
         assert token.error_msg == "expired"
+
+
+class TestRegisterTokenType:
+    def test_register_token_persists_type_default_oauth(self):
+        conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW, lastrowid=1)
+
+        register_token(conn, AgentProvider.CODEX, "lbl", {"subscription_key": "x"})
+
+        insert_call = cursor.execute.call_args_list[0]
+        insert_sql = insert_call[0][0]
+        params = insert_call[0][1]
+        assert "type" in insert_sql
+        # Param tuple: (agent_type, type, label, encrypted, token_limit, model, expires_at)
+        assert params[1] == "oauth"
+
+    def test_register_token_persists_type_codex_access_token(self):
+        conn, cursor = _mock_conn(fetchone_return=_SAMPLE_ROW, lastrowid=1)
+
+        register_token(conn, AgentProvider.CODEX, "lbl", {"subscription_key": "x"}, type="codex_access_token")
+
+        insert_call = cursor.execute.call_args_list[0]
+        params = insert_call[0][1]
+        # Param tuple: (agent_type, type, label, encrypted, token_limit, model, expires_at)
+        assert params[1] == "codex_access_token"
+
+
+class TestSelectTokenPriority:
+    def test_select_orders_by_priority_then_used_at(self):
+        conn, cursor = _mock_conn_with_fetches([{"id": 1}, _SAMPLE_ROW])
+
+        select_token(conn, AgentProvider.CLAUDE)
+
+        select_sql = cursor.execute.call_args_list[0][0][0]
+        # priority ASC must appear in ORDER BY and before used_at
+        assert "priority ASC" in select_sql
+        priority_pos = select_sql.index("priority ASC")
+        used_at_pos = select_sql.index("used_at IS NULL DESC")
+        assert priority_pos < used_at_pos
+
+
+class TestSetTokenPriority:
+    def test_set_priority_updates_row(self):
+        conn, cursor = _mock_conn(rowcount=1)
+
+        result = set_token_priority(conn, 42, 5)
+
+        assert result is True
+        sql = cursor.execute.call_args[0][0]
+        assert "UPDATE oauth_token SET priority" in sql
+        params = cursor.execute.call_args[0][1]
+        assert params == (5, 42)
+
+    def test_set_priority_returns_false_when_token_not_found(self):
+        conn, _cursor = _mock_conn(rowcount=0)
+
+        result = set_token_priority(conn, 999, 0)
+
+        assert result is False

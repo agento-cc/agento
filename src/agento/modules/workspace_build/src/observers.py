@@ -2,14 +2,54 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
+from agento.framework.agent_manager.models import AgentProvider, Token, TokenStatus
 from agento.framework.config_writer import get_config_writer
 from agento.framework.database_config import DatabaseConfig
 from agento.framework.db import get_connection
 from agento.framework.workspace_paths import BUILD_DIR
 
 logger = logging.getLogger(__name__)
+
+_EPOCH = datetime(2000, 1, 1)
+
+
+def _token_from_event(event) -> Token:
+    """Construct a minimal Token from a token event (register/refresh).
+
+    Events carry ``agent_type``, ``token_id``, ``label``, ``credentials``,
+    and (since the fix) ``type``. Falls back to ``"oauth"`` for events that
+    pre-date the field.
+    """
+    try:
+        provider = AgentProvider(event.agent_type)
+    except ValueError:
+        logger.error(
+            "Unrecognised agent_type %r in token event; falling back to CLAUDE. "
+            "This usually means a misconfigured event dispatch — refreshed "
+            "credentials may end up in the wrong provider's build dir.",
+            event.agent_type,
+        )
+        provider = AgentProvider.CLAUDE
+    return Token(
+        id=getattr(event, "token_id", 0),
+        agent_type=provider,
+        type=getattr(event, "type", None) or "oauth",
+        label=getattr(event, "label", ""),
+        credentials=getattr(event, "credentials", {}),
+        model=None,
+        token_limit=0,
+        enabled=True,
+        status=TokenStatus.OK,
+        priority=0,
+        error_msg=None,
+        expires_at=None,
+        used_at=None,
+        created_at=_EPOCH,
+        updated_at=_EPOCH,
+    )
 
 
 class BuildFreshnessCheckObserver:
@@ -82,6 +122,8 @@ class RefreshBuildCredentialsObserver:
             )
             return
 
+        token = _token_from_event(event)
+
         build_root = Path(BUILD_DIR)
         if not build_root.is_dir():
             return
@@ -95,7 +137,7 @@ class RefreshBuildCredentialsObserver:
             if not target.is_dir():
                 continue
             try:
-                writer.write_credentials(target, credentials)
+                writer.write_credentials(target, token)
                 updated += 1
                 logger.info(
                     "Refreshed %s credentials in build dir: %s",
@@ -195,7 +237,7 @@ class ReplaceErroredTokenCredentialsObserver:
             if not target.is_dir():
                 continue
             try:
-                writer.write_credentials(target, replacement.credentials)
+                writer.write_credentials(target, replacement)
                 updated += 1
                 logger.info(
                     "Replaced errored %s credentials in build dir %s "

@@ -95,7 +95,12 @@ agento config:resolve <module> [--scope=S] [--scope-id=N] [--json]  # Resolve ef
 
 # Tokens (LRU pool per provider — no sticky primary)
 agento token:list                                      # status, last_used, expires_at per row
-agento token:register claude <label> [path]            # register or refresh; resets status=ok
+# Register tokens (interactive OAuth, OR with --with-api-key, OR with --with-access-token)
+agento token:register <agent_type> <label>                                # interactive OAuth
+agento token:register codex  <label> --with-api-key      <openai-key>     # OpenAI key
+agento token:register codex  <label> --with-access-token <jwt>            # OpenAI access-token JWT
+agento token:register claude <label> --with-api-key      <anthropic-key>  # Anthropic key
+agento token:set-priority <token_id> <priority>                           # lower priority wins
 agento token:refresh <id>                              # re-auth an existing token
 agento token:mark-error <id> "<msg>"                   # quarantine a token (status=error)
 agento token:reset <id>                                # clear error status without re-auth

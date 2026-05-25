@@ -2,16 +2,39 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agento.framework.agent_manager.errors import AuthenticationError
-from agento.framework.agent_manager.models import AgentProvider
+from agento.framework.agent_manager.models import AgentProvider, Token, TokenStatus
 from agento.framework.runner import Runner
 from agento.modules.claude.src.runner import TokenClaudeRunner
 from agento.modules.codex.src.runner import TokenCodexRunner
+
+_EPOCH = datetime(2000, 1, 1)
+
+
+def _make_token(credentials: dict, agent_type: AgentProvider = AgentProvider.CLAUDE) -> Token:
+    return Token(
+        id=1,
+        agent_type=agent_type,
+        type="oauth",
+        label="test",
+        credentials=credentials,
+        model=None,
+        token_limit=0,
+        enabled=True,
+        status=TokenStatus.OK,
+        priority=0,
+        error_msg=None,
+        expires_at=None,
+        used_at=None,
+        created_at=_EPOCH,
+        updated_at=_EPOCH,
+    )
 
 _CODEX_FIXTURES = Path(__file__).parents[2] / "fixtures" / "codex"
 
@@ -65,29 +88,53 @@ class TestTokenRunnerDryRun:
 
 
 class TestTokenClaudeRunner:
+    def _make_token(self, type_: str, credentials: dict) -> Token:
+        return Token(
+            id=1,
+            agent_type=AgentProvider.CLAUDE,
+            type=type_,
+            label="test",
+            credentials=credentials,
+            model=None,
+            token_limit=0,
+            enabled=True,
+            status=TokenStatus.OK,
+            priority=0,
+            error_msg=None,
+            expires_at=None,
+            used_at=None,
+            created_at=_EPOCH,
+            updated_at=_EPOCH,
+        )
+
     def test_agent_type(self):
         runner = TokenClaudeRunner(dry_run=True)
         assert runner.agent_type == AgentProvider.CLAUDE
 
-    def test_build_env_subscription(self):
+    def test_build_env_oauth_returns_empty(self):
         runner = TokenClaudeRunner(dry_run=True)
-        env = runner._build_env({"subscription_key": "sk-ant-api01-test"})
-        assert env == {"ANTHROPIC_API_KEY": "sk-ant-api01-test"}
+        token = self._make_token(
+            type_="oauth",
+            credentials={"subscription_key": "x", "refresh_token": "y"},
+        )
+        assert runner._build_env(token) == {}
 
-    def test_build_env_oauth(self):
-        """OAuth mode: subscription_type set -> empty env (CLI handles auth)."""
+    def test_build_env_anthropic_api_key(self):
         runner = TokenClaudeRunner(dry_run=True)
-        env = runner._build_env({
-            "subscription_key": "sk-ant-oat01-xyz",
-            "subscription_type": "team",
-        })
-        assert env == {}
+        token = self._make_token(
+            type_="anthropic_api_key",
+            credentials={"api_key": "sk-ant-XYZ"},
+        )
+        assert runner._build_env(token) == {"ANTHROPIC_API_KEY": "sk-ant-XYZ"}
 
-    def test_build_env_no_key(self):
-        """No subscription_key at all -> empty env."""
+    def test_build_env_anthropic_api_key_missing_value_raises(self):
         runner = TokenClaudeRunner(dry_run=True)
-        env = runner._build_env({"access_token": "oa-xyz"})
-        assert env == {}
+        token = self._make_token(
+            type_="anthropic_api_key",
+            credentials={},  # type says api_key but credentials are empty
+        )
+        with pytest.raises(ValueError, match="anthropic_api_key"):
+            runner._build_env(token)
 
     def test_build_command(self):
         runner = TokenClaudeRunner(dry_run=True)
@@ -210,14 +257,56 @@ class TestTokenClaudeRunner:
 
 
 class TestTokenCodexRunner:
+    def _make_token(self, type_: str, credentials: dict) -> Token:
+        return Token(
+            id=1,
+            agent_type=AgentProvider.CODEX,
+            type=type_,
+            label="test",
+            credentials=credentials,
+            model=None,
+            token_limit=0,
+            enabled=True,
+            status=TokenStatus.OK,
+            priority=0,
+            error_msg=None,
+            expires_at=None,
+            used_at=None,
+            created_at=_EPOCH,
+            updated_at=_EPOCH,
+        )
+
     def test_agent_type(self):
         runner = TokenCodexRunner(dry_run=True)
         assert runner.agent_type == AgentProvider.CODEX
 
-    def test_build_env(self):
+    def test_build_env_oauth_returns_empty(self):
         runner = TokenCodexRunner(dry_run=True)
-        env = runner._build_env({"subscription_key": "sk-openai-test"})
-        assert env == {"OPENAI_API_KEY": "sk-openai-test"}
+        token = self._make_token(
+            type_="oauth",
+            credentials={
+                "subscription_key": "acc-x",
+                "refresh_token": "rt",
+                "raw_auth": {"tokens": {"access_token": "acc-x"}},
+            },
+        )
+        assert runner._build_env(token) == {}
+
+    def test_build_env_openai_api_key(self):
+        runner = TokenCodexRunner(dry_run=True)
+        token = self._make_token(
+            type_="openai_api_key",
+            credentials={"api_key": "sk-X"},
+        )
+        assert runner._build_env(token) == {"OPENAI_API_KEY": "sk-X"}
+
+    def test_build_env_codex_access_token_returns_empty(self):
+        runner = TokenCodexRunner(dry_run=True)
+        token = self._make_token(
+            type_="codex_access_token",
+            credentials={"access_token": "eyJ.payload.sig", "expires_at": 9999999999},
+        )
+        assert runner._build_env(token) == {}
 
     def test_build_command(self):
         runner = TokenCodexRunner(dry_run=True)

@@ -401,6 +401,7 @@ class TokenRegisteredEvent:
     token_id: int
     label: str
     credentials: dict[str, Any]
+    type: str = "oauth"
 
 
 @dataclass
@@ -411,6 +412,7 @@ class TokenRefreshedEvent:
     token_id: int
     label: str
     credentials: dict[str, Any]
+    type: str = "oauth"
 
 
 @dataclass

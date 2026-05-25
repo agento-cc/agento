@@ -128,6 +128,7 @@ def _register_framework_commands() -> None:
         TokenRefreshCommand,
         TokenRegisterCommand,
         TokenResetCommand,
+        TokenSetPriorityCommand,
         TokenUsageCommand,
     )
     from .upgrade import UpgradeCommand
@@ -141,7 +142,7 @@ def _register_framework_commands() -> None:
         ConsumerCommand, SetupUpgradeCommand, ReplayCommand, PauseCommand, ResumeCommand, E2eCommand,
         RunCommand,
         TokenRegisterCommand, TokenRefreshCommand, TokenListCommand, TokenDeregisterCommand,
-        TokenMarkErrorCommand, TokenResetCommand, TokenUsageCommand,
+        TokenMarkErrorCommand, TokenResetCommand, TokenSetPriorityCommand, TokenUsageCommand,
     ]:
         register_command(cmd_cls())
 

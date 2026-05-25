@@ -5,10 +5,12 @@ import json
 import logging
 import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agento.framework.agent_manager.errors import AuthenticationError
 from agento.framework.agent_manager.token_store import register_token
 
 if TYPE_CHECKING:
@@ -96,12 +98,36 @@ class CodexConfigWriter:
         """Codex session + history state that must survive workspace rebuilds."""
         return [".codex/history.jsonl", ".codex/sessions"]
 
-    def write_credentials(self, build_dir: Path, credentials: dict) -> None:
-        """Write Codex CLI's ``.codex/auth.json`` (raw auth payload captured at login)."""
+    def write_credentials(self, build_dir: Path, token: Token) -> None:
+        """Materialize Codex auth based on token.type.
+
+        - codex_access_token: shell out to ``codex login --with-access-token``
+          with ``HOME=<build_dir>`` and the JWT on stdin so Codex itself
+          writes the correct auth.json shape.
+        - openai_api_key: nothing to materialize on disk; runner injects
+          OPENAI_API_KEY via env.
+        - oauth (default): write the captured raw_auth verbatim to
+          ``.codex/auth.json``.
+        """
+        if token.type == "codex_access_token":
+            access_token = (token.credentials or {}).get("access_token")
+            if not access_token:
+                raise AuthenticationError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'codex_access_token' but credentials['access_token'] is missing or empty."
+                )
+            self._login_with_access_token(build_dir, access_token)
+            return
+
+        if token.type == "openai_api_key":
+            return
+
+        # oauth (default)
+        credentials = token.credentials or {}
         raw_auth = credentials.get("raw_auth")
         if not raw_auth:
             logger.warning(
-                "Codex credentials missing raw_auth; skipping .codex/auth.json materialization "
+                "Codex OAuth credentials missing raw_auth; skipping .codex/auth.json "
                 "— agent will need to /login on first run."
             )
             return
@@ -110,7 +136,43 @@ class CodexConfigWriter:
         path = codex_dir / "auth.json"
         path.write_text(json.dumps(raw_auth, indent=2))
         os.chmod(path, 0o600)
-        logger.debug("Wrote Codex credentials to %s", path)
+        logger.debug("Wrote Codex OAuth credentials to %s", path)
+
+    def _login_with_access_token(self, build_dir: Path, token_str: str) -> None:
+        """Run `codex login --with-access-token` with HOME=<build_dir>; token
+        is piped via stdin so it never appears in argv or env."""
+        build_dir.mkdir(parents=True, exist_ok=True)
+        env = {**os.environ, "HOME": str(build_dir)}
+        try:
+            result = subprocess.run(
+                ["codex", "login", "--with-access-token"],
+                input=token_str, env=env, text=True,
+                capture_output=True, check=False,
+                timeout=30,
+            )
+        except FileNotFoundError as exc:
+            raise AuthenticationError(
+                "Codex CLI not found on PATH; cannot materialize access-token auth.json."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise AuthenticationError(
+                "codex login --with-access-token timed out after 30s."
+            ) from exc
+
+        if result.returncode != 0:
+            stderr_snippet = (result.stderr or "")[:300]
+            logger.warning(
+                "codex login --with-access-token exited %d: %s",
+                result.returncode, stderr_snippet,
+            )
+            raise AuthenticationError(
+                f"codex login --with-access-token failed (exit {result.returncode}): "
+                f"{stderr_snippet}"
+            )
+        logger.debug(
+            "Materialized Codex access-token auth.json via codex login (HOME=%s)",
+            build_dir,
+        )
 
     def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
         """Merge legacy shared-HOME ``workspace/.codex/config.toml`` into the build.
@@ -238,6 +300,11 @@ class CodexConfigWriter:
         token: Token,
         conn: pymysql.Connection,
     ) -> None:
+        # Only OAuth tokens have a refresh_token Codex CLI might rotate.
+        # API-key and access-token rows never produce a meaningful auth.json
+        # diff we should persist back.
+        if token.type != "oauth":
+            return
         auth_path = home_dir / ".codex" / "auth.json"
         if not auth_path.is_file():
             return

@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from typing import TYPE_CHECKING
 
 from agento.framework.agent_manager.errors import AuthenticationError
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.agent_manager.runner import TokenRunner
 from agento.framework.runner import RunResult
+
+if TYPE_CHECKING:
+    from agento.framework.agent_manager.models import Token
 
 # Anchored auth phrases checked ONLY against turn.failed.error.message in the
 # NDJSON stream. Never matched against raw stdout/stderr — that's the bug we're
@@ -27,12 +31,18 @@ class TokenCodexRunner(TokenRunner):
     def agent_type(self) -> AgentProvider:
         return AgentProvider.CODEX
 
-    def _build_env(self, credentials: dict) -> dict[str, str]:
-        # OAuth — let Codex CLI use its own auth from real HOME
-        if credentials.get("refresh_token"):
-            return {}
-        # API key — pass directly
-        return {"OPENAI_API_KEY": credentials["subscription_key"]}
+    def _build_env(self, token: Token) -> dict[str, str]:
+        if token.type == "openai_api_key":
+            credentials = token.credentials or {}
+            api_key = credentials.get("api_key")
+            if not api_key:
+                raise ValueError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'openai_api_key' but credentials['api_key'] is missing or empty."
+                )
+            return {"OPENAI_API_KEY": api_key}
+        # oauth + codex_access_token both rely on .codex/auth.json on disk.
+        return {}
 
     def _build_command(self, prompt: str, model: str | None = None) -> list[str]:
         cmd = [

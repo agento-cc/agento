@@ -70,3 +70,15 @@ class ClaudeAuthStrategy:
                 "claude_json": claude_json,
             },
         )
+
+    def register_from_api_key(self, key: str) -> dict:
+        """Validate an Anthropic API key and return credentials for
+        type='anthropic_api_key'."""
+        if not isinstance(key, str) or not key.strip():
+            raise AuthenticationError("Anthropic API key is empty.")
+        stripped = key.strip()
+        if stripped.startswith("sk-proj-") or stripped.startswith("sk-svcacct-"):
+            raise AuthenticationError(
+                "Refusing to register an OpenAI key (sk-proj-... / sk-svcacct-...) as an Anthropic key."
+            )
+        return {"api_key": stripped}

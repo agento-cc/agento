@@ -5,7 +5,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agento.framework.agent_manager.models import Token
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +63,7 @@ class ClaudeConfigWriter:
         """Claude Code session + todo state that must survive workspace rebuilds."""
         return [".claude/projects", ".claude/todos"]
 
-    def write_credentials(self, build_dir: Path, credentials: dict) -> None:
+    def write_credentials(self, build_dir: Path, token: Token) -> None:
         """Materialize Claude Code's full login state into ``build_dir``.
 
         Writes ``.claude/.credentials.json`` (oauth tokens) and merges Claude's
@@ -69,6 +72,7 @@ class ClaudeConfigWriter:
         Preserves any agent_view-level keys already in ``.claude.json`` such as
         ``model``/``systemPrompt``/``permissions`` written by ``prepare_workspace``.
         """
+        credentials = token.credentials or {}
         raw_auth = credentials.get("raw_auth") or {}
         raw_creds = raw_auth.get("credentials") if isinstance(raw_auth, dict) else None
         claude_oauth = (raw_creds or {}).get("claudeAiOauth") if isinstance(raw_creds, dict) else None

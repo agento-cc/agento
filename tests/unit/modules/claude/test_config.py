@@ -2,10 +2,34 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 
+from agento.framework.agent_manager.models import AgentProvider, Token, TokenStatus
 from agento.modules.claude.src.config import ClaudeConfigWriter
+
+_EPOCH = datetime(2000, 1, 1)
+
+
+def _make_token(credentials: dict) -> Token:
+    return Token(
+        id=1,
+        agent_type=AgentProvider.CLAUDE,
+        type="oauth",
+        label="test",
+        credentials=credentials,
+        model=None,
+        token_limit=0,
+        enabled=True,
+        status=TokenStatus.OK,
+        priority=0,
+        error_msg=None,
+        expires_at=None,
+        used_at=None,
+        created_at=_EPOCH,
+        updated_at=_EPOCH,
+    )
 
 
 @pytest.fixture
@@ -162,7 +186,7 @@ class TestWriteCredentials:
             "id_token": "ignored",
             "raw_auth": "ignored",
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         path = work_dir / ".claude" / ".credentials.json"
         assert path.is_file()
@@ -178,11 +202,11 @@ class TestWriteCredentials:
         assert (path.stat().st_mode & 0o777) == 0o600
 
     def test_skips_when_no_subscription_key(self, writer, work_dir):
-        writer.write_credentials(work_dir, {"refresh_token": "x"})
+        writer.write_credentials(work_dir, _make_token({"refresh_token": "x"}))
         assert not (work_dir / ".claude" / ".credentials.json").exists()
 
     def test_optional_fields_become_null(self, writer, work_dir):
-        writer.write_credentials(work_dir, {"subscription_key": "sk-x"})
+        writer.write_credentials(work_dir, _make_token({"subscription_key": "sk-x"}))
         data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
         oauth = data["claudeAiOauth"]
         assert oauth["accessToken"] == "sk-x"
@@ -214,7 +238,7 @@ class TestWriteCredentials:
             "subscription_type": "team",
             "raw_auth": {"credentials": raw_creds, "claude_json": {}},
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
         assert data == raw_creds
@@ -235,7 +259,7 @@ class TestWriteCredentials:
                 "claude_json": claude_json,
             },
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         out = json.loads((work_dir / ".claude.json").read_text())
         assert out["oauthAccount"]["emailAddress"] == "mklauza@company.com"
@@ -260,7 +284,7 @@ class TestWriteCredentials:
                 },
             },
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         out = json.loads((work_dir / ".claude.json").read_text())
         # agent_view config survives
@@ -289,7 +313,7 @@ class TestWriteCredentials:
                 },
             },
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         out = json.loads((work_dir / ".claude.json").read_text())
         assert out["userID"] == "new-fingerprint"
@@ -297,7 +321,7 @@ class TestWriteCredentials:
         assert out["oauthAccount"] == {"emailAddress": "m@k.com"}
 
     def test_skips_claude_json_when_raw_auth_missing(self, writer, work_dir):
-        writer.write_credentials(work_dir, {"subscription_key": "sk-x"})
+        writer.write_credentials(work_dir, _make_token({"subscription_key": "sk-x"}))
         assert not (work_dir / ".claude.json").exists()
 
     def test_skips_claude_json_when_claude_json_empty(self, writer, work_dir):
@@ -308,7 +332,7 @@ class TestWriteCredentials:
                 "claude_json": {},
             },
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
         assert not (work_dir / ".claude.json").exists()
 
     def test_non_dict_raw_auth_falls_back_to_legacy_fields(self, writer, work_dir):
@@ -320,7 +344,7 @@ class TestWriteCredentials:
             "subscription_type": "team",
             "raw_auth": "ignored-string",
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
         assert data == {
@@ -361,7 +385,7 @@ class TestWriteCredentials:
                 },
             },
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         out = json.loads((work_dir / ".claude.json").read_text())
         # Auth identity copied through
@@ -394,7 +418,7 @@ class TestWriteCredentials:
                 },
             },
         }
-        writer.write_credentials(work_dir, creds)
+        writer.write_credentials(work_dir, _make_token(creds))
 
         out = json.loads((work_dir / ".claude.json").read_text())
         assert out == {"model": "opus-4-7", "systemPrompt": "Be concise."}

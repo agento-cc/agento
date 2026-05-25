@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import UTC, datetime
 
 from ..db import get_connection_or_exit
 from ..log import get_logger
 from .runtime import _load_framework_config
+
+# Declarative (provider, flag) → token type mapping. The framework MUST NOT
+# contain if-provider branches; new providers add rows here and implement the
+# strategy methods via di.json registration.
+_TYPE_FROM_FLAG: dict[tuple[str, str], str] = {
+    ("codex",  "api_key"):      "openai_api_key",
+    ("codex",  "access_token"): "codex_access_token",
+    ("claude", "api_key"):      "anthropic_api_key",
+}
 
 
 class TokenRegisterCommand:
@@ -27,10 +35,18 @@ class TokenRegisterCommand:
     def configure(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("agent_type", choices=["claude", "codex"])
         parser.add_argument("label")
-        parser.add_argument("credentials_path", nargs="?", default=None,
-                           help="Path to credentials JSON. If omitted, interactive OAuth is launched.")
         parser.add_argument("--token-limit", type=int, default=0, dest="token_limit")
-        parser.add_argument("--model", type=str, default=None, help="Model name (e.g. claude-sonnet-4-20250514, o3)")
+        parser.add_argument("--model", type=str, default=None,
+                           help="Model name (e.g. claude-sonnet-4-20250514, o3)")
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument(
+            "--with-api-key", dest="with_api_key", default=None,
+            help="Provider API key. Codex: OpenAI key (sk-...). Claude: Anthropic key (sk-ant-...).",
+        )
+        mode.add_argument(
+            "--with-access-token", dest="with_access_token", default=None,
+            help="Pre-issued access-token JWT (Codex only). Skips interactive OAuth.",
+        )
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..agent_manager import AgentProvider, register_token
@@ -41,7 +57,7 @@ class TokenRegisterCommand:
         logger = get_logger("agent-manager")
 
         agent_type = AgentProvider(args.agent_type)
-        credentials = _resolve_credentials(args, agent_type, logger)
+        credentials, token_type = _resolve_credentials(args, agent_type, logger)
 
         conn = get_connection_or_exit(db_config)
         try:
@@ -52,11 +68,12 @@ class TokenRegisterCommand:
                 credentials=credentials,
                 token_limit=args.token_limit,
                 model=args.model,
+                type=token_type,
                 logger=logger,
             )
             conn.commit()
             model_info = f" model={token.model}" if token.model else ""
-            print(f"Registered token: id={token.id} label={token.label}{model_info}")
+            print(f"Registered token: id={token.id} label={token.label} type={token.type}{model_info}")
         finally:
             conn.close()
 
@@ -67,41 +84,52 @@ class TokenRegisterCommand:
                 token_id=token.id,
                 label=token.label,
                 credentials=credentials,
+                type=token.type,
             ),
         )
 
 
-def _resolve_credentials(args: argparse.Namespace, agent_type, logger) -> dict:
-    """Read credentials from file path, or run interactive OAuth. Returns plaintext dict."""
+def _resolve_credentials(args: argparse.Namespace, agent_type, logger) -> tuple[dict, str]:
+    """Resolve registration input to (credentials_dict, type)."""
+    from ..agent_manager import auth as auth_module
     from ..agent_manager.auth import AuthenticationError, authenticate_interactive
 
-    if args.credentials_path is not None:
-        if not os.path.isfile(args.credentials_path):
-            print(f"Error: credentials file not found: {args.credentials_path}", file=sys.stderr)
+    # 1. Explicit credential flags (api_key / access_token)
+    if args.with_access_token or args.with_api_key:
+        strategy = auth_module.get_auth_strategy(agent_type)
+        if strategy is None:
+            print(f"Error: no auth strategy registered for {agent_type.value}", file=sys.stderr)
             sys.exit(1)
-        try:
-            with open(args.credentials_path) as f:
-                creds = json.load(f)
-        except (json.JSONDecodeError, OSError) as exc:
-            print(f"Error: cannot read credentials file: {exc}", file=sys.stderr)
-            sys.exit(1)
-        if "subscription_key" not in creds:
-            print(f"Error: credentials file missing 'subscription_key': {args.credentials_path}", file=sys.stderr)
-            sys.exit(1)
-        return creds
 
+        flag = "access_token" if args.with_access_token else "api_key"
+        method_name = f"register_from_{flag}"
+        type_key = (agent_type.value, flag)
+        if type_key not in _TYPE_FROM_FLAG or not hasattr(strategy, method_name):
+            print(
+                f"Error: --with-{flag.replace('_', '-')} is not supported for {agent_type.value}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        value = args.with_access_token or args.with_api_key
+        try:
+            credentials = getattr(strategy, method_name)(value)
+        except AuthenticationError as exc:
+            print(f"Registration rejected: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return credentials, _TYPE_FROM_FLAG[type_key]
+
+    # 2. Interactive OAuth (no flags)
     if not sys.stdin.isatty():
         print("Error: interactive auth requires a TTY. "
               "Use: docker compose exec -it cron ...", file=sys.stderr)
         sys.exit(1)
-
     try:
         auth_result = authenticate_interactive(agent_type, logger)
     except AuthenticationError as exc:
         print(f"Authentication failed: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    return {
+    credentials = {
         "subscription_key": auth_result.subscription_key,
         "refresh_token": auth_result.refresh_token,
         "expires_at": auth_result.expires_at,
@@ -109,6 +137,7 @@ def _resolve_credentials(args: argparse.Namespace, agent_type, logger) -> dict:
         "id_token": auth_result.id_token,
         "raw_auth": auth_result.raw_auth,
     }
+    return credentials, "oauth"
 
 
 class TokenRefreshCommand:
@@ -193,6 +222,7 @@ class TokenRefreshCommand:
                 token_id=refreshed.id,
                 label=refreshed.label,
                 credentials=credentials,
+                type=refreshed.type,
             ),
         )
 
@@ -283,6 +313,8 @@ class TokenListCommand:
                 data.append({
                     "id": t.id,
                     "agent_type": t.agent_type.value,
+                    "type": t.type,
+                    "priority": t.priority,
                     "label": t.label,
                     "model": t.model,
                     "status": t.status.value,
@@ -314,8 +346,11 @@ class TokenListCommand:
             status_str = f"status={t.status.value}"
             used_at_str = f"last_used={_humanize_delta(t.used_at, now)}"
             expires_str = f"expires={_format_expiry(t.expires_at, now)}"
+            type_str = f"type={t.type}"
+            prio_str = f"priority={t.priority}"
             line = (
                 f"  [{t.id}] {t.agent_type.value:8} {t.label:20} {model_str:30} "
+                f"{type_str:28} {prio_str:12} "
                 f"{usage_str}  {status_str}  {used_at_str}  {expires_str}"
             )
             print(line)
@@ -437,6 +472,41 @@ class TokenResetCommand:
             conn.commit()
             if found:
                 print(f"Token [{args.token_id}] status cleared (ok)")
+            else:
+                print(f"Token not found: id={args.token_id}", file=sys.stderr)
+                sys.exit(1)
+        finally:
+            conn.close()
+
+
+class TokenSetPriorityCommand:
+    @property
+    def name(self) -> str:
+        return "token:set-priority"
+
+    @property
+    def shortcut(self) -> str:
+        return "to:sp"
+
+    @property
+    def help(self) -> str:
+        return "Set token selection priority (lower wins; ties broken by LRU)"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("token_id", type=int)
+        parser.add_argument("priority", type=int, help="Integer; lower = used first; default 0")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        from ..agent_manager.token_store import set_token_priority
+
+        db_config, _, _ = _load_framework_config()
+        logger = get_logger("agent-manager")
+        conn = get_connection_or_exit(db_config)
+        try:
+            found = set_token_priority(conn, args.token_id, args.priority, logger=logger)
+            conn.commit()
+            if found:
+                print(f"Token [{args.token_id}] priority set to {args.priority}")
             else:
                 print(f"Token not found: id={args.token_id}", file=sys.stderr)
                 sys.exit(1)

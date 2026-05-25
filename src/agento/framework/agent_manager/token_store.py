@@ -15,10 +15,17 @@ def register_token(
     credentials: dict,
     token_limit: int = 0,
     model: str | None = None,
+    type: str = "oauth",
     logger: logging.Logger | None = None,
 ) -> Token:
-    """Register or refresh a token. Resets status='ok' and clears any prior error_msg;
-    pulls ``expires_at`` out of the credentials payload when present.
+    """Register or refresh a token. type defaults to 'oauth' to keep existing
+    OAuth-only callers (interactive auth, capture_refreshed_credentials)
+    unchanged. Resets status='ok' and clears any prior error_msg; pulls
+    ``expires_at`` out of the credentials payload when present.
+
+    Note: ``priority`` is intentionally NOT in the ON DUPLICATE KEY UPDATE list —
+    re-registering an existing label (e.g. token:refresh) preserves any
+    operator-set priority.
     """
     encrypted = encrypt_credentials(credentials)
     expires_at = _coerce_expires_at(credentials.get("expires_at"))
@@ -26,18 +33,19 @@ def register_token(
         cur.execute(
             """
             INSERT INTO oauth_token
-                (agent_type, label, credentials, token_limit, model,
+                (agent_type, type, label, credentials, token_limit, model,
                  status, error_msg, expires_at)
-            VALUES (%s, %s, %s, %s, %s, 'ok', NULL, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, 'ok', NULL, %s)
             ON DUPLICATE KEY UPDATE
+                type        = VALUES(type),
                 credentials = VALUES(credentials),
-                enabled = TRUE,
-                status = 'ok',
-                error_msg = NULL,
-                expires_at = VALUES(expires_at),
-                updated_at = NOW()
+                enabled     = TRUE,
+                status      = 'ok',
+                error_msg   = NULL,
+                expires_at  = VALUES(expires_at),
+                updated_at  = NOW()
             """,
-            (agent_type.value, label, encrypted, token_limit, model, expires_at),
+            (agent_type.value, type, label, encrypted, token_limit, model, expires_at),
         )
         was_insert = bool(cur.lastrowid)
         if was_insert:
@@ -49,7 +57,7 @@ def register_token(
         row = cur.fetchone()
     action = "Registered" if was_insert else "Updated"
     if logger:
-        logger.info(f"{action} token: id={token_id} label={label} model={model}")
+        logger.info(f"{action} token: id={token_id} label={label} type={type} model={model}")
     return Token.from_row(row)
 
 
@@ -150,7 +158,8 @@ def select_token(
                AND enabled = TRUE
                AND status = 'ok'
                AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP())
-             ORDER BY used_at IS NULL DESC, used_at ASC, id ASC
+             ORDER BY priority ASC,
+                      used_at IS NULL DESC, used_at ASC, id ASC
              LIMIT 1
              FOR UPDATE SKIP LOCKED
             """,
@@ -206,6 +215,24 @@ def clear_token_error(
         found = cur.rowcount > 0
     if logger:
         logger.info(f"Cleared token error: id={token_id} found={found}")
+    return found
+
+
+def set_token_priority(
+    conn: pymysql.Connection,
+    token_id: int,
+    priority: int,
+    logger: logging.Logger | None = None,
+) -> bool:
+    """Set the selection priority for a token. Lower wins (default 0)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE oauth_token SET priority = %s, updated_at = NOW() WHERE id = %s",
+            (int(priority), int(token_id)),
+        )
+        found = cur.rowcount > 0
+    if logger:
+        logger.info(f"Set token priority: id={token_id} priority={priority} found={found}")
     return found
 
 

@@ -6,11 +6,12 @@ import subprocess
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from datetime import datetime
 
 from ..runner import RunResult
 from ..ssh_prelude import wrap_with_ssh_prelude
 from .config import AgentManagerConfig
-from .models import AgentProvider, Token
+from .models import AgentProvider, Token, TokenStatus
 from .token_store import select_token
 from .usage_store import record_usage
 
@@ -53,8 +54,8 @@ class TokenRunner(ABC):
     def agent_type(self) -> AgentProvider: ...
 
     @abstractmethod
-    def _build_env(self, credentials: dict) -> dict[str, str]:
-        """Return env-var overrides derived from the credentials JSON."""
+    def _build_env(self, token: Token) -> dict[str, str]:
+        """Return env-var overrides derived from the token's credentials."""
         ...
 
     @abstractmethod
@@ -194,8 +195,7 @@ class TokenRunner(ABC):
     ) -> tuple[Token | None, dict[str, str], str | None]:
         """Shared setup: resolve active token from DB, build env, resolve model."""
         if self.credentials_override is not None:
-            token = None
-            credentials = self.credentials_override
+            token = self._make_override_token(self.credentials_override)
         else:
             token = self._resolve_token_from_pool()
             if token is None or token.credentials is None:
@@ -203,10 +203,29 @@ class TokenRunner(ABC):
                     f"No healthy token for agent_type={self.agent_type.value}. "
                     f"Register one: bin/agento token:register {self.agent_type.value} <label>"
                 )
-            credentials = token.credentials
         model = model or self.model_override
-        env = {**os.environ, **self._build_env(credentials)}
+        env = {**os.environ, **self._build_env(token)}
         return token, env, model
+
+    def _make_override_token(self, credentials: dict) -> Token:
+        """Construct a synthetic Token from a credentials_override dict (test/CI helper)."""
+        return Token(
+            id=0,
+            agent_type=self.agent_type,
+            type="oauth",
+            label="override",
+            credentials=credentials,
+            model=None,
+            token_limit=0,
+            enabled=True,
+            status=TokenStatus.OK,
+            priority=0,
+            error_msg=None,
+            expires_at=None,
+            used_at=None,
+            created_at=datetime(2000, 1, 1),
+            updated_at=datetime(2000, 1, 1),
+        )
 
     def _execute_and_parse(
         self, cmd: list[str], env: dict, token: Token | None, model: str | None,

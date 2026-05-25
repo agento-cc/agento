@@ -492,7 +492,7 @@ def materialize_agent_credentials(conn, build_dir: Path) -> None:
             except Exception:
                 pass
         try:
-            writer.write_credentials(build_dir, token.credentials)
+            writer.write_credentials(build_dir, token)
         except Exception:
             logger.warning(
                 "ConfigWriter for %s failed to write credentials",

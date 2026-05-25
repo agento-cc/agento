@@ -220,9 +220,9 @@ def _token(agent_type, credentials):
     from agento.framework.agent_manager.models import TokenStatus
     now = datetime.now(UTC)
     return Token(
-        id=1, agent_type=agent_type, label="t", credentials=credentials,
+        id=1, agent_type=agent_type, type="oauth", label="t", credentials=credentials,
         model=None, token_limit=0, enabled=True,
-        status=TokenStatus.OK, error_msg=None, expires_at=None, used_at=None,
+        status=TokenStatus.OK, priority=0, error_msg=None, expires_at=None, used_at=None,
         created_at=now, updated_at=now,
     )
 
@@ -252,12 +252,10 @@ class TestMaterializeAgentCredentials:
 
         materialize_agent_credentials(conn=MagicMock(), build_dir=build_dir)
 
-        claude_writer.write_credentials.assert_called_once_with(
-            build_dir, {"subscription_key": "claude-tok"},
-        )
-        codex_writer.write_credentials.assert_called_once_with(
-            build_dir, {"raw_auth": {"x": 1}},
-        )
+        claude_token = claude_writer.write_credentials.call_args.args[1]
+        assert claude_token.credentials == {"subscription_key": "claude-tok"}
+        codex_token = codex_writer.write_credentials.call_args.args[1]
+        assert codex_token.credentials == {"raw_auth": {"x": 1}}
 
     def test_skips_provider_without_enabled_token(self, tmp_path, monkeypatch):
         build_dir = tmp_path / "build"

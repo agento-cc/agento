@@ -29,8 +29,11 @@
 | `config:list [prefix]` | List config values (all scopes) |
 | `config:remove <path> [--scope=S] [--scope-id=N]` | Remove config override from DB |
 | **Tokens** (LRU pool per provider — no sticky primary) | |
-| `token:register <agent> <label> [path]` | Register OAuth token ([details](tokens.md)) |
-| `token:list [--all]` | List tokens with status, last_used, expires_at |
+| `token:register <agent> <label>` | Register OAuth token interactively ([details](tokens.md)) |
+| `token:register <agent> <label> --with-api-key <key>` | Register API-key token ([details](tokens.md)) |
+| `token:register <agent> <label> --with-access-token <jwt>` | Register access-token ([details](tokens.md)) |
+| `token:set-priority <id> <priority>` | Set pool selection priority (lower wins) |
+| `token:list [--all]` | List tokens with type, priority, status, last_used, expires_at |
 | `token:refresh <id>` | Re-authenticate token (clears status=error) |
 | `token:mark-error <id> "<msg>"` | Quarantine a token (status=error) |
 | `token:reset <id>` | Clear error status without re-auth |

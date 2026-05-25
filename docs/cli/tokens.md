@@ -1,10 +1,23 @@
 # Token Management
 
-Agento uses OAuth tokens for Claude Code and OpenAI Codex. **Token contents are stored encrypted in the database** (`oauth_token.credentials`, AES-256-CBC via the framework `Encryptor`). The file passed to `token:register` is only read once — the server no longer needs filesystem access to credentials at runtime.
+Agento maintains an LRU pool of tokens per provider. **Token contents are stored encrypted in the database** (`oauth_token.credentials`, AES-256-CBC via the framework `Encryptor`). Credentials are only read once at registration time — the server never needs filesystem access at runtime.
+
+> **BREAKING CHANGE (v0.10+):** The positional `credentials_path` argument (`agento token:register <agent> <label> creds.json`) has been removed. Operators who relied on file-based registration must migrate:
+> - If the file held a `refresh_token` (OAuth flow) → re-register interactively: `agento token:register <agent> <label>`.
+> - If the file held an API key → use `--with-api-key <key>`.
+
+## Token Types
+
+| Type                | Description                                      | Registration flag         |
+|---------------------|--------------------------------------------------|---------------------------|
+| `oauth`             | Claude Code / Codex OAuth session (refresh token) | interactive (no flags)    |
+| `openai_api_key`    | OpenAI API key for Codex                         | `--with-api-key`          |
+| `anthropic_api_key` | Anthropic API key for Claude                     | `--with-api-key`          |
+| `codex_access_token`| OpenAI short-lived access token (JWT)            | `--with-access-token`     |
 
 ## Token Pool Model
 
-All tokens registered for a given provider form a **pool**. When the consumer needs a token for a job it calls `select_token(provider)` which picks the **least-recently-used healthy** token (`status='ok'`, not expired) atomically and stamps its `used_at`. Multiple licenses for the same provider therefore share traffic fairly without any "primary" flag.
+All tokens registered for a given provider form a **pool**. When the consumer needs a token for a job it calls `select_token(provider)` which picks the token with the **lowest priority** (ties broken by LRU: least-recently-used healthy token, `status='ok'`, not expired) atomically and stamps its `used_at`. Multiple tokens for the same provider therefore share traffic without any "primary" flag.
 
 Health state lives on each row:
 
@@ -13,26 +26,48 @@ Health state lives on each row:
 | `status`     | `ok` or `error`. Flipped to `error` when the runner sees a 401/expired. |
 | `error_msg`  | Operator-visible reason for the latest failure.                         |
 | `expires_at` | Credential expiry (from the stored payload). Expired rows are skipped.  |
-| `used_at`    | Last time a worker claimed the row — drives LRU ordering.               |
+| `used_at`    | Last time a worker claimed the row — drives LRU ordering within a priority tier. |
+| `priority`   | Pool selection weight. Lower value wins; 0 = default.                   |
 
 ## Token Lifecycle
 
 ```
-register → [use via LRU] → (auto-flagged error on 401) → refresh | reset → deregister
+register → [use via LRU+priority] → (auto-flagged error on 401) → refresh | reset → deregister
 ```
 
 ## Register a Token
 
-```bash
-# From a credentials file (pre-authenticated). The file is read and its contents
-# are encrypted + stored in the database; the file itself is not retained.
-bin/agento token:register claude my-token ~/claude_oauth_1.json
+### Interactive OAuth
 
-# Interactive (requires TTY — opens browser for OAuth)
-bin/agento token:register claude my-token
+Requires a TTY — opens a browser for the OAuth flow.
+
+```bash
+# Claude (OAuth)
+agento token:register claude my-token
+
+# Codex (OAuth)
+agento token:register codex  my-token
 ```
 
-Options:
+### With an API key
+
+```bash
+# Anthropic key → type=anthropic_api_key
+agento token:register claude my-token --with-api-key sk-ant-...
+
+# OpenAI key → type=openai_api_key
+agento token:register codex  my-token --with-api-key sk-...
+```
+
+### With an access token (JWT)
+
+```bash
+# OpenAI short-lived access token → type=codex_access_token
+agento token:register codex my-token --with-access-token eyJ...
+```
+
+### Common options
+
 - `--token-limit N` — usage limit (0 = unlimited)
 - `--model MODEL` — model override (e.g. `claude-sonnet-4-20250514`)
 
@@ -41,44 +76,61 @@ Options:
 ## List Tokens
 
 ```bash
-bin/agento token:list
-bin/agento token:list --agent-type claude
-bin/agento token:list --json
-bin/agento token:list --all    # include disabled tokens
+agento token:list
+agento token:list --agent-type claude
+agento token:list --json
+agento token:list --all    # include disabled tokens
 ```
 
-Each row shows `status`, `last_used`, `expires`, and (for errored tokens) the truncated `error_msg`. The `credentials` blob is never surfaced.
+Each row shows `type`, `priority`, `status`, `last_used`, `expires`, and (for errored tokens) the truncated `error_msg`. The `credentials` blob is never surfaced.
 
-## Refresh an Expired Token
+## Set Pool Priority
+
+Lower priority wins. Tokens with the same priority are ranked by LRU.
 
 ```bash
-bin/agento token:refresh 1    # Re-authenticate token ID 1 (interactive)
+agento token:set-priority <token_id> <priority>
 ```
 
-Refresh overwrites the stored `credentials`, re-parses `expires_at` from the new payload, and resets `status='ok'` / `error_msg=NULL`. The `id` and `label` are preserved so downstream references stay valid.
+Example — pin token 3 as preferred (priority 0) and demote token 5 (priority 10):
+
+```bash
+agento token:set-priority 3 0
+agento token:set-priority 5 10
+```
+
+## Refresh an Expired OAuth Token
+
+```bash
+agento token:refresh 1    # Re-authenticate token ID 1 (interactive OAuth)
+```
+
+Refresh overwrites the stored `credentials`, re-parses `expires_at` from the new payload, and resets `status='ok'` / `error_msg=NULL`. The `id`, `label`, and `type` are preserved so downstream references stay valid.
+
+Note: `token:refresh` only supports the interactive OAuth flow. To update an API key or access token, re-register with the appropriate flag (same label will upsert the existing row).
 
 ## Manual Error Control
 
 Useful when you know a license has been revoked or want to take one offline for a bit:
 
 ```bash
-bin/agento token:mark-error 1 "Revoked by admin 2026-04-23"
-bin/agento token:reset 1    # clear status=error, status back to 'ok'
+agento token:mark-error 1 "Revoked by admin 2026-04-23"
+agento token:reset 1    # clear status=error, status back to 'ok'
 ```
 
-`mark-error` stops the pool from handing out that token; `reset` puts it back in rotation without a full OAuth round-trip.
+`mark-error` stops the pool from handing out that token; `reset` puts it back in rotation without a full re-auth round-trip.
 
 ## Usage Stats
 
 ```bash
-bin/agento token:usage                  # Show usage stats across all providers
-bin/agento token:usage --agent-type claude --window 72
+agento token:usage                  # Show usage stats across all providers
+agento token:usage --agent-type claude --window 72
 ```
 
 ## Deregister
 
 ```bash
-bin/agento token:deregister 1   # soft-disable (enabled=FALSE); data retained
+agento token:deregister 1   # soft-disable (enabled=FALSE); data retained
 ```
 
 ## Binding a Provider to an `agent_view`
@@ -86,29 +138,10 @@ bin/agento token:deregister 1   # soft-disable (enabled=FALSE); data retained
 The consumer requires `agent_view/provider` to be set — there is no sticky-primary fallback.
 
 ```bash
-bin/agento config:set agent_view/provider claude --scope=agent_view --scope-id=1
+agento config:set agent_view/provider claude --scope=agent_view --scope-id=1
 ```
 
 Without this, jobs for that agent_view fail fast with `No agent_view/provider configured`.
-
-## OAuth Flow for Headless Servers
-
-1. Authenticate locally (machine with browser):
-   ```bash
-   claude auth login
-   cp ~/.claude/.credentials.json claude_oauth_1.json
-   ```
-
-2. Copy to server (one-shot — the file is only read once during registration):
-   ```bash
-   scp claude_oauth_1.json user@server:/tmp/
-   ```
-
-3. Register on server:
-   ```bash
-   bin/agento token:register claude my-token /tmp/claude_oauth_1.json
-   rm /tmp/claude_oauth_1.json   # safe — credentials are already in DB
-   ```
 
 ## Requirements
 

@@ -46,12 +46,14 @@ def _make_token(token_id: int = 2, creds: dict | None = None) -> Token:
     return Token(
         id=token_id,
         agent_type=AgentProvider.CODEX,
+        type="oauth",
         label="mklauza-codex",
         credentials=creds or {"subscription_key": "sk-healthy"},
         model=None,
         token_limit=0,
         enabled=True,
         status=TokenStatus.OK,
+        priority=0,
         error_msg=None,
         expires_at=None,
         used_at=None,
@@ -100,7 +102,7 @@ class TestReplaceErroredTokenObserver:
         called_dirs = {call.args[0] for call in writer.write_credentials.call_args_list}
         assert called_dirs == {zyga, mieszko}
         for call in writer.write_credentials.call_args_list:
-            assert call.args[1] == {"subscription_key": "sk-good"}
+            assert call.args[1] is healthy
         # Resolver got the provider derived from the event's agent_type.
         assert resolver.resolve.call_args.args[1] == AgentProvider.CODEX
 

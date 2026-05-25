@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.agent_manager.runner import TokenRunner
 from agento.framework.runner import RunResult
 from agento.modules.claude.src.output_parser import parse_claude_output
+
+if TYPE_CHECKING:
+    from agento.framework.agent_manager.models import Token
 
 
 class TokenClaudeRunner(TokenRunner):
@@ -15,12 +19,16 @@ class TokenClaudeRunner(TokenRunner):
     def agent_type(self) -> AgentProvider:
         return AgentProvider.CLAUDE
 
-    def _build_env(self, credentials: dict) -> dict[str, str]:
-        # OAuth tokens (subscription_type set) — CLI handles auth internally
-        if credentials.get("subscription_type"):
-            return {}
-        if "subscription_key" in credentials:
-            return {"ANTHROPIC_API_KEY": credentials["subscription_key"]}
+    def _build_env(self, token: Token) -> dict[str, str]:
+        if token.type == "anthropic_api_key":
+            credentials = token.credentials or {}
+            api_key = credentials.get("api_key")
+            if not api_key:
+                raise ValueError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'anthropic_api_key' but credentials['api_key'] is missing or empty."
+                )
+            return {"ANTHROPIC_API_KEY": api_key}
         return {}
 
     def _build_command(self, prompt: str, model: str | None = None) -> list[str]:
