@@ -30,8 +30,8 @@
 | `config:remove <path> [--scope=S] [--scope-id=N]` | Remove config override from DB |
 | **Tokens** (LRU pool per provider — no sticky primary) | |
 | `token:register <agent> <label>` | Register OAuth token interactively ([details](tokens.md)) |
-| `token:register <agent> <label> --with-api-key <key>` | Register API-key token ([details](tokens.md)) |
-| `token:register <agent> <label> --with-access-token <jwt>` | Register access-token ([details](tokens.md)) |
+| `token:register <agent> <label> --with-api-key` | Register API-key token; secret read from stdin/getpass ([details](tokens.md)) |
+| `token:register <agent> <label> --with-access-token` | Register access-token; JWT read from stdin/getpass ([details](tokens.md)) |
 | `token:set-priority <id> <priority>` | Set pool selection priority (lower wins) |
 | `token:list [--all]` | List tokens with type, priority, status, last_used, expires_at |
 | `token:refresh <id>` | Re-authenticate token (clears status=error) |

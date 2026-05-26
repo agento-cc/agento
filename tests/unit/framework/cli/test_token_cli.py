@@ -95,19 +95,30 @@ class TestTokenMarkErrorCommand:
         events.dispatch.assert_not_called()
 
 
+def _stdin_with(text: str, *, isatty: bool = False):
+    """Build a stdin substitute exposing readline() + isatty()."""
+    import io
+    fake = io.StringIO(text)
+    fake.isatty = lambda: isatty  # type: ignore[assignment]
+    return fake
+
+
 class TestWithAccessToken:
-    def test_codex_dispatches_to_register_from_access_token(self):
+    def test_codex_dispatches_to_register_from_access_token(self, monkeypatch):
         from agento.framework.agent_manager.models import AgentProvider
         from agento.framework.cli.token import _resolve_credentials
 
         args = argparse.Namespace(
             agent_type="codex", label="my-at",
-            with_api_key=None, with_access_token="eyJ.payload.sig",
+            with_api_key=False, with_access_token=True,
             token_limit=0, model=None,
         )
+        monkeypatch.setattr("sys.stdin", _stdin_with("eyJ.payload.sig\n"))
         strategy = MagicMock()
-        strategy.register_from_access_token.return_value = {
-            "access_token": "eyJ.payload.sig", "expires_at": 9999999999}
+        strategy.register_from_access_token.return_value = (
+            {"access_token": "eyJ.payload.sig", "expires_at": 9999999999},
+            "codex_access_token",
+        )
         with patch("agento.framework.agent_manager.auth.get_auth_strategy", return_value=strategy):
             creds, type_ = _resolve_credentials(args, AgentProvider.CODEX, MagicMock())
 
@@ -117,34 +128,36 @@ class TestWithAccessToken:
 
 
 class TestWithApiKey:
-    def test_codex_dispatches_with_openai_api_key_type(self):
+    def test_codex_dispatches_with_openai_api_key_type(self, monkeypatch):
         from agento.framework.agent_manager.models import AgentProvider
         from agento.framework.cli.token import _resolve_credentials
 
         args = argparse.Namespace(
             agent_type="codex", label="my-ak",
-            with_api_key="sk-X", with_access_token=None,
+            with_api_key=True, with_access_token=False,
             token_limit=0, model=None,
         )
+        monkeypatch.setattr("sys.stdin", _stdin_with("sk-X\n"))
         strategy = MagicMock()
-        strategy.register_from_api_key.return_value = {"api_key": "sk-X"}
+        strategy.register_from_api_key.return_value = ({"api_key": "sk-X"}, "openai_api_key")
         with patch("agento.framework.agent_manager.auth.get_auth_strategy", return_value=strategy):
             _creds, type_ = _resolve_credentials(args, AgentProvider.CODEX, MagicMock())
 
         strategy.register_from_api_key.assert_called_once_with("sk-X")
         assert type_ == "openai_api_key"
 
-    def test_claude_dispatches_with_anthropic_api_key_type(self):
+    def test_claude_dispatches_with_anthropic_api_key_type(self, monkeypatch):
         from agento.framework.agent_manager.models import AgentProvider
         from agento.framework.cli.token import _resolve_credentials
 
         args = argparse.Namespace(
             agent_type="claude", label="my-ak",
-            with_api_key="sk-ant-X", with_access_token=None,
+            with_api_key=True, with_access_token=False,
             token_limit=0, model=None,
         )
+        monkeypatch.setattr("sys.stdin", _stdin_with("sk-ant-X\n"))
         strategy = MagicMock()
-        strategy.register_from_api_key.return_value = {"api_key": "sk-ant-X"}
+        strategy.register_from_api_key.return_value = ({"api_key": "sk-ant-X"}, "anthropic_api_key")
         with patch("agento.framework.agent_manager.auth.get_auth_strategy", return_value=strategy):
             _creds, type_ = _resolve_credentials(args, AgentProvider.CLAUDE, MagicMock())
         assert type_ == "anthropic_api_key"
@@ -156,7 +169,76 @@ class TestMutualExclusion:
         parser = argparse.ArgumentParser()
         TokenRegisterCommand().configure(parser)
         with pytest.raises(SystemExit):
-            parser.parse_args(["codex", "lbl", "--with-api-key", "X", "--with-access-token", "Y"])
+            parser.parse_args(["codex", "lbl", "--with-api-key", "--with-access-token"])
+
+
+class TestMask:
+    def test_short_secret_fully_masked(self):
+        from agento.framework.cli.token import _mask
+        assert _mask("abc") == "***"
+        assert _mask("12345678") == "********"
+
+    def test_long_secret_shows_first4_last4(self):
+        from agento.framework.cli.token import _mask
+        assert _mask("sk-proj-abc123XYZ") == "sk-p*********3XYZ"
+
+
+class TestReadSecretStdin:
+    def test_reads_one_line_from_non_tty_stdin(self, monkeypatch):
+        from agento.framework.cli.token import _read_secret
+        monkeypatch.setattr("sys.stdin", _stdin_with("sk-X\n"))
+        assert _read_secret("p:") == "sk-X"
+
+    def test_uses_getpass_on_tty(self, monkeypatch):
+        from agento.framework.cli import token as token_cli
+        monkeypatch.setattr("sys.stdin", _stdin_with("", isatty=True))
+        monkeypatch.setattr(token_cli.getpass, "getpass", lambda _p: "tty-secret")
+        assert token_cli._read_secret("p:") == "tty-secret"
+
+    def test_empty_stdin_exits(self, monkeypatch):
+        from agento.framework.cli.token import _read_secret
+        monkeypatch.setattr("sys.stdin", _stdin_with("\n"))
+        with pytest.raises(SystemExit):
+            _read_secret("p:")
+
+
+class TestArgparseRejectsInlineValue:
+    def test_with_api_key_rejects_inline_value(self):
+        from agento.framework.cli.token import TokenRegisterCommand
+        parser = argparse.ArgumentParser()
+        TokenRegisterCommand().configure(parser)
+        with pytest.raises(SystemExit):
+            parser.parse_args(["codex", "lbl", "--with-api-key", "sk-XXX"])
+
+    def test_with_api_key_no_value_is_accepted(self):
+        from agento.framework.cli.token import TokenRegisterCommand
+        parser = argparse.ArgumentParser()
+        TokenRegisterCommand().configure(parser)
+        ns = parser.parse_args(["codex", "lbl", "--with-api-key"])
+        assert ns.with_api_key is True
+        assert ns.with_access_token is False
+
+
+class TestMaskedEchoToStderr:
+    def test_full_secret_never_appears_in_stderr(self, monkeypatch, capsys):
+        from agento.framework.agent_manager.models import AgentProvider
+        from agento.framework.cli.token import _resolve_credentials
+
+        args = argparse.Namespace(
+            agent_type="codex", label="lbl",
+            with_api_key=True, with_access_token=False,
+            token_limit=0, model=None,
+        )
+        monkeypatch.setattr("sys.stdin", _stdin_with("sk-piped-XYZ\n"))
+        strategy = MagicMock()
+        strategy.register_from_api_key.return_value = (
+            {"api_key": "sk-piped-XYZ"}, "openai_api_key")
+        with patch("agento.framework.agent_manager.auth.get_auth_strategy", return_value=strategy):
+            _resolve_credentials(args, AgentProvider.CODEX, MagicMock())
+
+        err = capsys.readouterr().err
+        assert "sk-p" in err and "-XYZ" in err
+        assert "sk-piped-XYZ" not in err
 
 
 class TestPositionalRemoved:

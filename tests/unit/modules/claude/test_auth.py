@@ -146,8 +146,9 @@ class TestClaudeAuthStrategy:
 
 class TestRegisterFromApiKey:
     def test_accepts_sk_ant_prefix(self):
-        result = ClaudeAuthStrategy().register_from_api_key("sk-ant-abc123")
-        assert result == {"api_key": "sk-ant-abc123"}
+        creds, token_type = ClaudeAuthStrategy().register_from_api_key("sk-ant-abc123")
+        assert creds == {"api_key": "sk-ant-abc123"}
+        assert token_type == "anthropic_api_key"
 
     def test_rejects_empty(self):
         with pytest.raises(AuthenticationError):
@@ -168,5 +169,6 @@ class TestRegisterFromApiKey:
             ClaudeAuthStrategy().register_from_api_key("sk-svcacct-XXXX")
 
     def test_strips_surrounding_whitespace(self):
-        result = ClaudeAuthStrategy().register_from_api_key("  sk-ant-abc  ")
-        assert result == {"api_key": "sk-ant-abc"}
+        creds, token_type = ClaudeAuthStrategy().register_from_api_key("  sk-ant-abc  ")
+        assert creds == {"api_key": "sk-ant-abc"}
+        assert token_type == "anthropic_api_key"

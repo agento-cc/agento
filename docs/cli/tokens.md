@@ -4,7 +4,9 @@ Agento maintains an LRU pool of tokens per provider. **Token contents are stored
 
 > **BREAKING CHANGE (v0.10+):** The positional `credentials_path` argument (`agento token:register <agent> <label> creds.json`) has been removed. Operators who relied on file-based registration must migrate:
 > - If the file held a `refresh_token` (OAuth flow) → re-register interactively: `agento token:register <agent> <label>`.
-> - If the file held an API key → use `--with-api-key <key>`.
+> - If the file held an API key → use `--with-api-key` (read from stdin or interactive prompt; see [Reading secrets](#reading-secrets)).
+>
+> **BREAKING CHANGE (v0.11+):** `--with-api-key` / `--with-access-token` no longer accept an **inline value** (e.g. `--with-api-key sk-...`). Inline secrets leak through shell history, `ps`, and CI logs. The flags are now boolean switches; the secret is read from stdin (piped or via interactive `getpass` prompt). See [Reading secrets](#reading-secrets) below.
 
 ## Token Types
 
@@ -51,20 +53,49 @@ agento token:register codex  my-token
 
 ### With an API key
 
-```bash
-# Anthropic key → type=anthropic_api_key
-agento token:register claude my-token --with-api-key sk-ant-...
+The secret is never on the command line. Three input modes are supported (see [Reading secrets](#reading-secrets)):
 
-# OpenAI key → type=openai_api_key
-agento token:register codex  my-token --with-api-key sk-...
+```bash
+# 1) Interactive prompt (TTY, input hidden via getpass):
+agento token:register claude my-token --with-api-key
+
+# 2) Pipe:
+echo "$ANTHROPIC_API_KEY" | agento token:register claude my-token --with-api-key
+
+# 3) File redirect:
+agento token:register codex my-token --with-api-key < /path/to/openai-key.txt
 ```
+
+`--with-api-key` maps to `anthropic_api_key` for `claude` and `openai_api_key` for `codex`.
 
 ### With an access token (JWT)
 
+Same three input modes — JWT is read from stdin:
+
 ```bash
-# OpenAI short-lived access token → type=codex_access_token
-agento token:register codex my-token --with-access-token eyJ...
+# Interactive prompt:
+agento token:register codex my-token --with-access-token
+
+# Pipe:
+echo "$CODEX_ACCESS_TOKEN" | agento token:register codex my-token --with-access-token
 ```
+
+### Reading secrets
+
+`--with-api-key` and `--with-access-token` are **boolean switches** — they take no inline value. The secret is read from stdin:
+
+- **Host stdin is a TTY** → interactive prompt via `getpass.getpass()` (input hidden, no echo).
+- **Host stdin is not a TTY** (pipe / `<` redirect) → one line from stdin.
+
+After reading, the CLI prints a masked confirmation to **stderr** so you can verify the right secret was read without leaking the full value:
+
+```
+Read api_key from stdin: sk-p************MPLE
+```
+
+(Format: first 4 + last 4 characters; everything else `*`. Secrets shorter than 8 characters are fully masked.)
+
+If you pass an inline value (`--with-api-key sk-XXX`), argparse rejects it with a usage error — that path is intentionally closed to prevent leakage through shell history, `ps aux`, and CI logs.
 
 ### Common options
 

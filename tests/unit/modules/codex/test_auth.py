@@ -22,11 +22,12 @@ def _make_jwt(payload: dict, header: dict | None = None) -> str:
 
 
 class TestRegisterFromAccessToken:
-    def test_returns_minimal_credentials_dict(self):
+    def test_returns_credentials_and_type(self):
         exp = int(time.time()) + 86_400
         token = _make_jwt({"iss": "https://auth.openai.com", "exp": exp})
-        result = CodexAuthStrategy().register_from_access_token(token)
-        assert result == {"access_token": token, "expires_at": exp}
+        creds, token_type = CodexAuthStrategy().register_from_access_token(token)
+        assert creds == {"access_token": token, "expires_at": exp}
+        assert token_type == "codex_access_token"
 
     def test_rejects_non_three_segment(self):
         with pytest.raises(AuthenticationError, match="JWT"):
@@ -54,8 +55,9 @@ class TestRegisterFromAccessToken:
 
 class TestRegisterFromApiKey:
     def test_accepts_sk_prefix(self):
-        result = CodexAuthStrategy().register_from_api_key("sk-proj-abc123")
-        assert result == {"api_key": "sk-proj-abc123"}
+        creds, token_type = CodexAuthStrategy().register_from_api_key("sk-proj-abc123")
+        assert creds == {"api_key": "sk-proj-abc123"}
+        assert token_type == "openai_api_key"
 
     def test_rejects_empty(self):
         with pytest.raises(AuthenticationError):
@@ -71,5 +73,6 @@ class TestRegisterFromApiKey:
             CodexAuthStrategy().register_from_api_key("sk-ant-XXXX")
 
     def test_strips_surrounding_whitespace(self):
-        result = CodexAuthStrategy().register_from_api_key("  sk-proj-abc  ")
-        assert result == {"api_key": "sk-proj-abc"}
+        creds, token_type = CodexAuthStrategy().register_from_api_key("  sk-proj-abc  ")
+        assert creds == {"api_key": "sk-proj-abc"}
+        assert token_type == "openai_api_key"

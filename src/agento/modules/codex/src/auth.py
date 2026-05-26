@@ -56,9 +56,9 @@ class CodexAuthStrategy:
             raw_auth=raw,
         )
 
-    def register_from_access_token(self, token: str) -> dict:
-        """Validate a Codex/OpenAI access-token JWT and return the credentials
-        dict that will be persisted as type='codex_access_token'.
+    def register_from_access_token(self, token: str) -> tuple[dict, str]:
+        """Validate a Codex/OpenAI access-token JWT and return
+        (credentials, type) for persistence.
 
         Validates JWT shape, issuer, and expiry; does NOT verify signature
         (Codex CLI does that on first use)."""
@@ -83,11 +83,11 @@ class CodexAuthStrategy:
         if exp <= time.time():
             raise AuthenticationError(f"Access token is already expired (exp={exp}).")
 
-        return {"access_token": token, "expires_at": int(exp)}
+        return {"access_token": token, "expires_at": int(exp)}, "codex_access_token"
 
-    def register_from_api_key(self, key: str) -> dict:
-        """Validate an OpenAI API key string and return the credentials dict
-        that will be persisted as type='openai_api_key'."""
+    def register_from_api_key(self, key: str) -> tuple[dict, str]:
+        """Validate an OpenAI API key string and return (credentials, type)
+        for persistence."""
         if not isinstance(key, str) or not key.strip():
             raise AuthenticationError("OpenAI API key is empty.")
         stripped = key.strip()
@@ -95,4 +95,4 @@ class CodexAuthStrategy:
             raise AuthenticationError(
                 "Refusing to register an Anthropic key (sk-ant-...) as an OpenAI key."
             )
-        return {"api_key": stripped}
+        return {"api_key": stripped}, "openai_api_key"

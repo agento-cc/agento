@@ -18,18 +18,21 @@ _LOCAL_COMMANDS = frozenset({
 
 # Commands that need an interactive TTY (OAuth flows, onboarding prompts)
 _INTERACTIVE_COMMANDS = frozenset({
-    "admin", "token:register", "token:refresh", "setup:upgrade",
+    "admin", "token:refresh", "setup:upgrade",
     # Shortcuts for interactive commands
-    "to:reg", "to:ref", "se:up",
+    "to:ref", "se:up",
 })
 
-# Commands that MAY want a TTY (e.g. config:set in paste mode). We forward the
-# TTY only when the host caller actually has one — otherwise pipe-through
-# (`-T`) keeps working for CI / scripts.
+# Commands that MAY want a TTY (e.g. config:set in paste mode, token:register
+# with piped --with-api-key). We forward the TTY only when the host caller
+# actually has one — otherwise pipe-through (`-T`) keeps working for CI /
+# scripts. When a TTY IS forwarded we also execvp so the in-container CLI
+# inherits full pty semantics (signals, getpass, etc.).
 _MAYBE_INTERACTIVE_COMMANDS = frozenset({
     "config:set", "config:remove",
+    "token:register",
     # Shortcuts
-    "co:se", "co:re",
+    "co:se", "co:re", "to:reg",
 })
 
 
@@ -82,7 +85,7 @@ def _proxy_to_docker(argv: list[str]) -> None:
         "/opt/cron-agent/run.sh", *clean_argv,
     ]
 
-    if is_interactive:
+    if needs_tty:
         # Replace current process to give Docker full TTY control (mouse events, signals)
         os.execvp("docker", exec_args)
     else:

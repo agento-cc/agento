@@ -95,12 +95,17 @@ agento config:resolve <module> [--scope=S] [--scope-id=N] [--json]  # Resolve ef
 
 # Tokens (LRU pool per provider — no sticky primary)
 agento token:list                                      # status, last_used, expires_at per row
-# Register tokens (interactive OAuth, OR with --with-api-key, OR with --with-access-token)
-agento token:register <agent_type> <label>                                # interactive OAuth
-agento token:register codex  <label> --with-api-key      <openai-key>     # OpenAI key
-agento token:register codex  <label> --with-access-token <jwt>            # OpenAI access-token JWT
-agento token:register claude <label> --with-api-key      <anthropic-key>  # Anthropic key
-agento token:set-priority <token_id> <priority>                           # lower priority wins
+# Register tokens. --with-api-key / --with-access-token are boolean switches; the
+# secret is read from stdin (piped) or via interactive getpass prompt (TTY).
+# Inline values like `--with-api-key sk-XXX` are REJECTED — they leak through
+# shell history, ps, and CI logs. See docs/cli/tokens.md for details.
+agento token:register <agent_type> <label>                                  # interactive OAuth
+agento token:register codex  <label> --with-api-key                         # TTY: prompts (hidden)
+echo "$OPENAI_API_KEY"      | agento token:register codex  <label> --with-api-key
+echo "$CODEX_ACCESS_TOKEN"  | agento token:register codex  <label> --with-access-token
+echo "$ANTHROPIC_API_KEY"   | agento token:register claude <label> --with-api-key
+agento token:register codex  <label> --with-api-key < /path/to/key.txt      # file redirect
+agento token:set-priority <token_id> <priority>                             # lower priority wins
 agento token:refresh <id>                              # re-auth an existing token
 agento token:mark-error <id> "<msg>"                   # quarantine a token (status=error)
 agento token:reset <id>                                # clear error status without re-auth

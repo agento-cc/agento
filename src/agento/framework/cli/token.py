@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from datetime import UTC, datetime
@@ -9,14 +10,27 @@ from ..db import get_connection_or_exit
 from ..log import get_logger
 from .runtime import _load_framework_config
 
-# Declarative (provider, flag) → token type mapping. The framework MUST NOT
-# contain if-provider branches; new providers add rows here and implement the
-# strategy methods via di.json registration.
-_TYPE_FROM_FLAG: dict[tuple[str, str], str] = {
-    ("codex",  "api_key"):      "openai_api_key",
-    ("codex",  "access_token"): "codex_access_token",
-    ("claude", "api_key"):      "anthropic_api_key",
-}
+
+def _mask(secret: str) -> str:
+    """Return secret with all but first 4 + last 4 chars replaced by '*'.
+    Secrets of length <= 8 are fully masked."""
+    if len(secret) <= 8:
+        return "*" * len(secret)
+    return f"{secret[:4]}{'*' * (len(secret) - 8)}{secret[-4:]}"
+
+
+def _read_secret(prompt: str) -> str:
+    """Read a one-line secret from stdin.
+
+    TTY → ``getpass.getpass`` (echo suppressed).
+    Pipe/redirect → one line from ``sys.stdin``.
+    Exits with an error if the result is empty after stripping."""
+    raw = getpass.getpass(prompt) if sys.stdin.isatty() else sys.stdin.readline()
+    secret = raw.strip()
+    if not secret:
+        print("No secret provided on stdin.", file=sys.stderr)
+        sys.exit(1)
+    return secret
 
 
 class TokenRegisterCommand:
@@ -40,12 +54,15 @@ class TokenRegisterCommand:
                            help="Model name (e.g. claude-sonnet-4-20250514, o3)")
         mode = parser.add_mutually_exclusive_group()
         mode.add_argument(
-            "--with-api-key", dest="with_api_key", default=None,
-            help="Provider API key. Codex: OpenAI key (sk-...). Claude: Anthropic key (sk-ant-...).",
+            "--with-api-key", dest="with_api_key", action="store_true",
+            help="Read provider API key from stdin (piped/redirected) or "
+                 "interactive prompt (input hidden). Codex: OpenAI key. "
+                 "Claude: Anthropic key.",
         )
         mode.add_argument(
-            "--with-access-token", dest="with_access_token", default=None,
-            help="Pre-issued access-token JWT (Codex only). Skips interactive OAuth.",
+            "--with-access-token", dest="with_access_token", action="store_true",
+            help="Read access-token JWT from stdin or interactive prompt "
+                 "(Codex only). Skips interactive OAuth.",
         )
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -103,21 +120,27 @@ def _resolve_credentials(args: argparse.Namespace, agent_type, logger) -> tuple[
 
         flag = "access_token" if args.with_access_token else "api_key"
         method_name = f"register_from_{flag}"
-        type_key = (agent_type.value, flag)
-        if type_key not in _TYPE_FROM_FLAG or not hasattr(strategy, method_name):
+        if not hasattr(strategy, method_name):
             print(
                 f"Error: --with-{flag.replace('_', '-')} is not supported for {agent_type.value}",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-        value = args.with_access_token or args.with_api_key
+        secret = _read_secret(
+            f"Paste {flag.replace('_', ' ')} for {agent_type.value} "
+            f"(input hidden, press Enter when done): "
+        )
+        # Masked echo on stderr so operators can sanity-check the right secret
+        # was read — never the full value.
+        print(f"Read {flag} from stdin: {_mask(secret)}", file=sys.stderr)
+
         try:
-            credentials = getattr(strategy, method_name)(value)
+            credentials, token_type = getattr(strategy, method_name)(secret)
         except AuthenticationError as exc:
             print(f"Registration rejected: {exc}", file=sys.stderr)
             sys.exit(1)
-        return credentials, _TYPE_FROM_FLAG[type_key]
+        return credentials, token_type
 
     # 2. Interactive OAuth (no flags)
     if not sys.stdin.isatty():
