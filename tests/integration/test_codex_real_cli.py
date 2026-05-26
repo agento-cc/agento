@@ -86,7 +86,7 @@ def test_codex_real_unauth_raises_auth_error(tmp_path, auth_mode):
     # which is the canonical unauth path we want to test.
 
     runner = TokenCodexRunner(dry_run=True)
-    cmd = runner._build_command("test")
+    cmd = runner._build_command("test", model="gpt-5.4-mini")
 
     proc = _run_codex(cmd, env_extra={"CODEX_HOME": str(codex_home)})
 
@@ -126,7 +126,10 @@ def test_codex_real_simple_prompt_parses(tmp_path):
     assert login.returncode == 0, f"codex login failed: {login.stderr[:300]}"
 
     runner = TokenCodexRunner(dry_run=True)
-    cmd = runner._build_command("Reply with exactly the word 'pong' and nothing else.")
+    cmd = runner._build_command(
+        "Reply with exactly the word 'pong' and nothing else.",
+        model="gpt-5.4-mini",
+    )
 
     proc = _run_codex(cmd, env_extra={"CODEX_HOME": str(codex_home)})
 
