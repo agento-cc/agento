@@ -383,7 +383,7 @@ class TestReinstall:
         # Override the scaffold defaults with a customer choice.
         text = env_path.read_text()
         text = text.replace("CLAUDE_CODE_VERSION=2.1.142", "CLAUDE_CODE_VERSION=2.1.200")
-        text = text.replace("CODEX_VERSION=0.128.0", "CODEX_VERSION=0.999.0")
+        text = text.replace("CODEX_VERSION=0.134.0", "CODEX_VERSION=0.999.0")
         env_path.write_text(text)
 
         _reinstall(tmp_path, 1000, 1000)

@@ -15,6 +15,8 @@ from agento.framework.agent_manager.auth import (
 
 _OPENAI_ISSUER = "https://auth.openai.com"
 
+_logger = logging.getLogger(__name__)
+
 
 def _b64url_decode(segment: str) -> bytes:
     padding = "=" * (-len(segment) % 4)
@@ -60,8 +62,10 @@ class CodexAuthStrategy:
         """Validate a Codex/OpenAI access-token JWT and return
         (credentials, type) for persistence.
 
-        Validates JWT shape, issuer, and expiry; does NOT verify signature
-        (Codex CLI does that on first use)."""
+        Validates JWT shape and expiry. Warns (does not reject) when the
+        issuer differs from the canonical OpenAI issuer — Codex mints
+        tokens under several issuers (e.g. chatgpt.com/codex-backend/...).
+        Signature is NOT verified (Codex CLI does that on first use)."""
         if not isinstance(token, str) or token.count(".") != 2:
             raise AuthenticationError(
                 "Access token is not a JWT (expected 3 dot-separated segments)."
@@ -74,8 +78,10 @@ class CodexAuthStrategy:
 
         iss = payload.get("iss")
         if iss != _OPENAI_ISSUER:
-            raise AuthenticationError(
-                f"Unexpected JWT issuer: {iss!r} (expected {_OPENAI_ISSUER!r})"
+            _logger.warning(
+                "Unexpected JWT issuer: %r (expected %r). Continuing — Codex "
+                "will reject the token on first use if it is not actually valid.",
+                iss, _OPENAI_ISSUER,
             )
         exp = payload.get("exp")
         if not isinstance(exp, (int, float)):

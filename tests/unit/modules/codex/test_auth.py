@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 
 import pytest
@@ -42,10 +43,20 @@ class TestRegisterFromAccessToken:
         with pytest.raises(AuthenticationError, match="expired"):
             CodexAuthStrategy().register_from_access_token(token)
 
-    def test_rejects_wrong_issuer(self):
-        token = _make_jwt({"iss": "https://evil.example.com", "exp": int(time.time()) + 86400})
-        with pytest.raises(AuthenticationError, match="issuer"):
-            CodexAuthStrategy().register_from_access_token(token)
+    def test_warns_on_unexpected_issuer_but_accepts(self, caplog):
+        # Codex mints tokens under multiple issuers (e.g. the
+        # chatgpt.com/codex-backend agent-identity issuer). The strategy
+        # should log a warning but still register the token — Codex
+        # itself will reject genuinely invalid tokens on first use.
+        exp = int(time.time()) + 86_400
+        token = _make_jwt(
+            {"iss": "https://chatgpt.com/codex-backend/agent-identity", "exp": exp}
+        )
+        with caplog.at_level(logging.WARNING, logger="agento.modules.codex.src.auth"):
+            creds, token_type = CodexAuthStrategy().register_from_access_token(token)
+        assert creds == {"access_token": token, "expires_at": exp}
+        assert token_type == "codex_access_token"
+        assert any("Unexpected JWT issuer" in r.message for r in caplog.records)
 
     def test_rejects_missing_exp(self):
         token = _make_jwt({"iss": "https://auth.openai.com"})
