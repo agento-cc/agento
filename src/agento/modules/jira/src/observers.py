@@ -61,9 +61,9 @@ class ResolveAccountIdObserver:
             logger.warning("jira: failed to resolve agent_view account IDs (non-fatal)")
 
     def _resolve_single_agent_view(self, conn, av, toolbox_url):
+        from agento.framework.config_resolver import ScopedConfigService
         from agento.framework.scoped_config import (
             Scope,
-            ScopedConfig,
             load_scoped_db_overrides,
             scoped_config_set,
         )
@@ -82,9 +82,9 @@ class ResolveAccountIdObserver:
                 return
 
         # Verify credentials are actually set (non-empty)
-        sc = ScopedConfig(conn, scope=Scope.AGENT_VIEW, scope_id=av.id)
-        scoped_user = sc.get_value("jira/jira_user")
-        scoped_token = sc.get_value("jira/jira_token")
+        sc = ScopedConfigService(conn, Scope.AGENT_VIEW, av.id)
+        scoped_user = sc.get("jira/jira_user")
+        scoped_token = sc.get("jira/jira_token")
         if not scoped_user or not scoped_token:
             return
 

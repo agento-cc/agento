@@ -216,10 +216,42 @@ class TestRunJobWithAgentView:
         MockRunner.assert_called_once()
         assert MockRunner.call_args.kwargs["working_dir"] is None
 
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    @patch("agento.framework.consumer.resolve_agent_view_runtime")
+    def test_explicit_model_flag_overrides_config(
+        self, mock_resolve, mock_conn, MockRunner, mock_get_ch, mock_get_wf,
+        sample_db_config, sample_consumer_config,
+    ):
+        """An explicit --model flag (Consumer.model_override) wins over runtime.model (config)."""
+        runtime = AgentViewRuntime()
+        runtime.provider = "claude"
+        runtime.model = "db-model"
+        mock_resolve.return_value = runtime
+        mock_conn.return_value = MagicMock()
+
+        mock_result = _make_claude_result()
+        mock_workflow = MagicMock()
+        mock_workflow.execute_job.return_value = mock_result
+        mock_get_wf.return_value.return_value = mock_workflow
+        mock_get_ch.return_value = MagicMock(name="jira")
+
+        consumer = Consumer(
+            sample_db_config, sample_consumer_config, logging.getLogger("test"),
+            model_override="flag-model",
+        )
+        consumer._run_job(_make_job(agent_view_id=None))
+
+        MockRunner.assert_called_once()
+        assert MockRunner.call_args.kwargs["model_override"] == "flag-model"
+
     def test_scoped_overrides_generate_mcp_config_with_agent_view_id(
         self, tmp_path,
     ):
         """End-to-end: ClaudeConfigWriter writes .mcp.json with agent_view_id in URL."""
+        from agento.framework.config_resolver import ScopedConfigService
         from agento.framework.config_writer import get_agent_config
         from agento.modules.claude.src.config import ClaudeConfigWriter
 
@@ -227,7 +259,14 @@ class TestRunJobWithAgentView:
 
         wd = tmp_path / "run"
         wd.mkdir(parents=True)
-        agent_config = get_agent_config(runtime.scoped_overrides)
+        with patch(
+            "agento.framework.scoped_config.build_scoped_overrides",
+            return_value=runtime.scoped_overrides,
+        ), patch(
+            "agento.framework.scoped_config.load_scoped_db_overrides", return_value={}
+        ):
+            svc = ScopedConfigService(MagicMock())
+        agent_config = get_agent_config(svc)
         writer = ClaudeConfigWriter()
         writer.prepare_workspace(
             wd, agent_config, agent_view_id=5, toolbox_url="http://toolbox:3001",

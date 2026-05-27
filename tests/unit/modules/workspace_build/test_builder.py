@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from agento.modules.workspace_build.src.builder import (
     build_manifest,
     compute_build_checksum,
     execute_build,
+    materialize_ssh_identity,
 )
 
 _BUILDER = "agento.modules.workspace_build.src.builder"
@@ -36,55 +38,55 @@ def _make_agent_view(**overrides):
 
 class TestComputeBuildChecksum:
     def test_deterministic(self):
-        overrides = {"a/b": ("val1", False), "c/d": ("val2", False)}
+        overrides = {"a/b": "val1", "c/d": "val2"}
         assert compute_build_checksum(overrides) == compute_build_checksum(overrides)
 
     def test_changes_with_different_values(self):
-        assert compute_build_checksum({"a/b": ("val1", False)}) != compute_build_checksum({"a/b": ("val2", False)})
+        assert compute_build_checksum({"a/b": "val1"}) != compute_build_checksum({"a/b": "val2"})
 
     def test_changes_with_different_keys(self):
-        assert compute_build_checksum({"a/b": ("v", False)}) != compute_build_checksum({"x/y": ("v", False)})
+        assert compute_build_checksum({"a/b": "v"}) != compute_build_checksum({"x/y": "v"})
 
     def test_includes_skill_checksums(self):
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         assert compute_build_checksum(o) != compute_build_checksum(o, skill_checksums=["abc123"])
 
     def test_skill_order_irrelevant(self):
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         assert (
             compute_build_checksum(o, skill_checksums=["aaa", "bbb"])
             == compute_build_checksum(o, skill_checksums=["bbb", "aaa"])
         )
 
     def test_changes_with_theme_strategy(self):
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         assert (
             compute_build_checksum(o, strategies={"theme": "copy"})
             != compute_build_checksum(o, strategies={"theme": "symlink"})
         )
 
     def test_changes_with_modules_strategy(self):
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         assert (
             compute_build_checksum(o, strategies={"modules": "copy"})
             != compute_build_checksum(o, strategies={"modules": "symlink"})
         )
 
     def test_changes_with_skills_strategy(self):
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         assert (
             compute_build_checksum(o, strategies={"skills": "copy"})
             != compute_build_checksum(o, strategies={"skills": "symlink"})
         )
 
     def test_default_strategies_are_copy(self):
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         all_copy = {"theme": "copy", "modules": "copy", "skills": "copy"}
         assert compute_build_checksum(o) == compute_build_checksum(o, strategies=all_copy)
 
     def test_unknown_strategy_source_is_ignored(self):
         """Unknown source keys in strategies dict must not affect the checksum."""
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         assert (
             compute_build_checksum(o, strategies={"bogus": "symlink"})
             == compute_build_checksum(o)
@@ -95,7 +97,7 @@ class TestComputeBuildChecksum:
         on-disk build layout invalidates every pre-existing checksum automatically.
         """
         from agento.modules.workspace_build.src import builder as _b
-        o = {"a/b": ("val", False)}
+        o = {"a/b": "val"}
         original = _b._SKILLS_LAYOUT_VERSION
         try:
             _b._SKILLS_LAYOUT_VERSION = "dir_v1"
@@ -110,7 +112,7 @@ class TestComputeBuildChecksum:
         assert len(compute_build_checksum({})) == 64
 
     def test_returns_sha256_hex(self):
-        checksum = compute_build_checksum({"x": ("y", False)})
+        checksum = compute_build_checksum({"x": "y"})
         assert len(checksum) == 64
         assert all(c in "0123456789abcdef" for c in checksum)
 
@@ -728,8 +730,8 @@ class TestReadStrategy:
 class TestWriteInstructionFiles:
     def test_writes_from_overrides(self, tmp_path):
         overrides = {
-            "agent_view/instructions/agents_md": ("# My agents instructions", False),
-            "agent_view/instructions/soul_md": ("# Soul content", False),
+            "agent_view/instructions/agents_md": "# My agents instructions",
+            "agent_view/instructions/soul_md": "# Soul content",
         }
         _write_instruction_files(tmp_path, overrides)
         assert (tmp_path / "AGENTS.md").read_text() == "# My agents instructions"
@@ -741,7 +743,7 @@ class TestWriteInstructionFiles:
         assert "AGENTS.md" in (tmp_path / "CLAUDE.md").read_text()
 
     def test_skips_empty_override_value(self, tmp_path):
-        _write_instruction_files(tmp_path, {"agent_view/instructions/agents_md": ("", False)})
+        _write_instruction_files(tmp_path, {"agent_view/instructions/agents_md": ""})
         assert not (tmp_path / "AGENTS.md").exists()
 
     def test_does_not_overwrite_theme_file_without_db_value(self, tmp_path):
@@ -754,7 +756,7 @@ class TestWriteInstructionFiles:
         """DB override takes precedence over file already in build_dir from theme."""
         (tmp_path / "SOUL.md").write_text("# From theme")
         _write_instruction_files(
-            tmp_path, {"agent_view/instructions/soul_md": ("# From DB", False)},
+            tmp_path, {"agent_view/instructions/soul_md": "# From DB"},
         )
         assert (tmp_path / "SOUL.md").read_text() == "# From DB"
 
@@ -771,7 +773,7 @@ class TestWriteInstructionFiles:
 
         _write_instruction_files(
             build_dir,
-            {"agent_view/instructions/agents_md": ("# from DB", False)},
+            {"agent_view/instructions/agents_md": "# from DB"},
         )
         # Source file must be unchanged
         assert source_file.read_text() == "# original source content"
@@ -797,6 +799,29 @@ class TestWriteInstructionFiles:
         # CLAUDE.md must be the canonical pointer content
         assert not (build_dir / "CLAUDE.md").is_symlink()
         assert "AGENTS.md" in (build_dir / "CLAUDE.md").read_text()
+
+
+class TestMaterializeSshIdentity:
+    def test_writes_key_config_known_hosts_from_resolved(self, tmp_path):
+        resolved = {
+            "agent_view/identity/ssh_private_key": "PRIVATE-KEY",
+            "agent_view/identity/ssh_public_key": "PUBLIC-KEY",
+            "agent_view/identity/ssh_config": "Host github.com",
+            "agent_view/identity/ssh_known_hosts": "github.com ssh-ed25519 AAA",
+        }
+        materialize_ssh_identity(tmp_path, resolved)
+        ssh = tmp_path / ".ssh"
+        assert ssh.stat().st_mode & 0o777 == 0o700
+        key = ssh / "id_rsa"
+        assert key.read_text() == "PRIVATE-KEY\n"
+        assert key.stat().st_mode & 0o777 == 0o600
+        assert (ssh / "id_rsa.pub").read_text() == "PUBLIC-KEY"
+        assert (ssh / "config").read_text() == "Host github.com"
+        assert (ssh / "known_hosts").read_text() == "github.com ssh-ed25519 AAA"
+
+    def test_noop_when_no_identity(self, tmp_path):
+        materialize_ssh_identity(tmp_path, {"agent_view/model": "opus"})
+        assert not (tmp_path / ".ssh").exists()
 
 
 class TestWriteSkillsToBuild:
@@ -966,6 +991,13 @@ class TestGetCurrentBuildDir:
 
 
 class TestExecuteBuild:
+    @pytest.fixture(autouse=True)
+    def _stub_manifests(self):
+        # resolve_all() enumerates declared module config fields via get_manifests();
+        # stub it so these tests don't read the real on-disk module config.json.
+        with patch("agento.framework.bootstrap.get_manifests", return_value=[]):
+            yield
+
     def _mock_conn(self, *, ws_code="testws", existing_build=None):
         """Create a mock DB connection with cursor context manager."""
         conn = MagicMock()
@@ -1026,6 +1058,53 @@ class TestExecuteBuild:
         result = execute_build(conn, 1)
         assert result.skipped is True
         assert result.build_id == 99
+
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.workspace.get_agent_view")
+    def test_checksum_reacts_to_env_override(
+        self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer,
+        tmp_path, monkeypatch,
+    ):
+        """An ENV override of an agent_view field must change the build checksum
+        so the freshness check rebuilds (it previously hashed DB-only values)."""
+        mock_get_av.return_value = _make_agent_view()
+        mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        mock_resolve.return_value = AgentViewRuntime(provider="claude")
+        mock_get_writer.return_value = MagicMock()
+
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
+            conn1, _ = self._mock_conn()
+            checksum_no_env = execute_build(conn1, 1).checksum
+
+            monkeypatch.setenv("CONFIG__AGENT_VIEW__MODEL", "env-model")
+            conn2, _ = self._mock_conn()
+            checksum_with_env = execute_build(conn2, 1).checksum
+
+        assert checksum_no_env != checksum_with_env
+
+    @patch("agento.framework.config_writer.get_config_writer")
+    @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.workspace.get_agent_view")
+    def test_writes_instruction_file_from_env(
+        self, mock_get_av, mock_overrides, mock_resolve, mock_get_writer,
+        tmp_path, monkeypatch,
+    ):
+        """AGENTS.md set only via ENV (no DB row) is materialized into the build."""
+        mock_get_av.return_value = _make_agent_view()
+        mock_overrides.return_value = {"agent_view/provider": ("claude", False)}
+        from agento.framework.agent_view_runtime import AgentViewRuntime
+        mock_resolve.return_value = AgentViewRuntime(provider="claude")
+        mock_get_writer.return_value = MagicMock()
+        monkeypatch.setenv("CONFIG__AGENT_VIEW__INSTRUCTIONS__AGENTS_MD", "# from env")
+
+        with patch(f"{_BUILDER}.BUILD_DIR", str(tmp_path)):
+            result = execute_build(self._mock_conn()[0], 1)
+
+        assert (Path(result.build_dir) / "AGENTS.md").read_text() == "# from env"
 
     @patch("agento.framework.config_writer.get_config_writer")
     @patch("agento.framework.agent_view_runtime.resolve_agent_view_runtime")

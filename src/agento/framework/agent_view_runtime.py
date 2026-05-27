@@ -7,7 +7,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from .scoped_config import build_scoped_overrides
+from .config_resolver import ScopedConfigService
+from .scoped_config import Scope
 from .workspace import AgentView, Workspace, get_agent_view, get_workspace
 
 logger = logging.getLogger(__name__)
@@ -24,24 +25,16 @@ class AgentViewRuntime:
     priority: int = DEFAULT_PRIORITY
     scoped_overrides: dict = field(default_factory=dict)
 
-    def get_value(self, path: str) -> str | None:
-        """Get a config value from pre-merged scoped overrides."""
-        entry = self.scoped_overrides.get(path)
-        if entry is None:
-            return None
-        value, encrypted = entry
-        if encrypted:
-            from .encryptor import get_encryptor
-            return get_encryptor().decrypt(value)
-        return value
-
 
 def resolve_agent_view_runtime(conn, agent_view_id: int | None) -> AgentViewRuntime:
     """Resolve the full runtime profile for a given agent_view.
 
-    When ``agent_view_id`` is None (or the row is not found) the runtime still
-    reads the global-scope config for ``agent_view/provider`` / ``agent_view/model`` /
-    ``agent_view/scheduling/priority`` so agent-view-less jobs (e.g. blank-source
+    Resolution goes through the single ``ScopedConfigService`` (ENV -> scoped DB ->
+    config.json), so ``CONFIG__AGENT_VIEW__PROVIDER`` / ``__MODEL`` /
+    ``__SCHEDULING__PRIORITY`` env overrides are honored.
+
+    When ``agent_view_id`` is None (or the row is not found) the runtime resolves
+    at the global (default) scope so agent-view-less jobs (e.g. blank-source
     tests, single-tenant deployments that run before any agent_view is created)
     still know which provider pool to select from.
     """
@@ -53,22 +46,20 @@ def resolve_agent_view_runtime(conn, agent_view_id: int | None) -> AgentViewRunt
         get_workspace(conn, agent_view.workspace_id) if agent_view is not None else None
     )
 
-    overrides = build_scoped_overrides(
-        conn,
-        agent_view_id=agent_view.id if agent_view else None,
-        workspace_id=agent_view.workspace_id if agent_view else None,
-    )
+    if agent_view is not None:
+        svc = ScopedConfigService(
+            conn, Scope.AGENT_VIEW, agent_view.id, workspace_id=agent_view.workspace_id,
+        )
+    else:
+        svc = ScopedConfigService(conn, Scope.DEFAULT, 0)
 
     runtime = AgentViewRuntime(
         agent_view=agent_view,
         workspace=workspace,
-        scoped_overrides=overrides,
+        scoped_overrides=svc.overrides,
     )
 
-    provider = runtime.get_value("agent_view/provider")
-    model = runtime.get_value("agent_view/model")
-
-    priority_raw = runtime.get_value("agent_view/scheduling/priority")
+    priority_raw = svc.get("agent_view/scheduling/priority")
     priority = DEFAULT_PRIORITY
     if priority_raw is not None:
         try:
@@ -76,8 +67,8 @@ def resolve_agent_view_runtime(conn, agent_view_id: int | None) -> AgentViewRunt
         except (ValueError, TypeError):
             logger.warning("Invalid agent_view/scheduling/priority=%r, using default", priority_raw)
 
-    runtime.provider = provider
-    runtime.model = model
+    runtime.provider = svc.get("agent_view/provider")
+    runtime.model = svc.get("agent_view/model")
     runtime.priority = priority
     return runtime
 

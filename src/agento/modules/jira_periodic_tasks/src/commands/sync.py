@@ -27,11 +27,11 @@ class SyncCommand:
     def execute(self, args: argparse.Namespace) -> None:
         from agento.framework.bootstrap import bootstrap, get_module_config
         from agento.framework.cli.runtime import _load_framework_config
+        from agento.framework.config_resolver import ScopedConfigService
         from agento.framework.db import get_connection
         from agento.framework.lock import FileLock, LockHeld
         from agento.framework.log import get_logger
         from agento.framework.scoped_config import Scope
-        from agento.framework.scoped_config import get_module_config as get_scoped_config
         from agento.framework.workspace import get_active_agent_views
 
         db_config, _, _ = _load_framework_config()
@@ -61,9 +61,9 @@ class SyncCommand:
                     else:
                         for av in agent_views:
                             try:
-                                jira_config = get_scoped_config(
-                                    conn, "jira", scope=Scope.AGENT_VIEW, scope_id=av.id
-                                )
+                                jira_config = ScopedConfigService(
+                                    conn, Scope.AGENT_VIEW, av.id
+                                ).get_module("jira")
                                 if jira_config is None:
                                     logger.warning(
                                         "No jira config for agent_view %s, skipping", av.code

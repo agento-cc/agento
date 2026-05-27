@@ -171,17 +171,20 @@ def all_persistent_home_paths(
     return sorted(paths)
 
 
-def get_agent_config(resolved_config: dict[str, tuple[str, bool]]) -> dict[str, str]:
-    """Extract agent_view/* paths from resolved DB overrides into a flat dict.
+def get_agent_config(svc) -> dict[str, str]:
+    """Extract agent_view/* config into a flat dict via the single config service.
+
+    Filters the fully-resolved effective config (``svc.resolve_all`` — ENV ->
+    DB -> config.json, incl. ENV-only fields with no DB row and decryption) to
+    the agent_view/* keys.
 
     Returns {relative_path: value}, e.g. {"model": "opus-4"}.
     """
-    result = {}
-    for path, (value, _encrypted) in resolved_config.items():
-        if path.startswith(AGENT_CONFIG_PREFIX) and value is not None:
-            relative = path[len(AGENT_CONFIG_PREFIX):]
-            result[relative] = value
-    return result
+    return {
+        path[len(AGENT_CONFIG_PREFIX):]: value
+        for path, value in svc.resolve_all().items()
+        if path.startswith(AGENT_CONFIG_PREFIX)
+    }
 
 
 def clear() -> None:

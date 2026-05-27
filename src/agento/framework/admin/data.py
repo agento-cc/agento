@@ -7,20 +7,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agento.framework.config_resolver import (
+    ScopedConfigService,
     _db_path,
     _db_path_tool,
     _env_key,
     _env_key_tool,
-    load_db_overrides,
     read_config_defaults,
 )
 from agento.framework.config_schema import allowed_scopes as get_allowed_scopes
 from agento.framework.config_schema import is_scope_allowed
-from agento.framework.scoped_config import (
-    Scope,
-    build_scoped_overrides,
-    load_scoped_db_overrides,
-)
+from agento.framework.scoped_config import Scope
 
 
 @dataclass
@@ -350,27 +346,17 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
 
     config_defaults = read_config_defaults(target.module_path) if target.module_path else {}
 
-    # Load scoped overrides and per-scope overrides for source detection
-    if scope == Scope.AGENT_VIEW:
-        # Need workspace_id for scoped resolution
-        ws_id = None
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT workspace_id FROM agent_view WHERE id = %s", (scope_id,))
-                    row = cur.fetchone()
-                    if row:
-                        ws_id = row["workspace_id"]
-            except Exception:
-                pass
-        merged_overrides = build_scoped_overrides(conn, agent_view_id=scope_id, workspace_id=ws_id)
-        scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
-    elif scope == Scope.WORKSPACE:
-        merged_overrides = build_scoped_overrides(conn, workspace_id=scope_id)
-        scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
-    else:
-        merged_overrides = load_db_overrides(conn)
-        scope_overrides = merged_overrides
+    # Single resolver owns the ENV -> scoped DB -> config.json fallback-order
+    # decision (incl. db:inherited). Value extraction below stays raw — no
+    # decryption (obscure secrets show as ****), no type coercion.
+    svc = ScopedConfigService(conn, scope, scope_id)
+
+    def _display_source(rv_source: str, inherited: bool) -> str:
+        if rv_source == "config.json":
+            return "json"
+        if rv_source == "db" and inherited:
+            return "db:inherited"
+        return rv_source
 
     results: list[ResolvedField] = []
     for field_name, field_schema in target.fields.items():
@@ -381,22 +367,15 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
         db_path = _db_path(module, field_name)
         env_key = _env_key(module, field_name)
 
-        # Determine source
-        env_val = os.environ.get(env_key)
-        if env_val is not None:
-            source = "env"
-            value = env_val
-        elif db_path in scope_overrides:
-            source = "db"
-            value = scope_overrides[db_path][0]
-        elif db_path in merged_overrides:
-            source = "db:inherited"
-            value = merged_overrides[db_path][0]
-        elif field_name in config_defaults:
-            source = "json"
+        rv, inherited = svc.resolve_field_with_source(module, field_name, field_schema, config_defaults)
+        source = _display_source(rv.source, inherited)
+        if source == "env":
+            value = os.environ.get(env_key)
+        elif source in ("db", "db:inherited"):
+            value = svc.overrides.get(db_path, (None, False))[0]
+        elif source == "json":
             value = str(config_defaults[field_name])
         else:
-            source = "none"
             value = None
 
         display_value = "****" if obscure and value else (value if value is not None else "")
@@ -432,21 +411,17 @@ def get_resolved_fields(conn, module: str, scope: str = Scope.DEFAULT, scope_id:
             db_path = _db_path_tool(module, tool_name, field_name)
             env_key = _env_key_tool(module, tool_name, field_name)
 
-            env_val = os.environ.get(env_key)
-            if env_val is not None:
-                source = "env"
-                value = env_val
-            elif db_path in scope_overrides:
-                source = "db"
-                value = scope_overrides[db_path][0]
-            elif db_path in merged_overrides:
-                source = "db:inherited"
-                value = merged_overrides[db_path][0]
-            elif field_name in tool_json:
-                source = "json"
+            rv, inherited = svc.resolve_tool_field_with_source(
+                module, tool_name, field_name, field_schema, config_defaults
+            )
+            source = _display_source(rv.source, inherited)
+            if source == "env":
+                value = os.environ.get(env_key)
+            elif source in ("db", "db:inherited"):
+                value = svc.overrides.get(db_path, (None, False))[0]
+            elif source == "json":
                 value = str(tool_json[field_name])
             else:
-                source = "none"
                 value = None
 
             display_value = "****" if obscure and value else (value if value is not None else "")

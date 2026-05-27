@@ -253,22 +253,22 @@ class TestCliValidators:
 class TestEnvKeyNormalization:
     def test_env_key_for_slash_field(self):
         """Slash-containing field name maps to a valid env var name (slashes -> __)."""
-        from agento.framework.scoped_config import ScopedConfig
+        from agento.framework.config_resolver import path_to_env_key
 
-        env_key = ScopedConfig._path_to_env_key("agent_view/identity/ssh_private_key")
+        env_key = path_to_env_key("agent_view/identity/ssh_private_key")
         assert env_key == "CONFIG__AGENT_VIEW__IDENTITY__SSH_PRIVATE_KEY"
         assert "/" not in env_key
 
     def test_env_key_for_two_part_path(self):
-        from agento.framework.scoped_config import ScopedConfig
+        from agento.framework.config_resolver import path_to_env_key
 
-        env_key = ScopedConfig._path_to_env_key("jira/jira_token")
+        env_key = path_to_env_key("jira/jira_token")
         assert env_key == "CONFIG__JIRA__JIRA_TOKEN"
 
     def test_env_key_for_tool_path(self):
-        from agento.framework.scoped_config import ScopedConfig
+        from agento.framework.config_resolver import path_to_env_key
 
-        env_key = ScopedConfig._path_to_env_key("my_app/tools/mysql/pass")
+        env_key = path_to_env_key("my_app/tools/mysql/pass")
         assert env_key == "CONFIG__MY_APP__TOOLS__MYSQL__PASS"
 
 
@@ -276,7 +276,7 @@ class TestResolveConfigJsonForSlashKey:
     def test_default_lookup_finds_slash_key(self, modules_dir, monkeypatch):
         from dataclasses import dataclass
 
-        from agento.framework.scoped_config import ScopedConfig
+        from agento.framework.config_resolver import ScopedConfigService
 
         # Add a config.json for agent_view with a slash-key default
         av_dir = modules_dir / "core_modules" / "agent_view"
@@ -294,9 +294,8 @@ class TestResolveConfigJsonForSlashKey:
             lambda: [_M(name="agent_view", path=av_dir)],
         )
 
-        sc = ScopedConfig.__new__(ScopedConfig)  # bypass __init__
-        sc._conn = None
-        result = sc._resolve_config_json("agent_view/identity/ssh_public_key")
+        svc = ScopedConfigService.__new__(ScopedConfigService)  # bypass __init__ (no DB)
+        result = svc._resolve_config_json("agent_view/identity/ssh_public_key")
         assert result == "ssh-rsa DEFAULT"
 
 

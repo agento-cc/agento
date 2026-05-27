@@ -591,14 +591,8 @@ class ConfigResolveCommand:
 
     def execute(self, args: argparse.Namespace) -> None:
         from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
-        from ..config_resolver import (
-            _db_path,
-            read_config_defaults,
-            resolve_field,
-            resolve_tool_field,
-        )
+        from ..config_resolver import ScopedConfigService, read_config_defaults
         from ..module_loader import scan_modules
-        from ..scoped_config import load_scoped_db_overrides
 
         manifests = scan_modules(CORE_MODULES_DIR) + scan_modules(USER_MODULES_DIR)
         manifest = next((m for m in manifests if m.name == args.module), None)
@@ -618,42 +612,17 @@ class ConfigResolveCommand:
         try:
             config_defaults = read_config_defaults(manifest.path)
 
-            # Load overrides for the requested scope
-            scope_overrides = load_scoped_db_overrides(conn, scope, scope_id)
-            # Load default overrides for inherited detection
-            default_overrides = load_scoped_db_overrides(conn, Scope.DEFAULT, 0) if scope != Scope.DEFAULT else {}
-            # Load parent scope overrides for inherited detection
-            parent_overrides: dict[str, tuple[str, bool]] = {}
-            if scope == Scope.AGENT_VIEW:
-                # Check workspace scope — need workspace_id from agent_view
-                with conn.cursor() as cur:
-                    cur.execute("SELECT workspace_id FROM agent_view WHERE id=%s", (scope_id,))
-                    row = cur.fetchone()
-                    if row:
-                        ws_id = row["workspace_id"] if isinstance(row, dict) else row[0]
-                        parent_overrides = load_scoped_db_overrides(conn, Scope.WORKSPACE, ws_id)
-
-            # Merge overrides with scope chain: default -> workspace/parent -> requested scope
-            merged_overrides: dict[str, tuple[str, bool]] = {}
-            merged_overrides.update(default_overrides)
-            merged_overrides.update(parent_overrides)
-            merged_overrides.update(scope_overrides)
+            # Single resolver owns the ENV -> scoped DB -> config.json fallback +
+            # db:inherited detection.
+            svc = ScopedConfigService(conn, scope, scope_id)
 
             fields_output = []
 
             for field_name, field_schema in manifest.config.items():
-                rv = resolve_field(
-                    manifest.name, field_name, field_schema,
-                    config_defaults, merged_overrides,
+                rv, inherited = svc.resolve_field_with_source(
+                    manifest.name, field_name, field_schema, config_defaults,
                 )
-                # Determine precise source with inherited detection
-                source = rv.source
-                inherited = False
-                if source == "db" and scope != Scope.DEFAULT:
-                    db_p = _db_path(manifest.name, field_name)
-                    if db_p not in scope_overrides:
-                        source = "db:inherited"
-                        inherited = True
+                source = "db:inherited" if inherited else rv.source
 
                 is_obscure = field_schema.get("type") == "obscure"
                 display = "****" if is_obscure and rv.value is not None else _format_value(rv.value)
@@ -672,17 +641,11 @@ class ConfigResolveCommand:
 
             for tool in manifest.tools:
                 for field_name, field_schema in tool.get("fields", {}).items():
-                    rv = resolve_tool_field(
+                    rv, inherited = svc.resolve_tool_field_with_source(
                         manifest.name, tool["name"], field_name,
-                        field_schema, config_defaults, merged_overrides,
+                        field_schema, config_defaults,
                     )
-                    source = rv.source
-                    inherited = False
-                    if source == "db" and scope != Scope.DEFAULT:
-                        db_p = f"{manifest.name}/tools/{tool['name']}/{field_name}".replace("-", "_")
-                        if db_p not in scope_overrides:
-                            source = "db:inherited"
-                            inherited = True
+                    source = "db:inherited" if inherited else rv.source
 
                     is_obscure = field_schema.get("type") == "obscure"
                     display = "****" if is_obscure and rv.value is not None else _format_value(rv.value)

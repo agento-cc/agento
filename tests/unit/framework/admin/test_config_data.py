@@ -39,9 +39,9 @@ class TestResolvedFieldScopeFlags:
         ), patch(
             "agento.framework.admin.data.read_config_defaults", return_value={}
         ), patch(
-            "agento.framework.admin.data.build_scoped_overrides", return_value={}
+            "agento.framework.scoped_config.build_scoped_overrides", return_value={}
         ), patch(
-            "agento.framework.admin.data.load_scoped_db_overrides", return_value={}
+            "agento.framework.scoped_config.load_scoped_db_overrides", return_value={}
         ):
             conn = MagicMock()
             cursor = MagicMock()
@@ -72,7 +72,7 @@ class TestResolvedFieldScopeFlags:
         ), patch(
             "agento.framework.admin.data.read_config_defaults", return_value={}
         ), patch(
-            "agento.framework.admin.data.load_db_overrides", return_value={}
+            "agento.framework.scoped_config.build_scoped_overrides", return_value={}
         ):
             fields = get_resolved_fields(None, "testmod", Scope.DEFAULT, 0)
 
@@ -90,9 +90,9 @@ class TestResolvedFieldScopeFlags:
         ), patch(
             "agento.framework.admin.data.read_config_defaults", return_value={}
         ), patch(
-            "agento.framework.admin.data.build_scoped_overrides", return_value={}
+            "agento.framework.scoped_config.build_scoped_overrides", return_value={}
         ), patch(
-            "agento.framework.admin.data.load_scoped_db_overrides", return_value={}
+            "agento.framework.scoped_config.load_scoped_db_overrides", return_value={}
         ):
             conn = MagicMock()
             cursor = MagicMock()
@@ -124,9 +124,9 @@ class TestResolvedFieldScopeFlags:
         ), patch(
             "agento.framework.admin.data.read_config_defaults", return_value={}
         ), patch(
-            "agento.framework.admin.data.build_scoped_overrides", return_value={}
+            "agento.framework.scoped_config.build_scoped_overrides", return_value={}
         ), patch(
-            "agento.framework.admin.data.load_scoped_db_overrides", return_value={}
+            "agento.framework.scoped_config.load_scoped_db_overrides", return_value={}
         ):
             conn = MagicMock()
             cursor = MagicMock()
@@ -159,9 +159,9 @@ class TestResolvedFieldScopeFlags:
         ), patch(
             "agento.framework.admin.data.read_config_defaults", return_value={}
         ), patch(
-            "agento.framework.admin.data.build_scoped_overrides", return_value=overrides
+            "agento.framework.scoped_config.build_scoped_overrides", return_value=overrides
         ), patch(
-            "agento.framework.admin.data.load_scoped_db_overrides", return_value={}
+            "agento.framework.scoped_config.load_scoped_db_overrides", return_value={}
         ):
             conn = MagicMock()
             cursor = MagicMock()

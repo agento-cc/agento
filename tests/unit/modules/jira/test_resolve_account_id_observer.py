@@ -75,11 +75,11 @@ class TestAgentViewScopeResolve:
         }
 
         with patch(f"{_FWK}.scoped_config.load_scoped_db_overrides", return_value=av_overrides), \
-             patch(f"{_FWK}.scoped_config.ScopedConfig") as mock_sc_cls, \
+             patch(f"{_FWK}.config_resolver.ScopedConfigService") as mock_sc_cls, \
              patch(f"{_FWK}.scoped_config.scoped_config_set") as mock_scoped_set, \
              patch(f"{_OBS}._resolve_account_id", return_value="712020:dev-abc") as mock_resolve:
             mock_sc = MagicMock()
-            mock_sc.get_value.side_effect = lambda path: sc_values.get(path)
+            mock_sc.get.side_effect = lambda path: sc_values.get(path)
             mock_sc_cls.return_value = mock_sc
 
             observer = ResolveAccountIdObserver()

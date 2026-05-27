@@ -70,16 +70,17 @@ class BuildResult:
 
 
 def compute_build_checksum(
-    scoped_overrides: dict,
+    resolved: dict[str, str],
     skill_checksums: list[str] | None = None,
     *,
     strategies: dict[str, str] | None = None,
 ) -> str:
-    """Deterministic SHA-256 over sorted config values + skill checksums + per-source strategies."""
+    """Deterministic SHA-256 over sorted effective config values + skill checksums
+    + per-source strategies. ``resolved`` is the ENV->DB->config.json effective
+    config ({path: value}), so an ENV override drifts the checksum and rebuilds."""
     parts = []
-    for path in sorted(scoped_overrides.keys()):
-        value, _encrypted = scoped_overrides[path]
-        parts.append(f"{path}={value}")
+    for path in sorted(resolved.keys()):
+        parts.append(f"{path}={resolved[path]}")
     if skill_checksums:
         parts.extend(sorted(skill_checksums))
     effective = {s: "copy" for s in _SOURCES}
@@ -95,17 +96,15 @@ def compute_build_checksum(
 
 def _write_instruction_files(
     build_dir: Path,
-    scoped_overrides: dict,
+    resolved: dict[str, str],
 ) -> None:
     """Write AGENTS.md, SOUL.md, CLAUDE.md; unlink first so a prior theme symlink is not followed."""
     for config_path, filename in _INSTRUCTION_FILES.items():
-        entry = scoped_overrides.get(config_path)
-        if entry is not None:
-            value, _encrypted = entry
-            if value:
-                target = build_dir / filename
-                target.unlink(missing_ok=True)
-                target.write_text(value)
+        value = resolved.get(config_path)
+        if value:
+            target = build_dir / filename
+            target.unlink(missing_ok=True)
+            target.write_text(value)
     claude_target = build_dir / "CLAUDE.md"
     claude_target.unlink(missing_ok=True)
     claude_target.write_text(CLAUDE_MD_CONTENT)
@@ -371,45 +370,39 @@ def ensure_state_dir(
 
 def materialize_ssh_identity(
     build_dir: Path,
-    scoped_overrides: dict,
+    resolved: dict[str, str],
 ) -> None:
-    """Write SSH key, config, and known_hosts from DB into ``build_dir/.ssh/``
-    when present. Private key is decrypted via the framework Encryptor and
-    written with mode 0600. Missing fields are silently skipped.
+    """Write SSH key, config, and known_hosts into ``build_dir/.ssh/`` when present.
+    Values come pre-resolved (ENV->DB->config.json, already decrypted). Private key
+    is written with mode 0600. Missing/empty fields are silently skipped.
     """
-    from agento.framework.encryptor import get_encryptor
+    private = resolved.get(_SSH_PRIVATE_KEY_PATH)
+    public = resolved.get(_SSH_PUBLIC_KEY_PATH)
+    config = resolved.get(_SSH_CONFIG_PATH)
+    known_hosts = resolved.get(_SSH_KNOWN_HOSTS_PATH)
 
-    private_entry = scoped_overrides.get(_SSH_PRIVATE_KEY_PATH)
-    public_entry = scoped_overrides.get(_SSH_PUBLIC_KEY_PATH)
-    config_entry = scoped_overrides.get(_SSH_CONFIG_PATH)
-    known_hosts_entry = scoped_overrides.get(_SSH_KNOWN_HOSTS_PATH)
-
-    if (private_entry is None and public_entry is None
-            and config_entry is None and known_hosts_entry is None):
+    if not (private or public or config or known_hosts):
         return
 
     ssh_dir = build_dir / ".ssh"
     ssh_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(ssh_dir, 0o700)
 
-    if private_entry is not None:
-        value, encrypted = private_entry
-        if value:
-            plaintext = get_encryptor().decrypt(value) if encrypted else value
-            target = ssh_dir / "id_rsa"
-            target.write_text(plaintext if plaintext.endswith("\n") else plaintext + "\n")
-            os.chmod(target, 0o600)
-
-    if public_entry is not None and public_entry[0]:
-        (ssh_dir / "id_rsa.pub").write_text(public_entry[0])
-
-    if config_entry is not None and config_entry[0]:
-        target = ssh_dir / "config"
-        target.write_text(config_entry[0])
+    if private:
+        target = ssh_dir / "id_rsa"
+        target.write_text(private if private.endswith("\n") else private + "\n")
         os.chmod(target, 0o600)
 
-    if known_hosts_entry is not None and known_hosts_entry[0]:
-        (ssh_dir / "known_hosts").write_text(known_hosts_entry[0])
+    if public:
+        (ssh_dir / "id_rsa.pub").write_text(public)
+
+    if config:
+        target = ssh_dir / "config"
+        target.write_text(config)
+        os.chmod(target, 0o600)
+
+    if known_hosts:
+        (ssh_dir / "known_hosts").write_text(known_hosts)
 
 
 def link_persistent_paths(
@@ -565,12 +558,13 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
     checksum inputs has changed (manual theme edits, external template updates).
     """
     from agento.framework.agent_view_runtime import resolve_agent_view_runtime
+    from agento.framework.config_resolver import ScopedConfigService
     from agento.framework.config_writer import (
         all_persistent_home_paths,
         get_agent_config,
         get_config_writer,
     )
-    from agento.framework.scoped_config import build_scoped_overrides, get_module_config
+    from agento.framework.scoped_config import Scope
     from agento.framework.workspace import get_agent_view
 
     agent_view = get_agent_view(conn, agent_view_id)
@@ -584,9 +578,13 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         raise ValueError(f"workspace {agent_view.workspace_id} not found")
     workspace_code = ws_row["code"] if isinstance(ws_row, dict) else ws_row[0]
 
-    overrides = build_scoped_overrides(
-        conn, agent_view_id=agent_view_id, workspace_id=agent_view.workspace_id,
+    # Single config service for this agent_view. The fully-resolved effective
+    # config (ENV -> DB -> config.json, incl. ENV-only fields, decrypted) drives
+    # both the freshness checksum and every materialized file — one view, no split.
+    svc = ScopedConfigService(
+        conn, Scope.AGENT_VIEW, agent_view_id, workspace_id=agent_view.workspace_id,
     )
+    resolved = svc.resolve_all()
 
     # Fetch enabled skills once (used for checksum + build)
     enabled_skills, skill_registry = _get_enabled_skills(
@@ -598,7 +596,7 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
     strategies = _resolve_strategies(conn)
 
     checksum = compute_build_checksum(
-        overrides, skill_checksums, strategies=strategies,
+        resolved, skill_checksums, strategies=strategies,
     )
 
     # Skip if identical build already exists AND its build_dir is intact on disk.
@@ -690,8 +688,8 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         # 2. Agent CLI configs via provider-specific ConfigWriter
         runtime = resolve_agent_view_runtime(conn, agent_view_id)
         if runtime.provider:
-            agent_config = get_agent_config(overrides)
-            core_cfg = get_module_config(conn, "core") or {}
+            agent_config = get_agent_config(svc)
+            core_cfg = ScopedConfigService(conn).get_module("core") or {}
             toolbox_url = core_cfg.get("toolbox/url") or "http://toolbox:3001"
             writer = get_config_writer(runtime.provider)
             writer.prepare_workspace(
@@ -702,7 +700,7 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
             migrate_legacy_workspace_config(writer, build_dir)
 
         # 3. Instruction files (AGENTS.md, SOUL.md, CLAUDE.md)
-        _write_instruction_files(build_dir, overrides)
+        _write_instruction_files(build_dir, resolved)
 
         # 4. Module workspace assets (namespaced under modules/{name}/)
         _copy_module_workspaces(
@@ -720,7 +718,7 @@ def execute_build(conn, agent_view_id: int, *, force: bool = False) -> BuildResu
         _create_agents_skills_symlink(build_dir)
 
         # 7. SSH identity (private key, pub, config, known_hosts) from DB
-        materialize_ssh_identity(build_dir, overrides)
+        materialize_ssh_identity(build_dir, resolved)
 
         # 8. Persistent-state symlinks for agent-declared paths (Claude/Codex sessions, etc.)
         # Scoped to runtime.provider — prevents cross-provider state leakage into the build.

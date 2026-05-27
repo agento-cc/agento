@@ -37,7 +37,7 @@ class TestResolveAgentViewRuntime:
         runtime = resolve_agent_view_runtime(MagicMock(), 999)
         assert runtime.agent_view is None
 
-    @patch("agento.framework.agent_view_runtime.build_scoped_overrides")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.agent_view_runtime.get_workspace")
     @patch("agento.framework.agent_view_runtime.get_agent_view")
     def test_resolves_claude_provider(self, mock_av, mock_ws, mock_overrides):
@@ -56,7 +56,7 @@ class TestResolveAgentViewRuntime:
         assert runtime.agent_view is not None
         assert runtime.workspace is not None
 
-    @patch("agento.framework.agent_view_runtime.build_scoped_overrides")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.agent_view_runtime.get_workspace")
     @patch("agento.framework.agent_view_runtime.get_agent_view")
     def test_resolves_codex_provider(self, mock_av, mock_ws, mock_overrides):
@@ -72,7 +72,38 @@ class TestResolveAgentViewRuntime:
         assert runtime.model == "gpt-5.4"
         assert runtime.priority == DEFAULT_PRIORITY
 
-    @patch("agento.framework.agent_view_runtime.build_scoped_overrides")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.agent_view_runtime.get_workspace")
+    @patch("agento.framework.agent_view_runtime.get_agent_view")
+    def test_env_overrides_provider_and_model(self, mock_av, mock_ws, mock_overrides, monkeypatch):
+        monkeypatch.setenv("CONFIG__AGENT_VIEW__PROVIDER", "codex")
+        monkeypatch.setenv("CONFIG__AGENT_VIEW__MODEL", "gpt-5.4-mini")
+        mock_av.return_value = _make_agent_view()
+        mock_ws.return_value = _make_workspace()
+        mock_overrides.return_value = {
+            "agent_view/provider": ("claude", False),
+            "agent_view/model": ("opus-4.6", False),
+        }
+
+        runtime = resolve_agent_view_runtime(MagicMock(), 1)
+        assert runtime.provider == "codex"
+        assert runtime.model == "gpt-5.4-mini"
+
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.framework.agent_view_runtime.get_workspace")
+    @patch("agento.framework.agent_view_runtime.get_agent_view")
+    def test_env_overrides_priority(self, mock_av, mock_ws, mock_overrides, monkeypatch):
+        monkeypatch.setenv("CONFIG__AGENT_VIEW__SCHEDULING__PRIORITY", "80")
+        mock_av.return_value = _make_agent_view()
+        mock_ws.return_value = _make_workspace()
+        mock_overrides.return_value = {
+            "agent_view/scheduling/priority": ("20", False),
+        }
+
+        runtime = resolve_agent_view_runtime(MagicMock(), 1)
+        assert runtime.priority == 80
+
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.agent_view_runtime.get_workspace")
     @patch("agento.framework.agent_view_runtime.get_agent_view")
     def test_generic_model_fallback(self, mock_av, mock_ws, mock_overrides):
@@ -86,7 +117,7 @@ class TestResolveAgentViewRuntime:
         assert runtime.provider is None
         assert runtime.model == "sonnet-4.6"
 
-    @patch("agento.framework.agent_view_runtime.build_scoped_overrides")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.agent_view_runtime.get_workspace")
     @patch("agento.framework.agent_view_runtime.get_agent_view")
     def test_priority_clamped_to_range(self, mock_av, mock_ws, mock_overrides):
@@ -99,7 +130,7 @@ class TestResolveAgentViewRuntime:
         runtime = resolve_agent_view_runtime(MagicMock(), 1)
         assert runtime.priority == 100
 
-    @patch("agento.framework.agent_view_runtime.build_scoped_overrides")
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.agent_view_runtime.get_workspace")
     @patch("agento.framework.agent_view_runtime.get_agent_view")
     def test_invalid_priority_uses_default(self, mock_av, mock_ws, mock_overrides):

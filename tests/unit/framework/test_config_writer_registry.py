@@ -205,21 +205,49 @@ class TestAllPersistentHomePaths:
 
 
 class TestGetAgentConfig:
+    @pytest.fixture(autouse=True)
+    def _no_config_json(self):
+        # Make config.json fallback deterministic (no module defaults) so a
+        # None/missing DB value resolves to None, not a real module default.
+        from unittest.mock import patch
+        with patch("agento.framework.bootstrap.get_manifests", return_value=[]):
+            yield
+
+    @staticmethod
+    def _svc(overrides):
+        from unittest.mock import MagicMock, patch
+
+        from agento.framework.config_resolver import ScopedConfigService
+        with patch("agento.framework.scoped_config.build_scoped_overrides", return_value=overrides), \
+             patch("agento.framework.scoped_config.load_scoped_db_overrides", return_value={}):
+            return ScopedConfigService(MagicMock())
+
     def test_extracts_agent_prefix(self):
-        overrides = {
+        svc = self._svc({
             "agent_view/model": ("opus-4", False),
             "agent_view/mcp/servers": ('{"toolbox": {}}', False),
             "jira/token": ("abc", False),
-        }
-        result = get_agent_config(overrides)
-        assert result == {
+        })
+        assert get_agent_config(svc) == {
             "model": "opus-4",
             "mcp/servers": '{"toolbox": {}}',
         }
 
     def test_skips_none_values(self):
-        overrides = {"agent_view/model": (None, False)}
-        assert get_agent_config(overrides) == {}
+        svc = self._svc({"agent_view/model": (None, False)})
+        assert get_agent_config(svc) == {}
 
     def test_empty_overrides(self):
-        assert get_agent_config({}) == {}
+        assert get_agent_config(self._svc({})) == {}
+
+    def test_env_overrides_db_value(self, monkeypatch):
+        monkeypatch.setenv("CONFIG__AGENT_VIEW__MODEL", "codex-model")
+        svc = self._svc({"agent_view/model": ("opus-4", False)})
+        assert get_agent_config(svc) == {"model": "codex-model"}
+
+    def test_env_only_field_with_no_db_row(self, monkeypatch):
+        # A provider-specific field set ONLY via ENV (no DB row) must still be
+        # emitted into the agent config.
+        monkeypatch.setenv("CONFIG__AGENT_VIEW__CODEX__APPROVAL_MODE", "on-failure")
+        svc = self._svc({})
+        assert get_agent_config(svc) == {"codex/approval_mode": "on-failure"}

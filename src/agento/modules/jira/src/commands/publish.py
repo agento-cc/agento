@@ -116,8 +116,8 @@ class PublishCommand:
         """Iterate active agent_views, resolve scoped config for each, publish."""
         from agento.framework.agent_view_runtime import resolve_publish_priority
         from agento.framework.bootstrap import get_module_config
+        from agento.framework.config_resolver import ScopedConfigService
         from agento.framework.scoped_config import Scope
-        from agento.framework.scoped_config import get_module_config as get_scoped_config
         from agento.framework.workspace import get_active_agent_views
 
         agent_views = get_active_agent_views(conn)
@@ -131,7 +131,7 @@ class PublishCommand:
 
         for av in agent_views:
             try:
-                jira_config = get_scoped_config(conn, "jira", scope=Scope.AGENT_VIEW, scope_id=av.id)
+                jira_config = ScopedConfigService(conn, Scope.AGENT_VIEW, av.id).get_module("jira")
                 if jira_config is None:
                     logger.warning("Could not resolve jira config for agent_view %s, skipping", av.code)
                     continue
@@ -211,14 +211,14 @@ class PublishCommand:
     def _resolve_single_agent_view(self, conn, logger):
         """If exactly 1 jira-enabled agent_view exists, return (id, priority). Else (None, 50)."""
         from agento.framework.agent_view_runtime import resolve_publish_priority
+        from agento.framework.config_resolver import ScopedConfigService
         from agento.framework.scoped_config import Scope
-        from agento.framework.scoped_config import get_module_config as get_scoped_config
         from agento.framework.workspace import get_active_agent_views
 
         agent_views = get_active_agent_views(conn)
         enabled = []
         for av in agent_views:
-            jira_config = get_scoped_config(conn, "jira", scope=Scope.AGENT_VIEW, scope_id=av.id)
+            jira_config = ScopedConfigService(conn, Scope.AGENT_VIEW, av.id).get_module("jira")
             if jira_config is not None and jira_config.enabled:
                 enabled.append(av)
 

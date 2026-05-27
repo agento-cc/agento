@@ -29,6 +29,11 @@ DB values support Magento-style scoping: `--scope=agent_view --scope-id=1` overr
 
 ## How It Works at Runtime
 
+There is **one resolver per language**, both implementing the same ENV → DB → config.json fallback:
+
+- **Python framework + modules:** `ScopedConfigService` in [config_resolver.py](../../src/agento/framework/config_resolver.py). Every fallback read goes through it — `svc.get(path)` (raw string), `svc.get_module(name)` (typed config), `svc.resolve_field_with_source(...)` (admin/CLI display). Built once per `(scope, scope_id)` over pre-merged scoped overrides.
+- **Toolbox (Node):** [config-loader.js](../../src/agento/toolbox/config-loader.js) — a deliberately separate mirror (the toolbox is the only container with secrets). Kept behaviorally in sync; not merged with the Python service.
+
 Toolbox reads config at each MCP session:
 
 1. Scans `/modules/*/module.json` for tool definitions
@@ -36,7 +41,21 @@ Toolbox reads config at each MCP session:
 3. For each tool field: checks ENV → DB → config.json
 4. Passes resolved config to tool adapter
 
-Source: [docker/toolbox/config-loader.js](../../docker/toolbox/config-loader.js)
+## Agent-view runtime: provider / model / priority
+
+The per-job runtime profile (`agent_view/provider`, `agent_view/model`, `agent_view/scheduling/priority`) resolves through the same `ScopedConfigService`, so **ENV overrides apply**:
+
+```bash
+CONFIG__AGENT_VIEW__PROVIDER=codex
+CONFIG__AGENT_VIEW__MODEL=gpt-5.4-mini
+CONFIG__AGENT_VIEW__SCHEDULING__PRIORITY=80
+```
+
+Precedence for the model specifically: an explicit `--model` flag on `agento run` / `agento e2e` / replay **wins over** ENV/DB config; with no flag, `CONFIG__AGENT_VIEW__MODEL` (ENV) beats the DB value, which beats `config.json`.
+
+### Workspace build honors ENV too
+
+Workspace materialization (`.mcp.json`, `.codex/config.toml`, `.claude.json`, `AGENTS.md` / `SOUL.md`, `.ssh/`) is built from `ScopedConfigService.resolve_all()` — the **full effective config**, each path resolved ENV → DB → config.json. Its key set is the union of DB-override keys, `CONFIG__*` env keys, and every declared module config field — so provider-specific fields set only via ENV (`CONFIG__AGENT_VIEW__CODEX__APPROVAL_MODE`, `CONFIG__AGENT_VIEW__CLAUDE__PERSONALITY`, …) **and** `config.json`-only defaults (e.g. `agent_view/provider`) both participate. (Tool-field `config.json`-only defaults are excluded — they configure toolbox-side tools and never materialize into the build; tool overrides set via DB/ENV are still included.) The build's freshness checksum hashes that same resolved view, so changing any override or shipped default (then recreating the container, since `CONFIG__*` is read at process start) drifts the checksum and the next job-claim **rebuilds** the workspace. One resolver drives both the checksum and every materialized file — no separate DB-only path.
 
 ## Scope Restrictions (`showIn*`)
 

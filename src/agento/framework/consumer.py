@@ -428,15 +428,25 @@ class Consumer:
                     "--scope=agent_view --scope-id=<id>"
                 )
             agent_type = AgentProvider(runtime.provider)
-            model_override = runtime.model or self.model_override
+            # Explicit --model flag (e2e/replay) wins over config (ENV/DB) model.
+            model_override = self.model_override or runtime.model
 
             # Resolve token via TokenResolver (LRU over healthy pool)
             token = self._token_resolver.resolve(conn, agent_type)
 
             # Resolve shared toolbox base URL (needed below for writer injection).
-            from .scoped_config import get_module_config as _scoped_get_module_config
-            core_cfg = _scoped_get_module_config(conn, "core") or {}
+            from .config_resolver import ScopedConfigService
+            from .scoped_config import Scope
+            core_cfg = ScopedConfigService(conn).get_module("core") or {}
             toolbox_url = core_cfg.get("toolbox/url") or "http://toolbox:3001"
+
+            # Agent_view-scoped service for writing workspace config. Built while
+            # conn is open; its .get() works off the materialized overrides
+            # afterwards (ENV -> DB -> config.json, decrypting as needed).
+            agent_config_svc = (
+                ScopedConfigService(conn, Scope.AGENT_VIEW, job.agent_view_id)
+                if job.agent_view_id is not None else None
+            )
         finally:
             conn.close()
 
@@ -467,7 +477,7 @@ class Consumer:
                 )
             elif runtime.provider:
                 from .config_writer import get_agent_config, get_config_writer
-                agent_config = get_agent_config(runtime.scoped_overrides)
+                agent_config = get_agent_config(agent_config_svc)
                 writer = get_config_writer(runtime.provider)
                 writer.prepare_workspace(
                     artifacts_dir, agent_config,

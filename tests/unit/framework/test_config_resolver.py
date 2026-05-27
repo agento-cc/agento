@@ -259,3 +259,32 @@ class TestReadConfigDefaults:
         (tmp_path / "config.json").write_text("not json")
         result = read_config_defaults(tmp_path)
         assert result == {}
+
+    def test_caches_by_mtime(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"host": "a"}))
+
+        from agento.framework import config_resolver
+        reads = {"n": 0}
+        real_read = config_resolver.Path.read_text
+
+        def counting_read(self, *a, **k):
+            if self.name == "config.json":
+                reads["n"] += 1
+            return real_read(self, *a, **k)
+
+        monkeypatch.setattr(config_resolver.Path, "read_text", counting_read)
+
+        assert read_config_defaults(tmp_path) == {"host": "a"}
+        assert read_config_defaults(tmp_path) == {"host": "a"}
+        assert reads["n"] == 1  # second call served from cache (same mtime)
+
+    def test_reread_when_mtime_changes(self, tmp_path):
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"host": "a"}))
+        assert read_config_defaults(tmp_path) == {"host": "a"}
+        # Rewrite with a newer mtime
+        import os
+        cfg.write_text(json.dumps({"host": "b"}))
+        os.utime(cfg, (cfg.stat().st_atime + 10, cfg.stat().st_mtime + 10))
+        assert read_config_defaults(tmp_path) == {"host": "b"}

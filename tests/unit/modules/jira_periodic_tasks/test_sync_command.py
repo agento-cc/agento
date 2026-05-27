@@ -67,7 +67,7 @@ def _patch_orchestrator_deps(stack: list):
             "agento.framework.bootstrap.get_module_config",
             return_value=MagicMock(),
         ),
-        "get_scoped_config": patch("agento.framework.scoped_config.get_module_config"),
+        "get_scoped_config": patch("agento.framework.config_resolver.ScopedConfigService"),
         "get_active_avs": patch("agento.framework.workspace.get_active_agent_views"),
     }
     mocks = {name: stack.enter_context(p) for name, p in patches.items()}
@@ -110,7 +110,7 @@ def test_execute_iterates_active_agent_views_per_view():
         av1 = _make_agent_view(1, "mieszko")
         av2 = _make_agent_view(2, "zyga")
         m["get_active_avs"].return_value = [av1, av2]
-        m["get_scoped_config"].return_value = _make_jira_config()
+        m["get_scoped_config"].return_value.get_module.return_value = _make_jira_config()
 
         syncer = MagicMock()
         syncer.sync_view.side_effect = [
@@ -139,7 +139,7 @@ def test_execute_skips_disabled_view():
         av1 = _make_agent_view(1, "mieszko")
         av2 = _make_agent_view(2, "zyga")
         m["get_active_avs"].return_value = [av1, av2]
-        m["get_scoped_config"].side_effect = [
+        m["get_scoped_config"].return_value.get_module.side_effect = [
             _make_jira_config(enabled=False),
             _make_jira_config(enabled=True),
         ]
@@ -163,7 +163,7 @@ def test_execute_skips_view_with_no_resolvable_config():
         av1 = _make_agent_view(1, "mieszko")
         av2 = _make_agent_view(2, "zyga")
         m["get_active_avs"].return_value = [av1, av2]
-        m["get_scoped_config"].side_effect = [None, _make_jira_config()]
+        m["get_scoped_config"].return_value.get_module.side_effect = [None, _make_jira_config()]
         syncer = MagicMock()
         syncer.sync_view.return_value = []
         m["syncer_cls"].return_value = syncer
@@ -183,7 +183,7 @@ def test_execute_continues_when_first_view_raises():
         av1 = _make_agent_view(1, "mieszko")
         av2 = _make_agent_view(2, "zyga")
         m["get_active_avs"].return_value = [av1, av2]
-        m["get_scoped_config"].return_value = _make_jira_config()
+        m["get_scoped_config"].return_value.get_module.return_value = _make_jira_config()
 
         first_syncer = MagicMock()
         first_syncer.sync_view.side_effect = RuntimeError("toolbox down for view 1")
@@ -209,7 +209,7 @@ def test_execute_writes_single_crontab_with_combined_entries():
         av1 = _make_agent_view(1, "mieszko")
         av2 = _make_agent_view(2, "zyga")
         m["get_active_avs"].return_value = [av1, av2]
-        m["get_scoped_config"].return_value = _make_jira_config()
+        m["get_scoped_config"].return_value.get_module.return_value = _make_jira_config()
 
         first_entries = [_make_entry("AI-3", "mieszko")]
         second_entries = [_make_entry("AI-87", "zyga")]
@@ -237,7 +237,7 @@ def test_execute_passes_dry_run_through():
     with ExitStack() as stack:
         m = _patch_orchestrator_deps(stack)
         m["get_active_avs"].return_value = [_make_agent_view(1, "mieszko")]
-        m["get_scoped_config"].return_value = _make_jira_config()
+        m["get_scoped_config"].return_value.get_module.return_value = _make_jira_config()
         syncer = MagicMock()
         syncer.sync_view.return_value = []
         m["syncer_cls"].return_value = syncer

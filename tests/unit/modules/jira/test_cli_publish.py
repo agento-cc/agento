@@ -56,7 +56,7 @@ class TestCmdPublishTodoDispatch:
     @patch("agento.modules.jira.src.commands.publish.get_logger")
     @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
     @patch("agento.framework.workspace.get_active_agent_views")
-    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
     @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
     def test_passes_updated_to_publish_todo(
         self, mock_priority, mock_scoped_config, mock_get_avs,
@@ -66,7 +66,7 @@ class TestCmdPublishTodoDispatch:
         mock_bootstrap.return_value = (DatabaseConfig(), conn)
         av = _make_agent_view()
         mock_get_avs.return_value = [av]
-        mock_scoped_config.return_value = _make_jira_config()
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
 
         task = _make_task("AI-6", updated="2026-02-24T16:45:00.000+0000")
         builder = MagicMock()
@@ -87,7 +87,7 @@ class TestCmdPublishTodoDispatch:
     @patch("agento.modules.jira.src.commands.publish.get_logger")
     @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
     @patch("agento.framework.workspace.get_active_agent_views")
-    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
     @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
     def test_passes_issue_key_to_publish_todo(
         self, mock_priority, mock_scoped_config, mock_get_avs,
@@ -97,7 +97,7 @@ class TestCmdPublishTodoDispatch:
         mock_bootstrap.return_value = (DatabaseConfig(), conn)
         av = _make_agent_view()
         mock_get_avs.return_value = [av]
-        mock_scoped_config.return_value = _make_jira_config()
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
 
         task = _make_task("AI-6", updated="2026-02-24T16:45:00.000+0000")
         builder = MagicMock()
@@ -116,7 +116,7 @@ class TestCmdPublishTodoDispatch:
     @patch("agento.modules.jira.src.commands.publish.get_logger")
     @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
     @patch("agento.framework.workspace.get_active_agent_views")
-    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
     @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
     def test_no_tasks_skips_publish(
         self, mock_priority, mock_scoped_config, mock_get_avs,
@@ -126,7 +126,7 @@ class TestCmdPublishTodoDispatch:
         mock_bootstrap.return_value = (DatabaseConfig(), conn)
         av = _make_agent_view()
         mock_get_avs.return_value = [av]
-        mock_scoped_config.return_value = _make_jira_config()
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
 
         builder = MagicMock()
         builder.get_todo_tasks.return_value = []
@@ -143,7 +143,7 @@ class TestCmdPublishTodoDispatch:
     @patch("agento.modules.jira.src.commands.publish.get_logger")
     @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
     @patch("agento.framework.workspace.get_active_agent_views")
-    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
     @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
     def test_skips_disabled_agent_view(
         self, mock_priority, mock_scoped_config, mock_get_avs,
@@ -152,7 +152,7 @@ class TestCmdPublishTodoDispatch:
         conn = MagicMock()
         mock_bootstrap.return_value = (DatabaseConfig(), conn)
         mock_get_avs.return_value = [_make_agent_view()]
-        mock_scoped_config.return_value = _make_jira_config(enabled=False)
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config(enabled=False)
 
         from agento.modules.jira.src.commands.publish import PublishCommand
         PublishCommand().execute(_make_args("jira-todo"))
@@ -165,7 +165,7 @@ class TestCmdPublishTodoDispatch:
     @patch("agento.modules.jira.src.commands.publish.get_logger")
     @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
     @patch("agento.framework.workspace.get_active_agent_views")
-    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
     @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
     def test_first_agent_view_error_continues_to_next(
         self, mock_priority, mock_scoped_config, mock_get_avs,
@@ -178,7 +178,7 @@ class TestCmdPublishTodoDispatch:
         av1 = _make_agent_view(id=1, code="mieszko")
         av2 = _make_agent_view(id=2, code="zyga")
         mock_get_avs.return_value = [av1, av2]
-        mock_scoped_config.return_value = _make_jira_config()
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
 
         task = _make_task("AI-42", updated="2026-04-24T10:00:00.000+0000")
         builder = MagicMock()
@@ -202,7 +202,7 @@ class TestCmdPublishTodoDispatch:
     @patch("agento.modules.jira.src.commands.publish.get_logger")
     @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
     @patch("agento.framework.workspace.get_active_agent_views")
-    @patch("agento.framework.scoped_config.get_module_config")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
     @patch("agento.framework.agent_view_runtime.resolve_publish_priority")
     def test_config_resolution_error_continues_to_next_agent_view(
         self, mock_priority, mock_scoped_config, mock_get_avs,
@@ -217,7 +217,7 @@ class TestCmdPublishTodoDispatch:
         mock_get_avs.return_value = [av1, av2]
 
         good_cfg = _make_jira_config()
-        mock_scoped_config.side_effect = [RuntimeError("bad config row"), good_cfg]
+        mock_scoped_config.return_value.get_module.side_effect = [RuntimeError("bad config row"), good_cfg]
         mock_priority.return_value = 50
 
         task = _make_task("AI-99", updated="2026-05-14T10:00:00.000+0000")

@@ -26,21 +26,6 @@ def workspace_base(tmp_path, monkeypatch):
     return base
 
 
-class _FakeEncryptor:
-    def encrypt(self, plaintext: str) -> str:
-        return f"aes256:iv:{plaintext}"
-
-    def decrypt(self, ciphertext: str) -> str:
-        return ciphertext.split(":", 2)[-1]
-
-
-@pytest.fixture
-def fake_encryptor(monkeypatch):
-    from agento.framework import encryptor as enc
-    monkeypatch.setattr(enc, "_instance", _FakeEncryptor())
-    yield
-
-
 class TestEnsureStateDir:
     def test_creates_state_root_and_subpaths(self, workspace_base):
         result = ensure_state_dir("it", "dev_01", [".claude/projects", ".codex/sessions"])
@@ -64,14 +49,14 @@ class TestEnsureStateDir:
 
 
 class TestMaterializeSshIdentity:
-    def test_writes_private_key_with_600_perms(self, tmp_path, fake_encryptor):
+    def test_writes_private_key_with_600_perms(self, tmp_path):
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        overrides = {
-            "agent_view/identity/ssh_private_key": ("aes256:iv:-----BEGIN FAKE KEY-----", True),
+        resolved = {
+            "agent_view/identity/ssh_private_key": "-----BEGIN FAKE KEY-----",
         }
 
-        materialize_ssh_identity(build_dir, overrides)
+        materialize_ssh_identity(build_dir, resolved)
 
         key_path = build_dir / ".ssh" / "id_rsa"
         assert key_path.is_file()
@@ -79,28 +64,28 @@ class TestMaterializeSshIdentity:
         assert (key_path.stat().st_mode & 0o777) == 0o600
         assert (build_dir / ".ssh").stat().st_mode & 0o777 == 0o700
 
-    def test_writes_public_key_plain(self, tmp_path, fake_encryptor):
+    def test_writes_public_key_plain(self, tmp_path):
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        overrides = {
-            "agent_view/identity/ssh_public_key": ("ssh-ed25519 AAAA host", False),
+        resolved = {
+            "agent_view/identity/ssh_public_key": "ssh-ed25519 AAAA host",
         }
 
-        materialize_ssh_identity(build_dir, overrides)
+        materialize_ssh_identity(build_dir, resolved)
 
         pub_path = build_dir / ".ssh" / "id_rsa.pub"
         assert pub_path.is_file()
         assert pub_path.read_text() == "ssh-ed25519 AAAA host"
 
-    def test_writes_ssh_config_and_known_hosts(self, tmp_path, fake_encryptor):
+    def test_writes_ssh_config_and_known_hosts(self, tmp_path):
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        overrides = {
-            "agent_view/identity/ssh_config": ("Host git\n  IdentityFile ~/.ssh/id_rsa\n", False),
-            "agent_view/identity/ssh_known_hosts": ("github.com ssh-ed25519 AAAA\n", False),
+        resolved = {
+            "agent_view/identity/ssh_config": "Host git\n  IdentityFile ~/.ssh/id_rsa\n",
+            "agent_view/identity/ssh_known_hosts": "github.com ssh-ed25519 AAAA\n",
         }
 
-        materialize_ssh_identity(build_dir, overrides)
+        materialize_ssh_identity(build_dir, resolved)
 
         config_path = build_dir / ".ssh" / "config"
         known = build_dir / ".ssh" / "known_hosts"
@@ -108,7 +93,7 @@ class TestMaterializeSshIdentity:
         assert (config_path.stat().st_mode & 0o777) == 0o600
         assert "github.com" in known.read_text()
 
-    def test_does_nothing_when_no_overrides(self, tmp_path, fake_encryptor):
+    def test_does_nothing_when_no_overrides(self, tmp_path):
         build_dir = tmp_path / "build"
         build_dir.mkdir()
 
