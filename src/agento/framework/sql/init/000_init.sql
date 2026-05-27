@@ -102,7 +102,6 @@ CREATE TABLE IF NOT EXISTS oauth_token (
     agent_type       VARCHAR(20)  NOT NULL,
     label            VARCHAR(100) NOT NULL,
     credentials      MEDIUMTEXT   NULL,
-    model            VARCHAR(50)  NULL,
     token_limit      BIGINT UNSIGNED NOT NULL DEFAULT 0,
     enabled          BOOLEAN NOT NULL DEFAULT TRUE,
     status           ENUM('ok','error') NOT NULL DEFAULT 'ok',

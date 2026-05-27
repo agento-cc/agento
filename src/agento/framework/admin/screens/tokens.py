@@ -12,7 +12,7 @@ from textual.widgets import DataTable, Footer, Input, Static
 from ..widgets.confirm import ConfirmScreen
 from ..widgets.sidebar import Sidebar
 
-_TOKEN_SEARCH_KEYS = ("id", "agent_type", "label", "model", "status")
+_TOKEN_SEARCH_KEYS = ("id", "agent_type", "label", "status")
 
 
 def _fmt_when(when) -> str:
@@ -90,7 +90,6 @@ class TokenUsageScreen(ModalScreen):
             error_line = f"\nError:       {t.get('error_msg') or ''}" if status == "error" else ""
             yield Static(
                 f"Type:        {t['agent_type']}\n"
-                f"Model:       {t['model']}\n"
                 f"Status:      {status}\n"
                 f"Enabled:     {enabled}\n"
                 f"Last used:   {used_at}\n"
@@ -134,7 +133,7 @@ class TokensScreen(Screen):
         table = self.query_one("#tokens-table", DataTable)
         table.cursor_type = "row"
         table.add_columns(
-            "ID", "Type", "Label", "Model", "Status", "Last used",
+            "ID", "Type", "Label", "Status", "Last used",
             "Expires", "Used (24h)", "Free%", "Enabled",
         )
         self._load_data()
@@ -179,7 +178,6 @@ class TokensScreen(Screen):
                     str(t["id"]),
                     t["agent_type"],
                     t["label"],
-                    t["model"],
                     status,
                     _fmt_when(t.get("used_at")),
                     _fmt_when(t.get("expires_at")),
@@ -189,7 +187,7 @@ class TokensScreen(Screen):
                     key=str(t["id"]),
                 )
         else:
-            table.add_row("--", "--", "No tokens registered", "--", "--", "--", "--", "--", "--", "--")
+            table.add_row("--", "--", "No tokens registered", "--", "--", "--", "--", "--", "--")
         self._update_detail_panel()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -221,7 +219,6 @@ class TokensScreen(Screen):
             f"ID:          {token['id']}\n"
             f"Type:        {token['agent_type']}\n"
             f"Label:       {token['label']}\n"
-            f"Model:       {token['model']}\n"
             f"Status:      {status}\n"
             f"Enabled:     {enabled}\n"
             f"Last used:   {used_at}\n"

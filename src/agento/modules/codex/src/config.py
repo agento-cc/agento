@@ -330,4 +330,4 @@ class CodexConfigWriter:
             new_creds["subscription_key"] = tokens["access_token"]
 
         register_token(conn, token.agent_type, token.label, new_creds,
-                       token_limit=token.token_limit, model=token.model, logger=logger)
+                       token_limit=token.token_limit, logger=logger)

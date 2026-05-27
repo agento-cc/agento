@@ -14,7 +14,6 @@ def register_token(
     label: str,
     credentials: dict,
     token_limit: int = 0,
-    model: str | None = None,
     type: str = "oauth",
     logger: logging.Logger | None = None,
 ) -> Token:
@@ -33,9 +32,9 @@ def register_token(
         cur.execute(
             """
             INSERT INTO oauth_token
-                (agent_type, type, label, credentials, token_limit, model,
+                (agent_type, type, label, credentials, token_limit,
                  status, error_msg, expires_at)
-            VALUES (%s, %s, %s, %s, %s, %s, 'ok', NULL, %s)
+            VALUES (%s, %s, %s, %s, %s, 'ok', NULL, %s)
             ON DUPLICATE KEY UPDATE
                 type        = VALUES(type),
                 credentials = VALUES(credentials),
@@ -45,7 +44,7 @@ def register_token(
                 expires_at  = VALUES(expires_at),
                 updated_at  = NOW()
             """,
-            (agent_type.value, type, label, encrypted, token_limit, model, expires_at),
+            (agent_type.value, type, label, encrypted, token_limit, expires_at),
         )
         was_insert = bool(cur.lastrowid)
         if was_insert:
@@ -57,7 +56,7 @@ def register_token(
         row = cur.fetchone()
     action = "Registered" if was_insert else "Updated"
     if logger:
-        logger.info(f"{action} token: id={token_id} label={label} type={type} model={model}")
+        logger.info(f"{action} token: id={token_id} label={label} type={type}")
     return Token.from_row(row)
 
 

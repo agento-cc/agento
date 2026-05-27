@@ -100,7 +100,6 @@ If you pass an inline value (`--with-api-key sk-XXX`), argparse rejects it with 
 ### Common options
 
 - `--token-limit N` — usage limit (0 = unlimited)
-- `--model MODEL` — model override (e.g. `claude-sonnet-4-20250514`)
 
 `register` also resets `status='ok'` and clears any prior `error_msg`, so re-running it on an existing label is a valid recovery path.
 

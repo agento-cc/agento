@@ -42,7 +42,6 @@ def _make_token(
         label=label,
         credentials={"subscription_key": "sk-existing"},
         token_limit=0,
-        model=None,
         enabled=enabled,
         status=TokenStatus.OK,
         priority=0,

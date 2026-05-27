@@ -215,7 +215,6 @@ class TokenRunner(ABC):
             type="oauth",
             label="override",
             credentials=credentials,
-            model=None,
             token_limit=0,
             enabled=True,
             status=TokenStatus.OK,

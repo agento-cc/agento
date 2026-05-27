@@ -25,7 +25,6 @@ def _make_token(agent_type: AgentProvider = AgentProvider.CODEX, token_id: int =
         type="oauth",
         label="client-it@example.com",
         credentials={"subscription_key": "sk-broken"},
-        model=None,
         token_limit=0,
         enabled=True,
         status=TokenStatus.ERROR,
@@ -111,7 +110,7 @@ class TestWithAccessToken:
         args = argparse.Namespace(
             agent_type="codex", label="my-at",
             with_api_key=False, with_access_token=True,
-            token_limit=0, model=None,
+            token_limit=0,
         )
         monkeypatch.setattr("sys.stdin", _stdin_with("eyJ.payload.sig\n"))
         strategy = MagicMock()
@@ -135,7 +134,7 @@ class TestWithApiKey:
         args = argparse.Namespace(
             agent_type="codex", label="my-ak",
             with_api_key=True, with_access_token=False,
-            token_limit=0, model=None,
+            token_limit=0,
         )
         monkeypatch.setattr("sys.stdin", _stdin_with("sk-X\n"))
         strategy = MagicMock()
@@ -153,7 +152,7 @@ class TestWithApiKey:
         args = argparse.Namespace(
             agent_type="claude", label="my-ak",
             with_api_key=True, with_access_token=False,
-            token_limit=0, model=None,
+            token_limit=0,
         )
         monkeypatch.setattr("sys.stdin", _stdin_with("sk-ant-X\n"))
         strategy = MagicMock()
@@ -227,7 +226,7 @@ class TestMaskedEchoToStderr:
         args = argparse.Namespace(
             agent_type="codex", label="lbl",
             with_api_key=True, with_access_token=False,
-            token_limit=0, model=None,
+            token_limit=0,
         )
         monkeypatch.setattr("sys.stdin", _stdin_with("sk-piped-XYZ\n"))
         strategy = MagicMock()
@@ -297,7 +296,7 @@ class TestTokenListShowsTypeAndPriority:
         )
         return Token(
             id=id_, agent_type=AgentProvider.CODEX, type=type_, label=f"t{id_}",
-            credentials=None, model=None, token_limit=0, enabled=True,
+            credentials=None, token_limit=0, enabled=True,
             status=TokenStatus.OK, priority=priority, error_msg=None,
             expires_at=None, used_at=None,
             created_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1),
@@ -351,7 +350,6 @@ class TestTokenRegisterEventCarriesType:
             type=type_,
             label="my-label",
             credentials={"api_key": "sk-X"},
-            model=None,
             token_limit=0,
             enabled=True,
             status=TokenStatus.OK,
@@ -392,7 +390,6 @@ class TestTokenRegisterEventCarriesType:
             with_api_key="sk-X",
             with_access_token=None,
             token_limit=0,
-            model=None,
         )
         TokenRegisterCommand().execute(args)
 
@@ -431,7 +428,6 @@ class TestTokenRegisterEventCarriesType:
             with_api_key=None,
             with_access_token=None,
             token_limit=0,
-            model=None,
         )
         TokenRegisterCommand().execute(args)
 

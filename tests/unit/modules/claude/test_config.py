@@ -19,7 +19,6 @@ def _make_token(credentials: dict) -> Token:
         type="oauth",
         label="test",
         credentials=credentials,
-        model=None,
         token_limit=0,
         enabled=True,
         status=TokenStatus.OK,

@@ -23,7 +23,6 @@ class Token:
     type: str
     label: str
     credentials: dict | None
-    model: str | None
     token_limit: int
     enabled: bool
     status: TokenStatus
@@ -42,7 +41,6 @@ class Token:
             type=row.get("type") or "oauth",
             label=row["label"],
             credentials=_decrypt_credentials(row.get("credentials")),
-            model=row.get("model"),
             token_limit=row["token_limit"],
             enabled=bool(row["enabled"]),
             status=TokenStatus(row.get("status", "ok") or "ok"),

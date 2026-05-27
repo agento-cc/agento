@@ -19,7 +19,6 @@ def _make_token(credentials: dict) -> Token:
         type="oauth",
         label="test",
         credentials=credentials,
-        model=None,
         token_limit=0,
         enabled=True,
         status=TokenStatus.OK,
@@ -162,7 +161,6 @@ class TestWriteCredentials:
             type=type_,
             label=kwargs.get("label", "test"),
             credentials=credentials,
-            model=None,
             token_limit=0,
             enabled=True,
             status=TokenStatus.OK,
@@ -318,7 +316,6 @@ class TestCaptureRefreshedCredentials:
         token.agent_type = AgentProvider.CODEX
         token.label = "my-codex"
         token.token_limit = 0
-        token.model = None
         return token
 
     def _make_typed_token(self, type_: str, credentials: dict):
@@ -328,7 +325,6 @@ class TestCaptureRefreshedCredentials:
             type=type_,
             label="test",
             credentials=credentials,
-            model=None,
             token_limit=0,
             enabled=True,
             status=TokenStatus.OK,

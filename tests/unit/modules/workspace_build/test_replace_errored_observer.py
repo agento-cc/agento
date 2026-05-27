@@ -49,7 +49,6 @@ def _make_token(token_id: int = 2, creds: dict | None = None) -> Token:
         type="oauth",
         label="mklauza-codex",
         credentials=creds or {"subscription_key": "sk-healthy"},
-        model=None,
         token_limit=0,
         enabled=True,
         status=TokenStatus.OK,

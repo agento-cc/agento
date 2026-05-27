@@ -57,7 +57,6 @@ class TestToken:
             "agent_type": "claude",
             "label": "prod-1",
             "credentials": _CIPHERTEXT,
-            "model": "claude-sonnet-4-20250514",
             "token_limit": 100000,
             "enabled": 1,
             "status": "ok",
@@ -74,7 +73,6 @@ class TestToken:
         assert token.agent_type == AgentProvider.CLAUDE
         assert token.label == "prod-1"
         assert token.credentials == _CREDS
-        assert token.model == "claude-sonnet-4-20250514"
         assert token.token_limit == 100000
         assert token.enabled is True
         assert token.status == TokenStatus.OK
@@ -88,7 +86,6 @@ class TestToken:
             "agent_type": "codex",
             "label": "codex-1",
             "credentials": None,
-            "model": None,
             "token_limit": 0,
             "enabled": 0,
             "status": "error",
@@ -104,7 +101,6 @@ class TestToken:
         assert token.agent_type == AgentProvider.CODEX
         assert token.enabled is False
         assert token.token_limit == 0
-        assert token.model is None
         assert token.status == TokenStatus.ERROR
         assert token.error_msg == "OAuth token expired"
         assert token.expires_at is None
@@ -125,7 +121,6 @@ class TestToken:
 
         token = Token.from_row(row)
 
-        assert token.model is None
         assert token.status == TokenStatus.OK
         assert token.error_msg is None
         assert token.expires_at is None
@@ -146,7 +141,7 @@ class TestTokenTypeAndPriority:
             "id": 1, "agent_type": "codex", "label": "x",
             "type": "codex_access_token", "priority": 5,
             "credentials": None,  # _decrypt_credentials handles None
-            "model": None, "token_limit": 0, "enabled": True,
+            "token_limit": 0, "enabled": True,
             "status": "ok", "error_msg": None,
             "expires_at": None, "used_at": None,
             "created_at": datetime(2026, 1, 1),
@@ -160,7 +155,7 @@ class TestTokenTypeAndPriority:
         """Defensive: if a row pre-dates migration 022, treat as oauth/priority=0."""
         row = {
             "id": 1, "agent_type": "codex", "label": "x",
-            "credentials": None, "model": None, "token_limit": 0, "enabled": True,
+            "credentials": None, "token_limit": 0, "enabled": True,
             "status": "ok", "error_msg": None, "expires_at": None, "used_at": None,
             "created_at": datetime(2026, 1, 1), "updated_at": datetime(2026, 1, 1),
         }
@@ -177,7 +172,7 @@ class TestTokenTypeAndPriority:
         row = {
             "id": 1, "agent_type": "codex", "label": "x",
             "type": None, "priority": None,
-            "credentials": None, "model": None, "token_limit": 0, "enabled": True,
+            "credentials": None, "token_limit": 0, "enabled": True,
             "status": "ok", "error_msg": None, "expires_at": None, "used_at": None,
             "created_at": datetime(2026, 1, 1), "updated_at": datetime(2026, 1, 1),
         }

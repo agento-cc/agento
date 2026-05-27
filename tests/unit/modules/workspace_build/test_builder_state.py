@@ -221,7 +221,7 @@ def _token(agent_type, credentials):
     now = datetime.now(UTC)
     return Token(
         id=1, agent_type=agent_type, type="oauth", label="t", credentials=credentials,
-        model=None, token_limit=0, enabled=True,
+        token_limit=0, enabled=True,
         status=TokenStatus.OK, priority=0, error_msg=None, expires_at=None, used_at=None,
         created_at=now, updated_at=now,
     )

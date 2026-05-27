@@ -77,12 +77,12 @@ Token list with 24-hour usage statistics.
 
 | Key | Action |
 |-----|--------|
-| `/` | Focus search (filters by ID, type, label, model) |
+| `/` | Focus search (filters by ID, type, label, status) |
 | `Enter` or double-click | Open token detail popup |
 | `s` | Set selected token as primary (with confirmation) |
 | `x` | Deregister token (with confirmation) |
 
-**Detail panel** shows type, model, primary status, enabled status, token limit, usage, and free percentage.
+**Detail panel** shows type, status, enabled status, token limit, usage, and free percentage.
 
 ### Config
 

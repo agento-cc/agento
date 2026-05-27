@@ -225,7 +225,7 @@ def _truncate_tables():
 # Mocks
 # ---------------------------------------------------------------------------
 
-def insert_primary_token(agent_type: str = "claude", model: str | None = None) -> int:
+def insert_primary_token(agent_type: str = "claude") -> int:
     """Insert an enabled oauth_token and bind agent_view/provider at the default
     scope. Returns the token id. The name is kept for backward-compat with older
     tests; there is no primary concept anymore — selection is LRU over healthy
@@ -240,10 +240,10 @@ def insert_primary_token(agent_type: str = "claude", model: str | None = None) -
             cur.execute(
                 """
                 INSERT INTO oauth_token
-                    (agent_type, label, credentials, enabled, status, model)
-                VALUES (%s, %s, %s, TRUE, 'ok', %s)
+                    (agent_type, label, credentials, enabled, status)
+                VALUES (%s, %s, %s, TRUE, 'ok')
                 """,
-                (agent_type, f"test-{agent_type}", encrypted, model),
+                (agent_type, f"test-{agent_type}", encrypted),
             )
             token_id = cur.lastrowid
             cur.execute(
@@ -282,7 +282,7 @@ def mock_claude():
 @pytest.fixture
 def mock_codex():
     """Patch TokenCodexRunner.run to return a successful result + insert primary token."""
-    insert_primary_token("codex", "o3")
+    insert_primary_token("codex")
     result = ClaudeResult(
         raw_output="Cześć! W czym mogę pomóc?",
         input_tokens=6374,

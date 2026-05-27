@@ -39,7 +39,6 @@ def _token_from_event(event) -> Token:
         type=getattr(event, "type", None) or "oauth",
         label=getattr(event, "label", ""),
         credentials=getattr(event, "credentials", {}),
-        model=None,
         token_limit=0,
         enabled=True,
         status=TokenStatus.OK,

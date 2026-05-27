@@ -50,8 +50,6 @@ class TokenRegisterCommand:
         parser.add_argument("agent_type", choices=["claude", "codex"])
         parser.add_argument("label")
         parser.add_argument("--token-limit", type=int, default=0, dest="token_limit")
-        parser.add_argument("--model", type=str, default=None,
-                           help="Model name (e.g. claude-sonnet-4-20250514, o3)")
         mode = parser.add_mutually_exclusive_group()
         mode.add_argument(
             "--with-api-key", dest="with_api_key", action="store_true",
@@ -84,13 +82,11 @@ class TokenRegisterCommand:
                 label=args.label,
                 credentials=credentials,
                 token_limit=args.token_limit,
-                model=args.model,
                 type=token_type,
                 logger=logger,
             )
             conn.commit()
-            model_info = f" model={token.model}" if token.model else ""
-            print(f"Registered token: id={token.id} label={token.label} type={token.type}{model_info}")
+            print(f"Registered token: id={token.id} label={token.label} type={token.type}")
         finally:
             conn.close()
 
@@ -229,7 +225,6 @@ class TokenRefreshCommand:
                 label=token.label,
                 credentials=credentials,
                 token_limit=token.token_limit,
-                model=token.model,
                 logger=logger,
             )
             conn.commit()
@@ -339,7 +334,6 @@ class TokenListCommand:
                     "type": t.type,
                     "priority": t.priority,
                     "label": t.label,
-                    "model": t.model,
                     "status": t.status.value,
                     "error_msg": t.error_msg,
                     "used_at": t.used_at.isoformat() if t.used_at else None,
@@ -360,7 +354,6 @@ class TokenListCommand:
         for t in tokens:
             s = usage_map.get(t.id)
             used = s.total_tokens if s else 0
-            model_str = f"model={t.model}" if t.model else "model=-"
             if t.token_limit > 0:
                 pct_free = round((t.token_limit - used) / t.token_limit * 100, 1)
                 usage_str = f"used={used}/{t.token_limit} ({pct_free}% free)"
@@ -372,7 +365,7 @@ class TokenListCommand:
             type_str = f"type={t.type}"
             prio_str = f"priority={t.priority}"
             line = (
-                f"  [{t.id}] {t.agent_type.value:8} {t.label:20} {model_str:30} "
+                f"  [{t.id}] {t.agent_type.value:8} {t.label:20} "
                 f"{type_str:28} {prio_str:12} "
                 f"{usage_str}  {status_str}  {used_at_str}  {expires_str}"
             )

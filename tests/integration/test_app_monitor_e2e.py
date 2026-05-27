@@ -404,7 +404,7 @@ class TestAppMonitorE2E:
         self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
     ):
         sender = _patch_app_monitor(monkeypatch)
-        insert_primary_token("codex", "o3")
+        insert_primary_token("codex")
         ws_id = _insert_workspace("acme")
         av_id = _insert_agent_view(ws_id, "developer")
         job_id = _insert_job_with_agent_view(av_id, max_attempts=2, reference_id="AI-104")

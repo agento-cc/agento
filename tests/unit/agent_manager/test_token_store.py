@@ -53,7 +53,6 @@ _SAMPLE_ROW = {
     "type": "oauth",
     "label": "prod-1",
     "credentials": _ENCRYPTED_BLOB,
-    "model": "claude-sonnet-4-20250514",
     "token_limit": 100000,
     "priority": 0,
     "enabled": True,
@@ -353,7 +352,7 @@ class TestRegisterTokenType:
         insert_sql = insert_call[0][0]
         params = insert_call[0][1]
         assert "type" in insert_sql
-        # Param tuple: (agent_type, type, label, encrypted, token_limit, model, expires_at)
+        # Param tuple: (agent_type, type, label, encrypted, token_limit, expires_at)
         assert params[1] == "oauth"
 
     def test_register_token_persists_type_codex_access_token(self):
@@ -363,7 +362,7 @@ class TestRegisterTokenType:
 
         insert_call = cursor.execute.call_args_list[0]
         params = insert_call[0][1]
-        # Param tuple: (agent_type, type, label, encrypted, token_limit, model, expires_at)
+        # Param tuple: (agent_type, type, label, encrypted, token_limit, expires_at)
         assert params[1] == "codex_access_token"
 
 
