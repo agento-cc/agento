@@ -475,7 +475,7 @@ class TokenResetCommand:
 
     @property
     def shortcut(self) -> str:
-        return "to:rs"
+        return "to:res"
 
     @property
     def help(self) -> str:

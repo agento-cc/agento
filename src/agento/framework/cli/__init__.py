@@ -212,7 +212,10 @@ def _format_help(commands: dict) -> str:
     lines.append("Run 'agento <command> --help' for details on a specific command.")
     lines.append("")
     lines.append("Tip: Use shortcuts for faster typing (e.g. 'co:se' for 'config:set',")
-    lines.append("'mo:li' for 'module:list'). Pattern: first 2 letters of each segment.")
+    lines.append("'mo:li' for 'module:list'). Pattern: first 2 letters of each colon-segment")
+    lines.append("(e.g. 'wo:bu' for 'workspace:build'). Hyphenated segments use each part's")
+    lines.append("initial ('to:sp' for 'token:set-priority'); some namespaces use short forms")
+    lines.append("('tl' for tool, 'av' for agent_view); colliding segments extend ('to:res').")
     lines.append("")
     return "\n".join(lines)
 

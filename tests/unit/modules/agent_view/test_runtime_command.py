@@ -56,7 +56,7 @@ class TestAgentViewRuntimeCommand:
     def test_properties(self):
         cmd = AgentViewRuntimeCommand()
         assert cmd.name == "agent_view:runtime"
-        assert cmd.shortcut == "av:rt"
+        assert cmd.shortcut == "av:ru"
 
     @patch("agento.framework.db.get_connection_or_exit")
     @patch("agento.framework.cli.runtime._load_framework_config")

@@ -11,7 +11,7 @@ class WorkspaceBuildCommand:
 
     @property
     def shortcut(self) -> str:
-        return "ws:b"
+        return "wo:bu"
 
     @property
     def help(self) -> str:

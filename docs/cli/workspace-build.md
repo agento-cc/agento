@@ -17,7 +17,7 @@ agento workspace:build --all
 agento workspace:build --all --force
 ```
 
-Shortcut: `ws:b`
+Shortcut: `wo:bu`
 
 ### Options
 
@@ -143,7 +143,7 @@ agento workspace:build-status
 agento workspace:build-status --agent-view developer
 ```
 
-Shortcut: `ws:bs`
+Shortcut: `wo:bs`
 
 ### Options
 

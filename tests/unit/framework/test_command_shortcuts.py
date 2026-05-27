@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+from pathlib import Path
 
 import pytest
 
+import agento
 from agento.framework.commands import (
     clear,
     get_commands,
     get_shortcuts,
+    is_valid_shortcut,
     register_command,
     resolve_shortcut,
 )
+from agento.framework.module_loader import import_class
 
 
 class _StubCommand:
@@ -103,6 +108,87 @@ class TestShortcutRegistration:
 
         assert get_shortcuts() == {"co:se": "config:set", "co:ge": "config:get"}
         assert len(get_commands()) == 3
+
+
+def _all_real_commands() -> list:
+    """Collect every registered command (framework + core modules) without a DB.
+
+    Mirrors how the CLI and bootstrap populate the registry, so the compliance
+    test sees the same (name, shortcut) pairs a user would.
+    """
+    from agento.framework.cli import _register_framework_commands
+
+    clear()
+    _register_framework_commands()
+    instances = list(get_commands().values())
+
+    modules_root = Path(agento.__file__).parent / "modules"
+    for di_path in sorted(modules_root.glob("*/di.json")):
+        data = json.loads(di_path.read_text())
+        for decl in data.get("commands", []):
+            cls = import_class(di_path.parent, decl["class"])
+            instances.append(cls())
+    clear()
+    return instances
+
+
+class TestShortcutPatternCompliance:
+    """Guards: every shipped shortcut follows the documented derivation rule."""
+
+    def test_every_shortcut_is_derivable(self):
+        offenders = [
+            (cmd.name, cmd.shortcut)
+            for cmd in _all_real_commands()
+            if cmd.shortcut and not is_valid_shortcut(cmd.name, cmd.shortcut)
+        ]
+        assert offenders == [], f"Shortcuts violating the documented pattern: {offenders}"
+
+    def test_shortcuts_are_globally_unique(self):
+        seen: dict[str, str] = {}
+        collisions: list[tuple[str, str, str]] = []
+        for cmd in _all_real_commands():
+            if not cmd.shortcut:
+                continue
+            if cmd.shortcut in seen:
+                collisions.append((cmd.shortcut, seen[cmd.shortcut], cmd.name))
+            else:
+                seen[cmd.shortcut] = cmd.name
+        assert collisions == [], f"Duplicate shortcuts: {collisions}"
+
+
+class TestIsValidShortcut:
+    @pytest.mark.parametrize(
+        "name,shortcut",
+        [
+            ("config:set", "co:se"),
+            ("workspace:build", "wo:bu"),
+            ("workspace:build-status", "wo:bs"),
+            ("token:set-priority", "to:sp"),
+            ("token:mark-error", "to:me"),
+            ("token:reset", "to:res"),
+            ("tool:list", "tl:li"),
+            ("agent_view:runtime", "av:ru"),
+            ("agent_view:identity:show", "av:id:sh"),
+            ("run", "ru"),
+            ("consumer", ""),
+        ],
+    )
+    def test_valid(self, name, shortcut):
+        assert is_valid_shortcut(name, shortcut)
+
+    @pytest.mark.parametrize(
+        "name,shortcut",
+        [
+            ("workspace:build", "ws:b"),
+            ("workspace:build-status", "ws:bs"),
+            ("token:reset", "to:rs"),
+            ("agent_view:runtime", "av:rt"),
+            ("config:set", "c:se"),
+            ("config:set", "co:se:x"),
+        ],
+    )
+    def test_invalid(self, name, shortcut):
+        assert not is_valid_shortcut(name, shortcut)
 
 
 class TestResolveShortcut:

@@ -24,7 +24,7 @@ class TestWorkspaceBuildCommand:
     def test_properties(self):
         cmd = WorkspaceBuildCommand()
         assert cmd.name == "workspace:build"
-        assert cmd.shortcut == "ws:b"
+        assert cmd.shortcut == "wo:bu"
         assert cmd.help
 
     def test_configure_adds_mutually_exclusive_args(self):
@@ -104,5 +104,5 @@ class TestWorkspaceBuildStatusCommand:
     def test_properties(self):
         cmd = WorkspaceBuildStatusCommand()
         assert cmd.name == "workspace:build-status"
-        assert cmd.shortcut == "ws:bs"
+        assert cmd.shortcut == "wo:bs"
         assert cmd.help

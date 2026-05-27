@@ -22,7 +22,7 @@ class AgentViewRuntimeCommand:
 
     @property
     def shortcut(self) -> str:
-        return "av:rt"
+        return "av:ru"
 
     @property
     def help(self) -> str:
