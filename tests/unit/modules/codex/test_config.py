@@ -204,10 +204,29 @@ class TestWriteCredentials:
         assert not (work_dir / ".codex" / "auth.json").exists()
         assert "raw_auth" in caplog.text
 
-    def test_openai_api_key_writes_no_auth_json(self, writer, work_dir):
+    def test_openai_api_key_invokes_codex_login_with_stdin(self, writer, work_dir, monkeypatch):
+        import subprocess
+        from unittest.mock import MagicMock
+        fake_run = MagicMock(return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""))
+        monkeypatch.setattr("agento.modules.codex.src.config.subprocess.run", fake_run)
+
         token = self._make_token("openai_api_key", {"api_key": "sk-X"})
         writer.write_credentials(work_dir, token)
-        assert not (work_dir / ".codex" / "auth.json").exists()
+
+        fake_run.assert_called_once()
+        call_args = fake_run.call_args
+        assert call_args[0][0] == ["codex", "login", "--with-api-key"]
+        assert call_args.kwargs.get("input") == "sk-X"
+        env = call_args.kwargs.get("env") or {}
+        assert env.get("HOME") == str(work_dir)
+        assert "sk-X" not in " ".join(call_args[0][0])
+
+    def test_openai_api_key_raises_when_missing(self, writer, work_dir):
+        from agento.framework.agent_manager.errors import AuthenticationError
+        token = self._make_token("openai_api_key", {})
+        with pytest.raises(AuthenticationError, match="openai_api_key"):
+            writer.write_credentials(work_dir, token)
 
     def test_codex_access_token_invokes_codex_login_with_stdin(self, writer, work_dir, monkeypatch):
         import subprocess
@@ -430,9 +449,9 @@ class TestCredentialEnv:
         token = self._typed_token("codex_access_token", {"access_token": "eyJ.x.y"})
         assert writer.credential_env(token) == {}
 
-    def test_openai_api_key_returns_env(self, writer):
+    def test_openai_api_key_returns_empty_env(self, writer):
         token = self._typed_token("openai_api_key", {"api_key": "sk-X"})
-        assert writer.credential_env(token) == {"OPENAI_API_KEY": "sk-X"}
+        assert writer.credential_env(token) == {}
 
     def test_openai_api_key_missing_raises(self, writer):
         token = self._typed_token("openai_api_key", {})

@@ -4,10 +4,10 @@ Host-side LOCAL command. Two-step docker exec:
 1. Query cron for a full run profile via ``agent_view:prepare-run`` —
    resolves a token from the LRU pool, materializes the per-run artifacts
    dir (same path the consumer uses for jobs), and returns the unified CLI
-   command + a possibly-non-empty ``env`` dict for API-key credential
-   delivery.
+   command + a possibly-non-empty ``env`` dict for credentials that must be
+   delivered at runtime.
 2. Exec into sandbox with HOME=baked-build, cwd=per-run artifacts, running
-   the command cron told us to run. API-key env values are injected via
+   the command cron told us to run. Runtime env values are injected via
    **name-only** ``-e KEY`` so the secret never appears in argv/``ps``;
    docker reads the value from the parent's environment.
 
@@ -103,8 +103,8 @@ class RunCommand:
             )
             sys.exit(1)
 
-        # API-key env (e.g. ANTHROPIC_API_KEY) delivery — name-only -e so the
-        # value never lands in argv. Values come from the cron-side
+        # Runtime secret env (e.g. ANTHROPIC_API_KEY) delivery — name-only -e
+        # so the value never lands in argv. Values come from the cron-side
         # ConfigWriter.credential_env hook, identical to the consumer's path.
         secret_env: dict[str, str] = runtime.get("env") or {}
         env_args: list[str] = []
@@ -158,8 +158,8 @@ def _fetch_runtime(
 
     Calls ``agent_view:prepare-run`` so the host gets the same token-pool +
     materialization the consumer's jobs use — including the resolved ``env``
-    dict for API-key credential delivery (OAuth rides the baked HOME=build
-    dir; ``env`` is ``{}`` in that case).
+    dict for credentials that require runtime env delivery. Credentials
+    materialized into the baked HOME=build dir yield ``env={}``.
     """
     cmd = [
         "docker", "compose", *compose_flags,

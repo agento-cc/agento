@@ -289,13 +289,13 @@ class TestTokenCodexRunner:
         )
         assert runner._build_env(token) == {}
 
-    def test_build_env_openai_api_key(self):
+    def test_build_env_openai_api_key_returns_empty(self):
         runner = TokenCodexRunner(dry_run=True)
         token = self._make_token(
             type_="openai_api_key",
             credentials={"api_key": "sk-X"},
         )
-        assert runner._build_env(token) == {"OPENAI_API_KEY": "sk-X"}
+        assert runner._build_env(token) == {}
 
     def test_build_env_codex_access_token_returns_empty(self):
         runner = TokenCodexRunner(dry_run=True)
@@ -553,7 +553,7 @@ class TestSubprocessTimeout:
 
 
 class TestCredentialsOverride:
-    """Verify that credentials_override takes precedence over DB pool resolution."""
+    """Verify explicit token/credential overrides take precedence over DB resolution."""
 
     def test_override_skips_db(self, agent_config):
         stream_output = '{"type": "result", "result": "ok", "usage": {"input_tokens": 10, "output_tokens": 5}}\n'
@@ -572,6 +572,38 @@ class TestCredentialsOverride:
         runner.run("test")
 
         runner._resolve_token_from_pool.assert_not_called()
+
+    def test_token_override_preserves_token_type_and_id(self, agent_config):
+        from .conftest import make_token
+
+        token = make_token(
+            id=10,
+            agent_type=AgentProvider.CLAUDE,
+            type="anthropic_api_key",
+            credentials={"api_key": "sk-ant-X"},
+        )
+        stream = '{"type": "result", "result": "ok", "usage": {"input_tokens": 1, "output_tokens": 1}}\n'
+
+        runner = TokenClaudeRunner(
+            config=agent_config,
+            dry_run=False,
+            token_override=token,
+        )
+        runner._resolve_token_from_pool = MagicMock()
+        runner._record_usage = MagicMock()
+        captured_env = {}
+
+        def _fake_execute(_cmd, env):
+            captured_env.update(env)
+            return _make_completed_process(stdout=stream)
+
+        runner._execute_process = MagicMock(side_effect=_fake_execute)
+
+        runner.run("test")
+
+        runner._resolve_token_from_pool.assert_not_called()
+        assert captured_env["ANTHROPIC_API_KEY"] == "sk-ant-X"
+        assert runner._record_usage.call_args.args[0] is token
 
     def test_falls_back_to_db_when_no_override(self, agent_config):
         from .conftest import make_token

@@ -34,6 +34,7 @@ class TokenRunner(ABC):
         config: AgentManagerConfig | None = None,
         timeout_seconds: int = 1200,
         model_override: str | None = None,
+        token_override: Token | None = None,
         credentials_override: dict | None = None,
     ):
         self.working_dir = working_dir
@@ -43,6 +44,7 @@ class TokenRunner(ABC):
         self.config = config or AgentManagerConfig()
         self.timeout_seconds = timeout_seconds
         self.model_override = model_override
+        self.token_override = token_override
         self.credentials_override = credentials_override
         self.pid_callback: Callable[[int], None] | None = None
         self.session_id_callback: Callable[[str], None] | None = None
@@ -194,7 +196,9 @@ class TokenRunner(ABC):
         self, model: str | None,
     ) -> tuple[Token | None, dict[str, str], str | None]:
         """Shared setup: resolve active token from DB, build env, resolve model."""
-        if self.credentials_override is not None:
+        if self.token_override is not None:
+            token = self.token_override
+        elif self.credentials_override is not None:
             token = self._make_override_token(self.credentials_override)
         else:
             token = self._resolve_token_from_pool()

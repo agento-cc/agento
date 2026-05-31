@@ -362,7 +362,7 @@ class TestRunJob:
             model_override=None,
             working_dir=None,
             home_dir=None,
-            credentials_override={"subscription_key": "sk-test"},
+            token_override=self._token_resolver_mock.resolve.return_value,
         )
         assert isinstance(result, _JobResult)
         assert "subtype=" in result.summary

@@ -101,13 +101,15 @@ class CodexConfigWriter:
     def credential_env(self, token: Token) -> dict[str, str]:
         if token.type == "openai_api_key":
             credentials = token.credentials or {}
-            api_key = credentials.get("api_key")
-            if not api_key:
+            if not credentials.get("api_key"):
                 raise ValueError(
                     f"Token id={token.id} label={token.label!r} is typed "
                     "'openai_api_key' but credentials['api_key'] is missing or empty."
                 )
-            return {"OPENAI_API_KEY": api_key}
+            # Codex CLI does not treat OPENAI_API_KEY as runtime auth in a
+            # clean HOME. API-key tokens are materialized into auth.json by
+            # write_credentials(), same as access-token/OAuth credentials.
+            return {}
         # oauth + codex_access_token both rely on .codex/auth.json on disk.
         return {}
 
@@ -117,8 +119,9 @@ class CodexConfigWriter:
         - codex_access_token: shell out to ``codex login --with-access-token``
           with ``HOME=<build_dir>`` and the JWT on stdin so Codex itself
           writes the correct auth.json shape.
-        - openai_api_key: nothing to materialize on disk; runner injects
-          OPENAI_API_KEY via env.
+        - openai_api_key: shell out to ``codex login --with-api-key`` with
+          ``HOME=<build_dir>`` and the API key on stdin so Codex writes the
+          auth.json shape it requires.
         - oauth (default): write the captured raw_auth verbatim to
           ``.codex/auth.json``.
         """
@@ -133,6 +136,13 @@ class CodexConfigWriter:
             return
 
         if token.type == "openai_api_key":
+            api_key = (token.credentials or {}).get("api_key")
+            if not api_key:
+                raise AuthenticationError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'openai_api_key' but credentials['api_key'] is missing or empty."
+                )
+            self._login_with_api_key(build_dir, api_key)
             return
 
         # oauth (default)
@@ -184,6 +194,42 @@ class CodexConfigWriter:
             )
         logger.debug(
             "Materialized Codex access-token auth.json via codex login (HOME=%s)",
+            build_dir,
+        )
+
+    def _login_with_api_key(self, build_dir: Path, api_key: str) -> None:
+        """Run `codex login --with-api-key` with HOME=<build_dir>; key is
+        piped via stdin so it never appears in argv or env."""
+        build_dir.mkdir(parents=True, exist_ok=True)
+        env = {**os.environ, "HOME": str(build_dir)}
+        try:
+            result = subprocess.run(
+                ["codex", "login", "--with-api-key"],
+                input=api_key, env=env, text=True,
+                capture_output=True, check=False,
+                timeout=30,
+            )
+        except FileNotFoundError as exc:
+            raise AuthenticationError(
+                "Codex CLI not found on PATH; cannot materialize API-key auth.json."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise AuthenticationError(
+                "codex login --with-api-key timed out after 30s."
+            ) from exc
+
+        if result.returncode != 0:
+            stderr_snippet = (result.stderr or "")[:300]
+            logger.warning(
+                "codex login --with-api-key exited %d: %s",
+                result.returncode, stderr_snippet,
+            )
+            raise AuthenticationError(
+                f"codex login --with-api-key failed (exit {result.returncode}): "
+                f"{stderr_snippet}"
+            )
+        logger.debug(
+            "Materialized Codex API-key auth.json via codex login (HOME=%s)",
             build_dir,
         )
 

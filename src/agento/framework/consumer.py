@@ -473,7 +473,7 @@ class Consumer:
                 model_override=model_override,
                 working_dir=str(artifacts_dir) if artifacts_dir else None,
                 home_dir=str(current_build) if current_build else None,
-                credentials_override=token.credentials,
+                token_override=token,
             )
             runner.pid_callback = lambda pid: self._save_pid(job.id, pid)
             # Persist session_id to both the DB and the in-memory job — the

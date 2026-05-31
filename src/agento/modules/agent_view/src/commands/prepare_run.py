@@ -4,10 +4,10 @@ Composes the same pre-spawn pipeline the consumer uses (``TokenResolver`` +
 ``materialize_run_workspace``) and returns the result as JSON so the host
 can ``docker exec`` into the sandbox with HOME/cwd/env already resolved.
 
-The ``env`` field carries any API-key credentials (delivered via env, not on
-disk). The host must inject these via name-only ``-e KEY`` (no ``=value``)
-so the secret never appears in ``ps``/argv — same stance as the recent
-stdin-only-secrets token:register hardening.
+The ``env`` field carries credentials only for providers whose ConfigWriter
+chooses runtime env delivery. The host must inject these via name-only
+``-e KEY`` (no ``=value``) so the secret never appears in ``ps``/``argv`` —
+same stance as the recent stdin-only-secrets token:register hardening.
 """
 from __future__ import annotations
 
