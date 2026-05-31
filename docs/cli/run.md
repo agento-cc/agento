@@ -53,11 +53,11 @@ Exit code of the agent CLI is propagated to the shell, so headless mode composes
 
 ## What It Does
 
-1. Calls `docker compose exec -T cron agento agent_view:runtime <code>` to resolve the runtime profile. When a prompt is provided, the host passes `--prompt <prompt>` so the cron container can also return the provider-specific **headless command**. The command is built by the `CliInvoker` the agent module registered in `di.json` — the host code itself is agent-agnostic.
+1. Calls `docker compose exec -T cron agento agent_view:prepare-run <code>` to run the **same pre-spawn pipeline the consumer runs for a real job**: resolves a token from the LRU pool (stamping `used_at`), materializes a per-run artifacts directory under `workspace/artifacts/<workspace>/<agent_view>/run/`, and asks the provider's registered `ConfigWriter`/`CliInvoker` for the unified CLI **command** plus any **env-delivered credentials** (API-key tokens only — OAuth rides the baked HOME). When a prompt is provided, the host passes `--prompt <prompt>` so cron returns the provider-specific **headless** command instead of the interactive one. The host code itself stays agent-agnostic.
 2. Validates that a build exists on the host at `workspace/build/<workspace>/<agent_view>/current/`.
-3. Executes the returned command inside `sandbox`:
-   - **Interactive:** `os.execvp("docker", ["compose", "-f", …, "exec", "-it", "-e", "HOME=…", "-e", "TERM=…", "-w", …, "sandbox", *interactive_command])` — replaces the current process so the TTY transfer is clean.
-   - **Headless:** `subprocess.run(["docker", "compose", "-f", …, "exec", "-T", "-e", "HOME=…", "-w", …, "sandbox", *headless_command], stdin=subprocess.DEVNULL)` — waits for completion and propagates the exit code.
+3. Executes the returned command inside `sandbox` with `HOME` = build dir and `-w` (cwd) = per-run artifacts dir (mirroring the consumer's job layout). Any API-key values from the `env` field are injected via docker's **name-only** `-e KEY` form so the secret never appears in `ps`/argv — the value is read from the parent process's environment:
+   - **Interactive:** `os.environ.update(env); os.execvp("docker", [..., "exec", "-it", "-u", "agent", "-e", "HOME=…", "-e", "TERM=…", *[("-e", k) for k in env], "-w", <working_dir>, "sandbox", *command])` — replaces the current process so the TTY transfer is clean.
+   - **Headless:** `subprocess.run([..., "exec", "-T", "-u", "agent", "-e", "HOME=…", *[("-e", k) for k in env], "-w", <working_dir>, "sandbox", *command], env={**os.environ, **env}, stdin=subprocess.DEVNULL)` — waits for completion and propagates the exit code.
 
 ## Agent-Agnostic Architecture
 
@@ -111,7 +111,11 @@ Framework protocol lives in [`src/agento/framework/cli_invoker.py`](../../src/ag
 
 ## Inspection
 
-If you want to see the resolved runtime (including the CLI command the framework would run) without spawning the sandbox:
+Two cron-side commands let you inspect what `agento run` would resolve, without spawning the sandbox.
+
+### `agent_view:runtime` — read-only debug (no side effects)
+
+Resolves provider/model/home but does **not** touch the token pool or materialize an artifacts directory. Safe to call freely.
 
 ```bash
 agento agent_view:runtime dev_01
@@ -131,6 +135,26 @@ agento agent_view:runtime dev_01 --prompt "hello"
 # Override the model ad-hoc (doesn't persist to DB):
 agento agent_view:runtime dev_01 --prompt "hello" --model claude-sonnet-4-6
 ```
+
+### `agent_view:prepare-run` — what `agento run` actually invokes
+
+This is the command the host calls under the hood. It resolves a token (stamps `used_at` in the LRU pool!), materializes the per-run artifacts directory on `/workspace`, and returns the unified `command` plus an `env` dict for API-key credential delivery. **Calling it has side effects** (token rotation + artifacts dir creation) — use sparingly when introspecting.
+
+```bash
+agento agent_view:prepare-run dev_01 --prompt "hello"
+# → {"agent_view_id": 2, "agent_view_code": "dev_01",
+#    "workspace_id": 1, "workspace_code": "it",
+#    "provider": "claude", "model": "claude-opus-4-6",
+#    "home": "/workspace/build/it/dev_01/current",
+#    "working_dir": "/workspace/artifacts/it/dev_01/run",
+#    "command": ["claude", "-p", "hello", "--dangerously-skip-permissions",
+#                "--output-format", "stream-json", "--verbose",
+#                "--model", "claude-opus-4-6"],
+#    "env": {"ANTHROPIC_API_KEY": "sk-ant-…"},
+#    "token_id": 42}
+```
+
+Note: the secret value **only** appears in the JSON payload over the docker exec pipe; the host never echoes it back, and on cron-side parse failures stdout is suppressed (never re-printed to stderr) to avoid leaking the `env` field through error messages.
 
 ## Related
 

@@ -63,6 +63,18 @@ class ClaudeConfigWriter:
         """Claude Code session + todo state that must survive workspace rebuilds."""
         return [".claude/projects", ".claude/todos"]
 
+    def credential_env(self, token: Token) -> dict[str, str]:
+        if token.type == "anthropic_api_key":
+            credentials = token.credentials or {}
+            api_key = credentials.get("api_key")
+            if not api_key:
+                raise ValueError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'anthropic_api_key' but credentials['api_key'] is missing or empty."
+                )
+            return {"ANTHROPIC_API_KEY": api_key}
+        return {}
+
     def write_credentials(self, build_dir: Path, token: Token) -> None:
         """Materialize Claude Code's full login state into ``build_dir``.
 

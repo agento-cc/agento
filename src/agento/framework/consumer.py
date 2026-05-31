@@ -14,12 +14,6 @@ from .agent_manager.models import AgentProvider
 from .agent_manager.token_resolver import TokenResolver
 from .agent_manager.token_store import mark_token_error
 from .agent_view_runtime import resolve_agent_view_runtime
-from .artifacts_dir import (
-    build_artifacts_dir,
-    copy_build_to_artifacts_dir,
-    get_current_build_dir,
-    prepare_artifacts_dir,
-)
 from .bootstrap import bootstrap, dispatch_reload, dispatch_shutdown, get_module_config
 from .channels.registry import get_channel
 from .consumer_config import ConsumerConfig
@@ -42,10 +36,10 @@ from .events import (
     TokenAuthFailedEvent,
     WorkerStartedEvent,
     WorkerStoppedEvent,
-    WorkspaceBuildCheckEvent,
 )
 from .job_models import Job, JobStatus
 from .retry_policy import evaluate as evaluate_retry
+from .run_preparation import materialize_run_workspace
 from .runner import RunResult
 from .runner_factory import create_runner
 from .workflows import get_workflow_class
@@ -450,40 +444,15 @@ class Consumer:
         finally:
             conn.close()
 
-        # Per-job artifacts directory (only when agent_view is set)
-        current_build = None
-        if runtime.agent_view is not None and runtime.workspace is not None:
-            # Freshness check: observer rebuilds if scoped config drifted
-            # from the on-disk build. `dispatch` swallows exceptions, so the
-            # observer surfaces them via event.error for us to re-raise.
-            check_event = WorkspaceBuildCheckEvent(agent_view_id=job.agent_view_id)
-            em.dispatch("workspace_build_check_before", check_event)
-            if check_event.error is not None:
-                raise check_event.error
-
-            artifacts_dir = build_artifacts_dir(
-                runtime.workspace.code, runtime.agent_view.code, job.id,
-            )
-            prepare_artifacts_dir(artifacts_dir)
-
-            current_build = get_current_build_dir(
-                runtime.workspace.code, runtime.agent_view.code,
-            )
-            if current_build is not None:
-                copy_build_to_artifacts_dir(
-                    current_build, artifacts_dir,
-                    job_id=job.id,
-                    provider=runtime.provider,
-                )
-            elif runtime.provider:
-                from .config_writer import get_agent_config, get_config_writer
-                agent_config = get_agent_config(agent_config_svc)
-                writer = get_config_writer(runtime.provider)
-                writer.prepare_workspace(
-                    artifacts_dir, agent_config,
-                    agent_view_id=job.agent_view_id,
-                    toolbox_url=toolbox_url,
-                )
+        # Per-job artifacts directory (only when agent_view is set) — extracted
+        # so `agento run` exercises the same pipeline (see run_preparation.py).
+        current_build, artifacts_dir = materialize_run_workspace(
+            runtime,
+            run_id=job.id,
+            agent_config_svc=agent_config_svc,
+            toolbox_url=toolbox_url,
+            em=em,
+        )
 
         em.dispatch("agent_view_run_start_before", AgentViewRunStartedEvent(
             job=job,

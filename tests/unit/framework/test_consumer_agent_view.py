@@ -130,8 +130,8 @@ class TestRunJobWithAgentView:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.consumer.prepare_artifacts_dir")
-    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.run_preparation.prepare_artifacts_dir")
+    @patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_calls_config_writer_with_agent_view_id(
         self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
@@ -166,8 +166,8 @@ class TestRunJobWithAgentView:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.consumer.prepare_artifacts_dir")
-    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.run_preparation.prepare_artifacts_dir")
+    @patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_runner_receives_artifacts_dir(
         self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
@@ -299,8 +299,8 @@ class TestRunJobProviderFallback:
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
     @patch("agento.framework.config_writer.get_config_writer")
-    @patch("agento.framework.consumer.prepare_artifacts_dir")
-    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/dev/runs/1")
+    @patch("agento.framework.run_preparation.prepare_artifacts_dir")
+    @patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/dev/runs/1")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_uses_agent_view_provider_over_primary_token(
         self, mock_resolve, mock_build, mock_prepare, mock_get_writer,
@@ -356,14 +356,14 @@ class TestPostRunCredentialCapture:
             MockCls.return_value = mock_resolver
             yield
 
-    @patch("agento.framework.consumer.copy_build_to_artifacts_dir")
-    @patch("agento.framework.consumer.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
+    @patch("agento.framework.run_preparation.copy_build_to_artifacts_dir")
+    @patch("agento.framework.run_preparation.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.prepare_artifacts_dir")
-    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.run_preparation.prepare_artifacts_dir")
+    @patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_calls_capture_after_execute_job(
         self, mock_resolve, mock_build, mock_prepare, mock_conn,
@@ -424,14 +424,14 @@ class TestPostRunCredentialCapture:
 
         mock_writer.capture_refreshed_credentials.assert_not_called()
 
-    @patch("agento.framework.consumer.copy_build_to_artifacts_dir")
-    @patch("agento.framework.consumer.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
+    @patch("agento.framework.run_preparation.copy_build_to_artifacts_dir")
+    @patch("agento.framework.run_preparation.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
     @patch("agento.framework.consumer.create_runner")
     @patch("agento.framework.consumer.get_connection")
-    @patch("agento.framework.consumer.prepare_artifacts_dir")
-    @patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.run_preparation.prepare_artifacts_dir")
+    @patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
     @patch("agento.framework.consumer.resolve_agent_view_runtime")
     def test_skips_capture_when_writer_has_no_method(
         self, mock_resolve, mock_build, mock_prepare, mock_conn,

@@ -99,15 +99,15 @@ def _mock_token_resolver():
         yield
 
 
-@patch("agento.framework.consumer.copy_build_to_artifacts_dir")
-@patch("agento.framework.consumer.get_current_build_dir", return_value=None)
+@patch("agento.framework.run_preparation.copy_build_to_artifacts_dir")
+@patch("agento.framework.run_preparation.get_current_build_dir", return_value=None)
 @patch("agento.framework.consumer.get_workflow_class")
 @patch("agento.framework.consumer.get_channel")
 @patch("agento.framework.consumer.create_runner")
 @patch("agento.framework.consumer.get_connection")
 @patch("agento.framework.config_writer.get_config_writer")
-@patch("agento.framework.consumer.prepare_artifacts_dir")
-@patch("agento.framework.consumer.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+@patch("agento.framework.run_preparation.prepare_artifacts_dir")
+@patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
 @patch("agento.framework.consumer.resolve_agent_view_runtime")
 @patch("agento.framework.consumer.get_event_manager")
 def test_dispatches_check_with_agent_view_id(

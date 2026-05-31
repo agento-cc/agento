@@ -406,3 +406,35 @@ class TestCaptureRefreshedCredentials:
             writer.capture_refreshed_credentials(work_dir, token, MagicMock())
         mock_reg.assert_not_called()
 
+
+
+class TestCredentialEnv:
+    """Provider-specific credential→env mapping (used by TokenRunner._build_env
+    and by the host-side `agento run` env injection path).
+    """
+
+    def _typed_token(self, type_: str, credentials: dict) -> Token:
+        return Token(
+            id=1, agent_type=AgentProvider.CODEX, type=type_, label="test",
+            credentials=credentials, token_limit=0, enabled=True,
+            status=TokenStatus.OK, priority=0, error_msg=None,
+            expires_at=None, used_at=None,
+            created_at=_EPOCH, updated_at=_EPOCH,
+        )
+
+    def test_oauth_returns_empty(self, writer):
+        token = self._typed_token("oauth", {"subscription_key": "acc-x", "refresh_token": "rt"})
+        assert writer.credential_env(token) == {}
+
+    def test_codex_access_token_returns_empty(self, writer):
+        token = self._typed_token("codex_access_token", {"access_token": "eyJ.x.y"})
+        assert writer.credential_env(token) == {}
+
+    def test_openai_api_key_returns_env(self, writer):
+        token = self._typed_token("openai_api_key", {"api_key": "sk-X"})
+        assert writer.credential_env(token) == {"OPENAI_API_KEY": "sk-X"}
+
+    def test_openai_api_key_missing_raises(self, writer):
+        token = self._typed_token("openai_api_key", {})
+        with pytest.raises(ValueError, match="openai_api_key"):
+            writer.credential_env(token)

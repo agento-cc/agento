@@ -11,6 +11,27 @@ from agento.framework.agent_manager.models import (
     TokenStatus,
     UsageSummary,
 )
+from agento.framework.config_writer import (
+    clear as _clear_config_writers,
+)
+from agento.framework.config_writer import (
+    register_config_writer,
+)
+from agento.modules.claude.src.config import ClaudeConfigWriter
+from agento.modules.codex.src.config import CodexConfigWriter
+
+
+@pytest.fixture(autouse=True)
+def _register_config_writers():
+    """Register provider ConfigWriters so ``TokenRunner._build_env`` (which now
+    delegates to ``ConfigWriter.credential_env``) can resolve them in unit
+    tests that don't run the full ``bootstrap()`` module loader.
+    """
+    _clear_config_writers()
+    register_config_writer(AgentProvider.CLAUDE, ClaudeConfigWriter())
+    register_config_writer(AgentProvider.CODEX, CodexConfigWriter())
+    yield
+    _clear_config_writers()
 
 
 @pytest.fixture

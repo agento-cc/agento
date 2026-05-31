@@ -20,16 +20,8 @@ class TokenClaudeRunner(TokenRunner):
         return AgentProvider.CLAUDE
 
     def _build_env(self, token: Token) -> dict[str, str]:
-        if token.type == "anthropic_api_key":
-            credentials = token.credentials or {}
-            api_key = credentials.get("api_key")
-            if not api_key:
-                raise ValueError(
-                    f"Token id={token.id} label={token.label!r} is typed "
-                    "'anthropic_api_key' but credentials['api_key'] is missing or empty."
-                )
-            return {"ANTHROPIC_API_KEY": api_key}
-        return {}
+        from agento.framework.config_writer import get_config_writer
+        return get_config_writer(self.agent_type).credential_env(token)
 
     def _build_command(self, prompt: str, model: str | None = None) -> list[str]:
         # .mcp.json is resolved relative to subprocess cwd (per-job artifacts dir)

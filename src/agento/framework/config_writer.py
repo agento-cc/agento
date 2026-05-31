@@ -72,6 +72,18 @@ class ConfigWriter(Protocol):
         """
         ...
 
+    def credential_env(self, token: Token) -> dict[str, str]:
+        """Return env-var overrides derived from ``token.credentials``.
+
+        Sibling to ``write_credentials`` for the env delivery path: API-key
+        token types (e.g. ``anthropic_api_key``, ``openai_api_key``) materialize
+        as a single ``{KEY: value}`` entry; OAuth / access-token types return
+        ``{}`` and rely on the on-disk file written by ``write_credentials``.
+        Shared by ``TokenRunner._build_env`` and the ``agent_view:prepare-run``
+        path so both consumer jobs and ``agento run`` get identical env semantics.
+        """
+        ...
+
     def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
         """Best-effort migration of legacy shared-HOME config from ``workspace_root``.
 

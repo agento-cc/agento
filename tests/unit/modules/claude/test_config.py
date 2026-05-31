@@ -449,3 +449,31 @@ class TestMigrateLegacyWorkspaceConfig:
 
         data = json.loads((build_settings_dir / "settings.local.json").read_text())
         assert data["enabledMcpjsonServers"] == ["toolbox", "other"]
+
+
+class TestCredentialEnv:
+    """Provider-specific credential→env mapping (used by TokenRunner._build_env
+    and by the host-side `agento run` env injection path).
+    """
+
+    def _typed_token(self, type_: str, credentials: dict) -> Token:
+        return Token(
+            id=1, agent_type=AgentProvider.CLAUDE, type=type_, label="test",
+            credentials=credentials, token_limit=0, enabled=True,
+            status=TokenStatus.OK, priority=0, error_msg=None,
+            expires_at=None, used_at=None,
+            created_at=_EPOCH, updated_at=_EPOCH,
+        )
+
+    def test_oauth_returns_empty(self, writer):
+        token = self._typed_token("oauth", {"subscription_key": "x", "refresh_token": "y"})
+        assert writer.credential_env(token) == {}
+
+    def test_anthropic_api_key_returns_env(self, writer):
+        token = self._typed_token("anthropic_api_key", {"api_key": "sk-ant-XYZ"})
+        assert writer.credential_env(token) == {"ANTHROPIC_API_KEY": "sk-ant-XYZ"}
+
+    def test_anthropic_api_key_missing_raises(self, writer):
+        token = self._typed_token("anthropic_api_key", {})
+        with pytest.raises(ValueError, match="anthropic_api_key"):
+            writer.credential_env(token)

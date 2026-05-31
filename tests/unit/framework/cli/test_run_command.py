@@ -28,6 +28,16 @@ _HEADLESS_CODEX = [
 
 
 def _base_runtime(provider="claude", model="claude-opus-4-6", *, prompt=False):
+    """Payload from the cron-side ``agent_view:prepare-run`` command.
+
+    Mirrors :class:`AgentViewPrepareRunCommand`'s JSON output: unified
+    ``command`` (interactive or headless depending on whether a prompt was
+    passed), a per-run ``working_dir`` distinct from ``home`` (HOME=build,
+    cwd=artifacts), and an ``env`` dict that's empty when no API-key
+    credential delivery is needed.
+    """
+    interactive = _INTERACTIVE_CLAUDE if provider == "claude" else _INTERACTIVE_CODEX
+    headless = _HEADLESS_CLAUDE if provider == "claude" else _HEADLESS_CODEX
     return {
         "agent_view_id": 2,
         "agent_view_code": "dev_01",
@@ -36,10 +46,10 @@ def _base_runtime(provider="claude", model="claude-opus-4-6", *, prompt=False):
         "provider": provider,
         "model": model,
         "home": "/workspace/build/it/dev_01/current",
-        "interactive_command": _INTERACTIVE_CLAUDE if provider == "claude" else _INTERACTIVE_CODEX,
-        "headless_command": (
-            (_HEADLESS_CLAUDE if provider == "claude" else _HEADLESS_CODEX) if prompt else None
-        ),
+        "working_dir": "/workspace/artifacts/it/dev_01/run",
+        "command": headless if prompt else interactive,
+        "env": {},
+        "token_id": 99,
     }
 
 
@@ -109,7 +119,9 @@ class TestRunCommand:
 
     def test_unregistered_cli_invoker_exits(self, tmp_path, capsys):
         project_root, compose = _project_layout(tmp_path)
-        runtime = {**_base_runtime(provider="exotic"), "interactive_command": None}
+        # Cron returns provider but the unified ``command`` is null when no
+        # CliInvoker is registered for the resolved provider.
+        runtime = {**_base_runtime(provider="exotic"), "command": None}
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
             patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
@@ -153,7 +165,8 @@ class TestRunCommand:
         assert "sandbox" in argv
         assert argv[-1] == "claude"
         assert "HOME=/workspace/build/it/dev_01/current" in argv
-        assert argv[argv.index("-w") + 1] == "/workspace/build/it/dev_01/current"
+        # cwd is the per-run artifacts dir (mirrors the consumer's job layout).
+        assert argv[argv.index("-w") + 1] == "/workspace/artifacts/it/dev_01/run"
 
     def test_interactive_for_codex_uses_codex_binary(self, tmp_path):
         project_root, compose = _project_layout(tmp_path)
@@ -268,8 +281,27 @@ class TestFetchRuntime:
         )
         with patch("agento.framework.cli.run.subprocess.run", return_value=fake_result):
             result = _fetch_runtime(["-f", str(tmp_path / "compose.yml")],"dev_01")
-        assert result["interactive_command"] == _INTERACTIVE_CLAUDE
-        assert result["headless_command"] is None
+        assert result["command"] == _INTERACTIVE_CLAUDE
+        assert result["env"] == {}
+        assert result["working_dir"] == "/workspace/artifacts/it/dev_01/run"
+
+    def test_calls_prepare_run_subcommand(self, tmp_path):
+        """The host must call ``agent_view:prepare-run`` (not the read-only
+        ``agent_view:runtime``) so the token pool's ``used_at`` is stamped
+        and credentials get materialized like a real job."""
+        from agento.framework.cli.run import _fetch_runtime
+
+        fake_result = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=json.dumps(_base_runtime()) + "\n", stderr="",
+        )
+        with patch(
+            "agento.framework.cli.run.subprocess.run", return_value=fake_result,
+        ) as mock_run:
+            _fetch_runtime(["-f", str(tmp_path / "compose.yml")], "dev_01")
+        cmd = mock_run.call_args.args[0]
+        assert "agent_view:prepare-run" in cmd
+        assert "agent_view:runtime" not in cmd
 
     def test_passes_prompt_flag_to_container(self, tmp_path):
         from agento.framework.cli.run import _fetch_runtime
@@ -316,3 +348,144 @@ class TestFetchRuntime:
             _fetch_runtime(["-f", str(tmp_path / "compose.yml")],"dev_01")
         assert exc.value.code == 1
         assert "could not parse runtime JSON" in capsys.readouterr().err
+
+    def test_bad_json_does_not_leak_stdout_to_stderr(self, tmp_path, capsys):
+        """If parsing fails, the raw stdout MUST NOT be echoed — it may carry
+        the API-key value from ``prepare-run``'s ``env`` field if cron emitted
+        a stray warning that broke JSON parsing.
+        """
+        from agento.framework.cli.run import _fetch_runtime
+
+        # Realistic failure mode: a stray warning prefix sneaks in before
+        # the JSON payload, which itself carries the secret in env.
+        leaky_stdout = (
+            'WARNING: deprecated thing\n'
+            '{"provider": "claude", "env": {"ANTHROPIC_API_KEY": "sk-ant-SECRET"}}\n'
+        )
+        fake_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=leaky_stdout, stderr="",
+        )
+        with (
+            patch("agento.framework.cli.run.subprocess.run", return_value=fake_result),
+            pytest.raises(SystemExit),
+        ):
+            _fetch_runtime(["-f", str(tmp_path / "compose.yml")], "dev_01")
+        err = capsys.readouterr().err
+        assert "sk-ant-SECRET" not in err
+        assert "could not parse runtime JSON" in err
+
+
+# ---------------------------------------------------------------------------
+# New contract: cli/run.py calls `agent_view:prepare-run`, which returns a
+# unified `command` plus a `working_dir` (per-run artifacts) and an `env` dict
+# whose values must be injected via docker's NAME-ONLY ``-e KEY`` form so the
+# secret value never appears in argv/``ps`` (matches the 1ccb38a stdin-only
+# secrets stance for token:register).
+# ---------------------------------------------------------------------------
+
+
+def _prepare_runtime(provider="claude", model="claude-opus-4-6", *, prompt=False, env=None):
+    return {
+        "agent_view_id": 2,
+        "agent_view_code": "dev_01",
+        "workspace_id": 1,
+        "workspace_code": "it",
+        "provider": provider,
+        "model": model,
+        "home": "/workspace/build/it/dev_01/current",
+        "working_dir": "/workspace/artifacts/it/dev_01/run",
+        "command": (
+            (_HEADLESS_CLAUDE if provider == "claude" else _HEADLESS_CODEX)
+            if prompt else
+            (_INTERACTIVE_CLAUDE if provider == "claude" else _INTERACTIVE_CODEX)
+        ),
+        "env": env or {},
+        "token_id": 99,
+    }
+
+
+class TestRunCommandEnvInjection:
+    """The host must pass docker `-e KEY` (no value) for each env entry and
+    place the value in the child-process environment — argv must stay clean.
+    """
+
+    def test_headless_passes_name_only_e_flag_and_value_via_env(self, tmp_path):
+        project_root, compose = _project_layout(tmp_path)
+        runtime = _prepare_runtime(prompt=True, env={"ANTHROPIC_API_KEY": "sk-ant-SECRET"})
+        completed = subprocess.CompletedProcess(args=[], returncode=0)
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
+            patch("agento.framework.cli.run.subprocess.run", return_value=completed) as mock_run,
+            pytest.raises(SystemExit),
+        ):
+            RunCommand().execute(_make_prompt_args())
+
+        argv = mock_run.call_args.args[0]
+        # Name-only -e KEY appears, but the SECRET value never appears as argv.
+        e_positions = [i for i, a in enumerate(argv) if a == "-e"]
+        name_only_keys = [argv[i + 1] for i in e_positions if "=" not in argv[i + 1]]
+        assert "ANTHROPIC_API_KEY" in name_only_keys
+        assert "sk-ant-SECRET" not in argv
+        for a in argv:
+            assert "sk-ant-SECRET" not in a
+
+        # Value goes via the child process env so docker reads it from the parent.
+        env_passed = mock_run.call_args.kwargs.get("env") or {}
+        assert env_passed.get("ANTHROPIC_API_KEY") == "sk-ant-SECRET"
+
+    def test_interactive_sets_env_in_os_environ_and_uses_name_only_e(self, tmp_path, monkeypatch):
+        project_root, compose = _project_layout(tmp_path)
+        runtime = _prepare_runtime(env={"ANTHROPIC_API_KEY": "sk-ant-SECRET"})
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
+            patch("agento.framework.cli.run.os.execvp") as mock_execvp,
+        ):
+            RunCommand().execute(_make_args())
+
+        _, argv = mock_execvp.call_args.args
+        e_positions = [i for i, a in enumerate(argv) if a == "-e"]
+        name_only_keys = [argv[i + 1] for i in e_positions if "=" not in argv[i + 1]]
+        assert "ANTHROPIC_API_KEY" in name_only_keys
+        for a in argv:
+            assert "sk-ant-SECRET" not in a
+        # For execvp the child inherits os.environ — value must be set there.
+        import os as _os
+        assert _os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-SECRET"
+
+    def test_working_dir_used_for_cwd_distinct_from_home(self, tmp_path):
+        project_root, compose = _project_layout(tmp_path)
+        runtime = _prepare_runtime(prompt=True)  # home != working_dir
+        completed = subprocess.CompletedProcess(args=[], returncode=0)
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
+            patch("agento.framework.cli.run.subprocess.run", return_value=completed) as mock_run,
+            pytest.raises(SystemExit),
+        ):
+            RunCommand().execute(_make_prompt_args())
+        argv = mock_run.call_args.args[0]
+        # -w should point at the per-run artifacts dir, not HOME=build.
+        assert argv[argv.index("-w") + 1] == "/workspace/artifacts/it/dev_01/run"
+        assert "HOME=/workspace/build/it/dev_01/current" in argv
+
+    def test_empty_env_dict_adds_no_extra_e_flag(self, tmp_path):
+        project_root, compose = _project_layout(tmp_path)
+        runtime = _prepare_runtime(env={})
+        with (
+            patch("agento.framework.cli.run.find_project_root", return_value=project_root),
+            patch("agento.framework.cli.run.compose_file_flags", return_value=["-f", str(compose)]),
+            patch("agento.framework.cli.run._fetch_runtime", return_value=runtime),
+            patch("agento.framework.cli.run.os.execvp") as mock_execvp,
+        ):
+            RunCommand().execute(_make_args())
+        _, argv = mock_execvp.call_args.args
+        # Only the framework's own -e KEY=VAL entries (HOME, TERM, COLORTERM) appear.
+        e_positions = [i for i, a in enumerate(argv) if a == "-e"]
+        name_only = [argv[i + 1] for i in e_positions if "=" not in argv[i + 1]]
+        assert name_only == []

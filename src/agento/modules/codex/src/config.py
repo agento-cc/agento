@@ -98,6 +98,19 @@ class CodexConfigWriter:
         """Codex session + history state that must survive workspace rebuilds."""
         return [".codex/history.jsonl", ".codex/sessions"]
 
+    def credential_env(self, token: Token) -> dict[str, str]:
+        if token.type == "openai_api_key":
+            credentials = token.credentials or {}
+            api_key = credentials.get("api_key")
+            if not api_key:
+                raise ValueError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'openai_api_key' but credentials['api_key'] is missing or empty."
+                )
+            return {"OPENAI_API_KEY": api_key}
+        # oauth + codex_access_token both rely on .codex/auth.json on disk.
+        return {}
+
     def write_credentials(self, build_dir: Path, token: Token) -> None:
         """Materialize Codex auth based on token.type.
 
