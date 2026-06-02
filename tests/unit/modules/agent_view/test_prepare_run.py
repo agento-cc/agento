@@ -60,7 +60,7 @@ def writer_stub():
     return w
 
 
-def _run_command(args, runtime, token, invoker, writer, home, working_dir):
+def _run_command(args, runtime, token, invoker, writer, home, working_dir, *, return_mocks=False):
     """Drive the command's ``execute`` with all heavy deps mocked."""
     from agento.modules.agent_view.src.commands.prepare_run import (
         AgentViewPrepareRunCommand,
@@ -83,7 +83,7 @@ def _run_command(args, runtime, token, invoker, writer, home, working_dir):
     ) as MockResolver, patch(
         "agento.framework.run_preparation.materialize_run_workspace",
         return_value=(home, working_dir),
-    ), patch(
+    ) as mock_materialize, patch(
         "agento.framework.config_writer.get_config_writer", return_value=writer,
     ), patch(
         "agento.framework.cli_invoker.get_cli_invoker", return_value=invoker,
@@ -92,7 +92,10 @@ def _run_command(args, runtime, token, invoker, writer, home, working_dir):
         buf = io.StringIO()
         with redirect_stdout(buf):
             cmd.execute(args)
-        return json.loads(buf.getvalue())
+        payload = json.loads(buf.getvalue())
+        if return_mocks:
+            return payload, mock_materialize
+        return payload
 
 
 class TestAgentViewPrepareRunCommand:
@@ -108,12 +111,12 @@ class TestAgentViewPrepareRunCommand:
     ):
         payload = _run_command(
             _make_args(), runtime_stub, token_stub, invoker_stub, writer_stub,
-            home=tmp_path / "build", working_dir=tmp_path / "artifacts",
+            home=tmp_path / "artifacts", working_dir=tmp_path / "artifacts",
         )
         assert payload["provider"] == "claude"
         assert payload["agent_view_code"] == "dev"
         assert payload["workspace_code"] == "acme"
-        assert payload["home"] == str(tmp_path / "build")
+        assert payload["home"] == str(tmp_path / "artifacts")
         assert payload["working_dir"] == str(tmp_path / "artifacts")
         assert payload["command"] == ["claude"]
         assert payload["env"] == {"ANTHROPIC_API_KEY": "sk-ant-SECRET"}
@@ -124,7 +127,7 @@ class TestAgentViewPrepareRunCommand:
     ):
         payload = _run_command(
             _make_args(prompt="hello"), runtime_stub, token_stub, invoker_stub, writer_stub,
-            home=tmp_path / "build", working_dir=tmp_path / "artifacts",
+            home=tmp_path / "artifacts", working_dir=tmp_path / "artifacts",
         )
         assert payload["command"][0] == "claude"
         assert "hello" in payload["command"]
@@ -136,11 +139,28 @@ class TestAgentViewPrepareRunCommand:
         """The exact contract the host depends on: secret in ``env``, not in ``command``."""
         payload = _run_command(
             _make_args(prompt="hello"), runtime_stub, token_stub, invoker_stub, writer_stub,
-            home=tmp_path / "build", working_dir=tmp_path / "artifacts",
+            home=tmp_path / "artifacts", working_dir=tmp_path / "artifacts",
         )
         flat_command = " ".join(payload["command"])
         assert "sk-ant-SECRET" not in flat_command
         assert payload["env"]["ANTHROPIC_API_KEY"] == "sk-ant-SECRET"
+
+    def test_materializes_with_resolved_token(
+        self, tmp_path, runtime_stub, token_stub, invoker_stub, writer_stub,
+    ):
+        payload, mock_materialize = _run_command(
+            _make_args(), runtime_stub, token_stub, invoker_stub, writer_stub,
+            home=tmp_path / "artifacts", working_dir=tmp_path / "artifacts",
+            return_mocks=True,
+        )
+
+        assert payload["home"] == str(tmp_path / "artifacts")
+        mock_materialize.assert_called_once()
+        assert mock_materialize.call_args.kwargs["token"] is token_stub
+        run_id = mock_materialize.call_args.kwargs["run_id"]
+        assert isinstance(run_id, str)
+        assert run_id.startswith("run-")
+        assert run_id != "run"
 
     def test_missing_cli_invoker_returns_null_command(
         self, tmp_path, runtime_stub, token_stub, writer_stub,
@@ -170,7 +190,7 @@ class TestAgentViewPrepareRunCommand:
             "agento.framework.agent_manager.token_resolver.TokenResolver",
         ) as MockResolver, patch(
             "agento.framework.run_preparation.materialize_run_workspace",
-            return_value=(tmp_path / "build", tmp_path / "artifacts"),
+            return_value=(tmp_path / "artifacts", tmp_path / "artifacts"),
         ), patch(
             "agento.framework.config_writer.get_config_writer", return_value=writer_stub,
         ), patch(

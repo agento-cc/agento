@@ -18,7 +18,7 @@ from agento.framework.workspace_paths import ARTIFACTS_DIR, BUILD_DIR
 logger = logging.getLogger(__name__)
 
 
-def build_artifacts_dir(workspace_code: str, agent_view_code: str, job_id: int) -> Path:
+def build_artifacts_dir(workspace_code: str, agent_view_code: str, job_id: int | str) -> Path:
     """Build the artifacts directory path for a single job execution."""
     return Path(ARTIFACTS_DIR) / workspace_code / agent_view_code / str(job_id)
 
@@ -95,7 +95,7 @@ def copy_build_to_artifacts_dir(
         if item.name in copy_files and item.is_file():
             shutil.copy2(item, dest)
         elif item.name in owned_dirs and item.is_dir():
-            shutil.copytree(item, dest)
+            shutil.copytree(item, dest, symlinks=True)
         elif item.is_dir():
             dest.symlink_to(item.resolve())
         else:

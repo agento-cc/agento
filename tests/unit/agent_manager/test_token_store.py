@@ -236,7 +236,7 @@ class TestSelectToken:
         assert "status = 'ok'" in select_sql
         assert "expires_at IS NULL OR expires_at > UTC_TIMESTAMP()" in select_sql
         update_sql = cursor.execute.call_args_list[1][0][0]
-        assert "SET used_at = UTC_TIMESTAMP()" in update_sql
+        assert "SET used_at = UTC_TIMESTAMP(6)" in update_sql
         conn.commit.assert_called()
 
     def test_returns_none_when_no_healthy_token(self):
@@ -379,6 +379,29 @@ class TestSelectTokenPriority:
         used_at_pos = select_sql.index("used_at IS NULL DESC")
         assert priority_pos < used_at_pos
 
+    def test_rapid_same_priority_claims_rotate_across_tokens(self):
+        base = {
+            **_SAMPLE_ROW,
+            "credentials": None,
+            "priority": 0,
+        }
+        rows = [
+            {**base, "id": 1, "label": "oauth-a"},
+            {**base, "id": 2, "label": "oauth-b"},
+            {**base, "id": 3, "label": "api-key", "type": "anthropic_api_key"},
+        ]
+
+        conn = _RotatingTokenConnection(rows)
+
+        claims = [select_token(conn, AgentProvider.CLAUDE).id for _ in range(10)]
+
+        assert claims == [1, 2, 3, 1, 2, 3, 1, 2, 3, 1]
+        assert {token_id: claims.count(token_id) for token_id in {1, 2, 3}} == {
+            1: 4,
+            2: 3,
+            3: 3,
+        }
+
 
 class TestSetTokenPriority:
     def test_set_priority_updates_row(self):
@@ -398,3 +421,61 @@ class TestSetTokenPriority:
         result = set_token_priority(conn, 999, 0)
 
         assert result is False
+
+
+class _RotatingTokenConnection:
+    def __init__(self, rows):
+        self.rows = {row["id"]: dict(row) for row in rows}
+        self._tick = 0
+        self.commit = MagicMock()
+        self._cursor = _RotatingTokenCursor(self)
+
+    def cursor(self):
+        return self._cursor
+
+
+class _RotatingTokenCursor:
+    def __init__(self, conn: _RotatingTokenConnection):
+        self.conn = conn
+        self._result = None
+        self._selected_id = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, sql, params=None):
+        if "SELECT id FROM oauth_token" in sql:
+            agent_type = params[0]
+            candidates = [
+                row for row in self.conn.rows.values()
+                if row["agent_type"] == agent_type
+                and row["enabled"] is True
+                and row["status"] == "ok"
+            ]
+            candidates.sort(key=lambda row: (
+                row["priority"],
+                row["used_at"] is not None,
+                row["used_at"] or datetime.min,
+                row["id"],
+            ))
+            self._selected_id = candidates[0]["id"] if candidates else None
+            self._result = {"id": self._selected_id} if self._selected_id else None
+            return
+        if "UPDATE oauth_token SET used_at = UTC_TIMESTAMP(6)" in sql:
+            token_id = params[0]
+            self.conn._tick += 1
+            self.conn.rows[token_id]["used_at"] = datetime(
+                2026, 1, 1, 0, 0, 0, self.conn._tick,
+            )
+            self._result = None
+            return
+        if "SELECT * FROM oauth_token WHERE id = %s" in sql:
+            self._result = self.conn.rows[params[0]]
+            return
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    def fetchone(self):
+        return self._result

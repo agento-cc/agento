@@ -4,6 +4,16 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 ---
 
+## 2026-06-02 — Per-run HOME credential materialization and microsecond token LRU
+
+- **The bug.** A shared build HOME could carry provider credential files while token selection happened per run. With mixed same-priority tokens, one run could select an API-key token but inherit an OAuth file copied from the build, or parallel manual runs could collide on the same artifacts path.
+- **Per-run HOME is authoritative.** The consumer and `agento run` now use the same run-preparation path: select one token, copy the current build into a unique artifacts directory, recreate provider-declared persistent-state symlinks, write only the selected token's credentials into that artifacts HOME, and spawn the agent with `HOME=<artifacts_dir>`.
+- **Framework stays agent-agnostic.** The framework asks each provider's `ConfigWriter` for persistent paths, credentials, and runtime env. Claude-specific OAuth cleanup and Codex-specific auth file formats remain in their modules.
+- **LRU fairness under concurrency.** `oauth_token.used_at` is `DATETIME(6)` and selection stamps with `UTC_TIMESTAMP(6)`. The existing order (`priority`, never-used first, oldest `used_at`, `id`) remains, but microsecond precision plus retry-on-contention avoids ten rapid `FOR UPDATE SKIP LOCKED` claims collapsing onto one low-id token.
+- **Build credentials kept only for compatibility.** Runtime correctness no longer depends on credential files in build dirs; each run re-materializes the selected token into its own HOME.
+
+---
+
 ## 2026-05-14 — `AGENTO_*` prefix for cron container env vars
 
 - **The bug.** Cron entrypoint persists docker env to `/opt/cron-agent/env` through a prefix whitelist (`MYSQL_|TZ=|DISABLE_LLM=|PROVIDER=|CONFIG__|AGENTO_|PYTHONPATH=`) because the consumer is launched via `su - agent`, which wipes the parent environment. `CONSUMER_MAX_WORKERS`, `CONSUMER_POLL_INTERVAL`, and `JOB_TIMEOUT_SECONDS` weren't in the list, so values set in `docker-compose.override.yml` silently fell back to hardcoded defaults — the consumer always ran with `max_workers=1, poll_interval=5.0s, job_timeout=1200s`.

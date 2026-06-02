@@ -55,6 +55,43 @@ class TestTokenResolver:
             with pytest.raises(RuntimeError, match=r"3 enabled tokens.*unhealthy"):
                 resolver.resolve(MagicMock(), AgentProvider.CODEX)
 
+    def test_resolve_retries_when_healthy_tokens_are_locked(self):
+        expected = make_token(id=2)
+
+        with (
+            patch(
+                "agento.framework.agent_manager.token_resolver.select_token",
+                side_effect=[None, None, expected],
+            ) as mock_select,
+            patch(
+                "agento.framework.agent_manager.token_resolver.count_tokens_for_provider",
+                return_value=(3, 3),
+            ),
+            patch("agento.framework.agent_manager.token_resolver.time.sleep") as mock_sleep,
+            patch("agento.framework.agent_manager.token_resolver._POOL_CONTENTION_RETRIES", 2),
+        ):
+            token = TokenResolver().resolve(MagicMock(), AgentProvider.CLAUDE)
+
+        assert token is expected
+        assert mock_select.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_resolve_reports_locked_tokens_after_retry_budget(self):
+        with (
+            patch(
+                "agento.framework.agent_manager.token_resolver.select_token",
+                return_value=None,
+            ),
+            patch(
+                "agento.framework.agent_manager.token_resolver.count_tokens_for_provider",
+                return_value=(3, 3),
+            ),
+            patch("agento.framework.agent_manager.token_resolver.time.sleep"),
+            patch("agento.framework.agent_manager.token_resolver._POOL_CONTENTION_RETRIES", 1),
+            pytest.raises(RuntimeError, match="currently locked"),
+        ):
+            TokenResolver().resolve(MagicMock(), AgentProvider.CLAUDE)
+
     def test_resolve_error_mentions_recovery_commands(self):
         with (
             patch(

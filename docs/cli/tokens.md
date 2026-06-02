@@ -176,6 +176,6 @@ Without this, jobs for that agent_view fail fast with `No agent_view/provider co
 ## Requirements
 
 - `AGENTO_ENCRYPTION_KEY` must be set (same key used for `core_config_data` obscure fields). See [encryption.md](../config/encryption.md).
-- The `oauth_token` schema is maintained by `019_oauth_token_inline_credentials.sql` + `020_oauth_token_pool.sql`. `agento setup:upgrade` applies both.
+- The `oauth_token` schema is maintained by framework migrations beginning with `019_oauth_token_inline_credentials.sql`; `agento setup:upgrade` applies pending migrations.
 
 Source: [src/agento/framework/cli/token.py](../../src/agento/framework/cli/token.py)

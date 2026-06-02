@@ -6,7 +6,7 @@ Host-side LOCAL command. Two-step docker exec:
    dir (same path the consumer uses for jobs), and returns the unified CLI
    command + a possibly-non-empty ``env`` dict for credentials that must be
    delivered at runtime.
-2. Exec into sandbox with HOME=baked-build, cwd=per-run artifacts, running
+2. Exec into sandbox with HOME=per-run artifacts, cwd=per-run artifacts, running
    the command cron told us to run. Runtime env values are injected via
    **name-only** ``-e KEY`` so the secret never appears in argv/``ps``;
    docker reads the value from the parent's environment.
@@ -159,7 +159,7 @@ def _fetch_runtime(
     Calls ``agent_view:prepare-run`` so the host gets the same token-pool +
     materialization the consumer's jobs use — including the resolved ``env``
     dict for credentials that require runtime env delivery. Credentials
-    materialized into the baked HOME=build dir yield ``env={}``.
+    materialized into the per-run HOME yield ``env={}``.
     """
     cmd = [
         "docker", "compose", *compose_flags,

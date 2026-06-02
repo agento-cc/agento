@@ -12,11 +12,11 @@ from agento.modules.claude.src.config import ClaudeConfigWriter
 _EPOCH = datetime(2000, 1, 1)
 
 
-def _make_token(credentials: dict) -> Token:
+def _make_token(credentials: dict, type_: str = "oauth") -> Token:
     return Token(
         id=1,
         agent_type=AgentProvider.CLAUDE,
-        type="oauth",
+        type=type_,
         label="test",
         credentials=credentials,
         token_limit=0,
@@ -204,6 +204,26 @@ class TestWriteCredentials:
         writer.write_credentials(work_dir, _make_token({"refresh_token": "x"}))
         assert not (work_dir / ".claude" / ".credentials.json").exists()
 
+    def test_degenerate_oauth_clears_copied_oauth_state(self, writer, work_dir):
+        (work_dir / ".claude").mkdir(parents=True)
+        (work_dir / ".claude" / ".credentials.json").write_text("stale")
+        backups = work_dir / ".claude" / "backups"
+        backups.mkdir()
+        stale_backup = backups / ".claude.json.backup.1780206566242"
+        stale_backup.write_text("stale")
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "model": "opus-4-7",
+            "oauthAccount": {"emailAddress": "old@example.com"},
+            "userID": "old-user",
+        }))
+
+        writer.write_credentials(work_dir, _make_token({"refresh_token": "x"}))
+
+        assert not (work_dir / ".claude" / ".credentials.json").exists()
+        assert not stale_backup.exists()
+        out = json.loads((work_dir / ".claude.json").read_text())
+        assert out == {"model": "opus-4-7"}
+
     def test_optional_fields_become_null(self, writer, work_dir):
         writer.write_credentials(work_dir, _make_token({"subscription_key": "sk-x"}))
         data = json.loads((work_dir / ".claude" / ".credentials.json").read_text())
@@ -323,6 +343,19 @@ class TestWriteCredentials:
         writer.write_credentials(work_dir, _make_token({"subscription_key": "sk-x"}))
         assert not (work_dir / ".claude.json").exists()
 
+    def test_legacy_oauth_strips_stale_claude_identity(self, writer, work_dir):
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "model": "opus-4-7",
+            "oauthAccount": {"emailAddress": "old@example.com"},
+            "userID": "old-user",
+        }))
+
+        writer.write_credentials(work_dir, _make_token({"subscription_key": "sk-x"}))
+
+        assert (work_dir / ".claude" / ".credentials.json").is_file()
+        out = json.loads((work_dir / ".claude.json").read_text())
+        assert out == {"model": "opus-4-7"}
+
     def test_skips_claude_json_when_claude_json_empty(self, writer, work_dir):
         creds = {
             "subscription_key": "sk-x",
@@ -421,6 +454,82 @@ class TestWriteCredentials:
 
         out = json.loads((work_dir / ".claude.json").read_text())
         assert out == {"model": "opus-4-7", "systemPrompt": "Be concise."}
+
+    def test_api_key_strips_stale_oauth_state_and_preserves_config(self, writer, work_dir):
+        (work_dir / ".claude").mkdir(parents=True)
+        (work_dir / ".claude" / ".credentials.json").write_text("oauth")
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "model": "opus-4-7",
+            "systemPrompt": "Be concise.",
+            "permissions": {"allow": ["Read"]},
+            "oauthAccount": {"emailAddress": "old@example.com"},
+            "userID": "old-user",
+            "numStartups": 9,
+            "firstStartTime": "old",
+            "hasCompletedOnboarding": True,
+        }))
+
+        writer.write_credentials(
+            work_dir,
+            _make_token({"api_key": "sk-ant-api"}, type_="anthropic_api_key"),
+        )
+
+        assert not (work_dir / ".claude" / ".credentials.json").exists()
+        out = json.loads((work_dir / ".claude.json").read_text())
+        assert out == {
+            "model": "opus-4-7",
+            "systemPrompt": "Be concise.",
+            "permissions": {"allow": ["Read"]},
+        }
+
+    def test_api_key_deletes_claude_json_when_only_auth_state_remains(self, writer, work_dir):
+        (work_dir / ".claude.json").write_text(json.dumps({
+            "oauthAccount": {"emailAddress": "old@example.com"},
+            "userID": "old-user",
+        }))
+
+        writer.write_credentials(
+            work_dir,
+            _make_token({"api_key": "sk-ant-api"}, type_="anthropic_api_key"),
+        )
+
+        assert not (work_dir / ".claude.json").exists()
+
+    @pytest.mark.parametrize("payload", ["not-json{", "[1, 2, 3]"])
+    def test_api_key_deletes_malformed_or_non_dict_claude_json(
+        self, writer, work_dir, payload,
+    ):
+        (work_dir / ".claude.json").write_text(payload)
+
+        writer.write_credentials(
+            work_dir,
+            _make_token({"api_key": "sk-ant-api"}, type_="anthropic_api_key"),
+        )
+
+        assert not (work_dir / ".claude.json").exists()
+
+    def test_api_key_removes_claude_json_backups(self, writer, work_dir):
+        backups = work_dir / ".claude" / "backups"
+        backups.mkdir(parents=True)
+        stale_backup = backups / ".claude.json.backup.1780206566242"
+        stale_backup.write_text("oauth")
+        other_backup = backups / "settings.json.backup.1780206566242"
+        other_backup.write_text("keep")
+
+        writer.write_credentials(
+            work_dir,
+            _make_token({"api_key": "sk-ant-api"}, type_="anthropic_api_key"),
+        )
+
+        assert not stale_backup.exists()
+        assert other_backup.exists()
+
+    def test_api_key_missing_secret_raises(self, writer, work_dir):
+        with pytest.raises(ValueError, match="anthropic_api_key"):
+            writer.write_credentials(
+                work_dir,
+                _make_token({}, type_="anthropic_api_key"),
+            )
 
 
 class TestOwnedPaths:

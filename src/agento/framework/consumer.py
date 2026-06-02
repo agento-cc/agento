@@ -446,12 +446,13 @@ class Consumer:
 
         # Per-job artifacts directory (only when agent_view is set) — extracted
         # so `agento run` exercises the same pipeline (see run_preparation.py).
-        current_build, artifacts_dir = materialize_run_workspace(
+        home_dir, artifacts_dir = materialize_run_workspace(
             runtime,
             run_id=job.id,
             agent_config_svc=agent_config_svc,
             toolbox_url=toolbox_url,
             em=em,
+            token=token,
         )
 
         em.dispatch("agent_view_run_start_before", AgentViewRunStartedEvent(
@@ -472,7 +473,7 @@ class Consumer:
                 timeout_seconds=self._consumer_config.job_timeout_seconds,
                 model_override=model_override,
                 working_dir=str(artifacts_dir) if artifacts_dir else None,
-                home_dir=str(current_build) if current_build else None,
+                home_dir=str(home_dir) if home_dir else None,
                 token_override=token,
             )
             runner.pid_callback = lambda pid: self._save_pid(job.id, pid)
@@ -511,14 +512,14 @@ class Consumer:
             )
             result = workflow.execute_job(channel, job, context)
 
-            if current_build is not None:
+            if home_dir is not None:
                 try:
                     from .config_writer import get_config_writer
                     capture = getattr(get_config_writer(agent_type), "capture_refreshed_credentials", None)
                     if capture is not None:
                         _conn = get_connection(self._db_config)
                         try:
-                            capture(current_build, token, _conn)
+                            capture(home_dir, token, _conn)
                         finally:
                             _conn.close()
                 except Exception:

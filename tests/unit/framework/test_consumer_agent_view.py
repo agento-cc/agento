@@ -188,6 +188,41 @@ class TestRunJobWithAgentView:
 
         MockRunner.assert_called_once()
         assert MockRunner.call_args.kwargs["working_dir"] == "/workspace/acme/developer/runs/42"
+        assert MockRunner.call_args.kwargs["home_dir"] == "/workspace/acme/developer/runs/42"
+
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    @patch(
+        "agento.framework.consumer.materialize_run_workspace",
+        return_value=(
+            Path("/workspace/acme/developer/runs/42"),
+            Path("/workspace/acme/developer/runs/42"),
+        ),
+    )
+    @patch("agento.framework.consumer.resolve_agent_view_runtime")
+    def test_materializes_with_resolved_token(
+        self, mock_resolve, mock_materialize, mock_conn,
+        MockRunner, mock_get_ch, mock_get_wf,
+        sample_db_config, sample_consumer_config,
+    ):
+        mock_resolve.return_value = _make_runtime_with_agent_view()
+        mock_conn.return_value = MagicMock()
+        mock_workflow = MagicMock()
+        mock_workflow.execute_job.return_value = _make_claude_result()
+        mock_get_wf.return_value.return_value = mock_workflow
+        mock_get_ch.return_value = MagicMock(name="jira")
+
+        consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+        consumer._run_job(_make_job(agent_view_id=2))
+
+        mock_materialize.assert_called_once()
+        assert (
+            mock_materialize.call_args.kwargs["token"]
+            is MockRunner.call_args.kwargs["token_override"]
+        )
+        assert MockRunner.call_args.kwargs["home_dir"] == "/workspace/acme/developer/runs/42"
 
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
@@ -215,6 +250,7 @@ class TestRunJobWithAgentView:
 
         MockRunner.assert_called_once()
         assert MockRunner.call_args.kwargs["working_dir"] is None
+        assert MockRunner.call_args.kwargs["home_dir"] is None
 
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
@@ -391,7 +427,7 @@ class TestPostRunCredentialCapture:
 
         mock_writer.capture_refreshed_credentials.assert_called_once()
         call_args = mock_writer.capture_refreshed_credentials.call_args
-        assert Path(call_args[0][0]) == Path("/workspace/acme/developer/current")
+        assert Path(call_args[0][0]) == Path("/workspace/acme/developer/runs/42")
 
     @patch("agento.framework.consumer.get_workflow_class")
     @patch("agento.framework.consumer.get_channel")
@@ -442,8 +478,10 @@ class TestPostRunCredentialCapture:
         mock_resolve.return_value = runtime
         mock_conn.return_value = MagicMock()
 
-        # ClaudeConfigWriter without capture_refreshed_credentials
-        mock_writer = MagicMock(spec=["prepare_workspace", "owned_paths"])
+        # ClaudeConfigWriter-like writer without capture_refreshed_credentials
+        mock_writer = MagicMock(
+            spec=["prepare_workspace", "owned_paths", "write_credentials"],
+        )
 
         with patch(
             "agento.framework.config_writer._CONFIG_WRITERS",

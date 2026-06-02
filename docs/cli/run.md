@@ -1,6 +1,6 @@
 # `agento run` — Run the configured agent CLI
 
-Spawns the agent CLI inside the `sandbox` container, with `HOME` and the working directory set to the agent_view's materialized workspace build. Credentials, SSH key, instructions, and skills are all resolved naturally from that HOME. The exact CLI command is built by the provider's registered `CliInvoker` — no provider-specific logic lives in the `run` command itself.
+Spawns the agent CLI inside the `sandbox` container, with `HOME` and the working directory set to a per-run artifacts directory copied from the agent_view's current workspace build. Credentials, SSH key, instructions, and skills are all resolved naturally from that HOME. The exact CLI command is built by the provider's registered `CliInvoker` — no provider-specific logic lives in the `run` command itself.
 
 Two modes are selected automatically by presence of a prompt argument:
 
@@ -35,7 +35,7 @@ Everything after the agent_view code is treated as a single prompt string (via `
 $ agento run dev_01 "jakie masz toole z mcp i skille?"
 OpenAI Codex v0.121.0 (research preview)
 --------
-workdir: /workspace/build/it/dev_01/builds/51
+workdir: /workspace/artifacts/it/dev_01/run-1234-a1b2c3d4e5f6
 model: gpt-5.4
 provider: openai
 approval: never
@@ -53,9 +53,9 @@ Exit code of the agent CLI is propagated to the shell, so headless mode composes
 
 ## What It Does
 
-1. Calls `docker compose exec -T cron agento agent_view:prepare-run <code>` to run the **same pre-spawn pipeline the consumer runs for a real job**: resolves a token from the LRU pool (stamping `used_at`), materializes a per-run artifacts directory under `workspace/artifacts/<workspace>/<agent_view>/run/`, and asks the provider's registered `ConfigWriter`/`CliInvoker` for the unified CLI **command** plus any **env-delivered credentials** (API-key tokens only — OAuth rides the baked HOME). When a prompt is provided, the host passes `--prompt <prompt>` so cron returns the provider-specific **headless** command instead of the interactive one. The host code itself stays agent-agnostic.
+1. Calls `docker compose exec -T cron agento agent_view:prepare-run <code>` to run the **same pre-spawn pipeline the consumer runs for a real job**: resolves a token from the LRU pool (stamping `used_at`), materializes a unique per-run artifacts directory under `workspace/artifacts/<workspace>/<agent_view>/<run_id>/`, writes that token's credentials into the artifacts HOME via the provider's `ConfigWriter`, and asks the provider's registered `CliInvoker` for the unified CLI **command** plus any **env-delivered credentials**. When a prompt is provided, the host passes `--prompt <prompt>` so cron returns the provider-specific **headless** command instead of the interactive one. The host code itself stays agent-agnostic.
 2. Validates that a build exists on the host at `workspace/build/<workspace>/<agent_view>/current/`.
-3. Executes the returned command inside `sandbox` with `HOME` = build dir and `-w` (cwd) = per-run artifacts dir (mirroring the consumer's job layout). Any API-key values from the `env` field are injected via docker's **name-only** `-e KEY` form so the secret never appears in `ps`/argv — the value is read from the parent process's environment:
+3. Executes the returned command inside `sandbox` with `HOME` and `-w` (cwd) both set to the per-run artifacts dir. Any API-key values from the `env` field are injected via docker's **name-only** `-e KEY` form so the secret never appears in `ps`/argv — the value is read from the parent process's environment:
    - **Interactive:** `os.environ.update(env); os.execvp("docker", [..., "exec", "-it", "-u", "agent", "-e", "HOME=…", "-e", "TERM=…", *[("-e", k) for k in env], "-w", <working_dir>, "sandbox", *command])` — replaces the current process so the TTY transfer is clean.
    - **Headless:** `subprocess.run([..., "exec", "-T", "-u", "agent", "-e", "HOME=…", *[("-e", k) for k in env], "-w", <working_dir>, "sandbox", *command], env={**os.environ, **env}, stdin=subprocess.DEVNULL)` — waits for completion and propagates the exit code.
 
@@ -94,7 +94,7 @@ Framework protocol lives in [`src/agento/framework/cli_invoker.py`](../../src/ag
   ```bash
   agento config:set agent_view/provider claude --agent-view dev_01
   ```
-- Workspace build exists (tokens + SSH key materialized):
+- Workspace build exists (config, SSH key, instructions, and assets materialized):
   ```bash
   agento workspace:build --agent-view dev_01
   ```
@@ -145,8 +145,8 @@ agento agent_view:prepare-run dev_01 --prompt "hello"
 # → {"agent_view_id": 2, "agent_view_code": "dev_01",
 #    "workspace_id": 1, "workspace_code": "it",
 #    "provider": "claude", "model": "claude-opus-4-6",
-#    "home": "/workspace/build/it/dev_01/current",
-#    "working_dir": "/workspace/artifacts/it/dev_01/run",
+#    "home": "/workspace/artifacts/it/dev_01/run-1234-a1b2c3d4e5f6",
+#    "working_dir": "/workspace/artifacts/it/dev_01/run-1234-a1b2c3d4e5f6",
 #    "command": ["claude", "-p", "hello", "--dangerously-skip-permissions",
 #                "--output-format", "stream-json", "--verbose",
 #                "--model", "claude-opus-4-6"],

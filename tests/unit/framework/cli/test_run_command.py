@@ -32,9 +32,8 @@ def _base_runtime(provider="claude", model="claude-opus-4-6", *, prompt=False):
 
     Mirrors :class:`AgentViewPrepareRunCommand`'s JSON output: unified
     ``command`` (interactive or headless depending on whether a prompt was
-    passed), a per-run ``working_dir`` distinct from ``home`` (HOME=build,
-    cwd=artifacts), and an ``env`` dict that's empty when no API-key
-    credential delivery is needed.
+    passed), a per-run artifacts ``home``/``working_dir``, and an ``env`` dict
+    that's empty when no API-key credential delivery is needed.
     """
     interactive = _INTERACTIVE_CLAUDE if provider == "claude" else _INTERACTIVE_CODEX
     headless = _HEADLESS_CLAUDE if provider == "claude" else _HEADLESS_CODEX
@@ -45,7 +44,7 @@ def _base_runtime(provider="claude", model="claude-opus-4-6", *, prompt=False):
         "workspace_code": "it",
         "provider": provider,
         "model": model,
-        "home": "/workspace/build/it/dev_01/current",
+        "home": "/workspace/artifacts/it/dev_01/run",
         "working_dir": "/workspace/artifacts/it/dev_01/run",
         "command": headless if prompt else interactive,
         "env": {},
@@ -164,7 +163,7 @@ class TestRunCommand:
         assert "-it" in argv
         assert "sandbox" in argv
         assert argv[-1] == "claude"
-        assert "HOME=/workspace/build/it/dev_01/current" in argv
+        assert "HOME=/workspace/artifacts/it/dev_01/run" in argv
         # cwd is the per-run artifacts dir (mirrors the consumer's job layout).
         assert argv[argv.index("-w") + 1] == "/workspace/artifacts/it/dev_01/run"
 
@@ -392,7 +391,7 @@ def _prepare_runtime(provider="claude", model="claude-opus-4-6", *, prompt=False
         "workspace_code": "it",
         "provider": provider,
         "model": model,
-        "home": "/workspace/build/it/dev_01/current",
+        "home": "/workspace/artifacts/it/dev_01/run",
         "working_dir": "/workspace/artifacts/it/dev_01/run",
         "command": (
             (_HEADLESS_CLAUDE if provider == "claude" else _HEADLESS_CODEX)
@@ -457,9 +456,9 @@ class TestRunCommandEnvInjection:
         import os as _os
         assert _os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-SECRET"
 
-    def test_working_dir_used_for_cwd_distinct_from_home(self, tmp_path):
+    def test_working_dir_and_home_use_artifacts_dir(self, tmp_path):
         project_root, compose = _project_layout(tmp_path)
-        runtime = _prepare_runtime(prompt=True)  # home != working_dir
+        runtime = _prepare_runtime(prompt=True)
         completed = subprocess.CompletedProcess(args=[], returncode=0)
         with (
             patch("agento.framework.cli.run.find_project_root", return_value=project_root),
@@ -470,9 +469,9 @@ class TestRunCommandEnvInjection:
         ):
             RunCommand().execute(_make_prompt_args())
         argv = mock_run.call_args.args[0]
-        # -w should point at the per-run artifacts dir, not HOME=build.
+        # Both HOME and cwd should point at the selected run's artifacts dir.
         assert argv[argv.index("-w") + 1] == "/workspace/artifacts/it/dev_01/run"
-        assert "HOME=/workspace/build/it/dev_01/current" in argv
+        assert "HOME=/workspace/artifacts/it/dev_01/run" in argv
 
     def test_empty_env_dict_adds_no_extra_e_flag(self, tmp_path):
         project_root, compose = _project_layout(tmp_path)

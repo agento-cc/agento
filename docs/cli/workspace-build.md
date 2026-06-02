@@ -83,7 +83,7 @@ Config files are only generated when the corresponding `agent_view/*` config pat
 │       ├── sessions/
 │       └── history.jsonl
 ├── builds/
-│   ├── 1/                  # IMMUTABLE — HOME for agent processes
+│   ├── 1/                  # IMMUTABLE build template copied into per-run HOME
 │   │   ├── .ssh/id_rsa                     # 0600, decrypted from DB
 │   │   ├── .ssh/id_rsa.pub
 │   │   ├── .ssh/config                     # optional
@@ -169,10 +169,11 @@ The `*` in the Current column indicates the build that the `current` symlink poi
 At job execution time, the consumer:
 
 1. Calls `get_current_build_dir()` to find the `current` symlink target for this agent_view
-2. Copies / symlinks build artifacts into the per-job artifacts directory (`workspace/artifacts/<ws>/<av>/<job_id>/`) which becomes the agent's **working directory**
-3. Sets `HOME=<build_dir>` on the agent subprocess — so `~/.ssh/id_rsa`, `~/.claude/`, `~/.codex/`, and `AGENTS.md` all resolve against the current build, while session directories transparently resolve (via the symlinks) to the persistent `state/` dir
-4. The agent CLI executes
-5. The artifacts directory is cleaned up after job completion; `state/` is never touched
+2. Copies / symlinks build artifacts into the per-job artifacts directory (`workspace/artifacts/<ws>/<av>/<job_id>/`)
+3. Recreates provider-declared persistent-state symlinks and materializes the selected token's credentials into that artifacts directory
+4. Sets `HOME=<artifacts_dir>` and `cwd=<artifacts_dir>` on the agent subprocess
+5. The agent CLI executes
+6. The artifacts directory is cleaned up after job completion; `state/` is never touched
 
 Run `workspace:build` after changing agent_view config, skills, identity keys, or instruction files to ensure the next job picks up the changes.
 

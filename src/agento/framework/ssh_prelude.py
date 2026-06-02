@@ -1,4 +1,5 @@
-# OpenSSH resolves ~/.ssh/ via getpwuid()->pw_dir, not $HOME — symlink passwd home to build .ssh/.
+# OpenSSH resolves ~/.ssh/ via getpwuid()->pw_dir, not $HOME — symlink passwd
+# home to the per-run HOME .ssh/.
 from __future__ import annotations
 
 _PRELUDE = (

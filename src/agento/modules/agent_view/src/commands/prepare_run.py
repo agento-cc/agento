@@ -13,7 +13,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import uuid
+
+
+def _new_run_id() -> str:
+    return f"run-{os.getpid()}-{uuid.uuid4().hex[:12]}"
 
 
 class AgentViewPrepareRunCommand:
@@ -95,9 +101,10 @@ class AgentViewPrepareRunCommand:
 
         home, working_dir = materialize_run_workspace(
             runtime,
-            run_id="run",
+            run_id=_new_run_id(),
             agent_config_svc=agent_config_svc,
             toolbox_url=toolbox_url,
+            token=token,
         )
 
         writer = get_config_writer(provider)

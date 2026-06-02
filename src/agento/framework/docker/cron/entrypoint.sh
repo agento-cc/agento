@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-# SSH keys + agent credentials are materialized per-agent_view by `workspace:build`
-# into builds/<id>/.ssh and builds/<id>/.claude/ (or .codex/). The consumer sets
-# HOME=<build_dir> when spawning the agent subprocess, so we no longer prepare
-# SSH or config symlinks at container startup.
+# SSH keys and agent configs are materialized per-agent_view by `workspace:build`.
+# Credentials are selected again per run and written into the artifacts HOME.
+# The consumer sets HOME=<artifacts_dir>, so container startup does not prepare
+# SSH or config symlinks.
 
 # Set timezone for cron daemon (reads /etc/localtime, not TZ)
 if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then

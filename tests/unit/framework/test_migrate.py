@@ -175,6 +175,18 @@ class TestApplyMigration:
         apply_migration(conn, "022_oauth_token_type_priority", sql_file)
         conn.commit.assert_called_once()
 
+    def test_migration_024_uses_microsecond_used_at(self):
+        sql_file = Path("src/agento/framework/sql/024_oauth_token_used_at_precision.sql")
+        sql = sql_file.read_text()
+        assert "MODIFY COLUMN used_at DATETIME(6) NULL" in sql
+        assert "idx_oauth_token_pool_select" in sql
+
+    def test_fresh_init_includes_toolbox_mcp_calls_column(self):
+        sql_file = Path("src/agento/framework/sql/init/000_init.sql")
+        sql = sql_file.read_text()
+        assert "toolbox_mcp_calls INT DEFAULT NULL" in sql
+        assert "('021_job_toolbox_mcp_calls')" in sql
+
 
 class TestMigrate:
     @patch("agento.framework.migrate.apply_migration")

@@ -60,14 +60,16 @@ class ConfigWriter(Protocol):
         ...
 
     def write_credentials(self, build_dir: Path, token: Token) -> None:
-        """Materialize provider-specific OAuth credential files into ``build_dir``.
+        """Materialize provider-specific credential files into ``build_dir``.
 
         The ``token.credentials`` dict is the decrypted payload from
         ``oauth_token.credentials`` (flat fields: ``subscription_key``,
         ``refresh_token``, ``expires_at``, ``subscription_type``, ``id_token``,
         ``raw_auth``). Each provider rewrites it into the format its CLI expects
         (e.g. Claude's ``.claude/.credentials.json`` with the ``claudeAiOauth``
-        nested structure, or Codex's ``.codex/auth.json``).
+        nested structure, or Codex's ``.codex/auth.json``). Runtime callers
+        pass the per-run artifacts HOME; workspace builds may still call this
+        for backward-compatible build-level auth.
         Default: no-op (agent doesn't need on-disk credentials).
         """
         ...

@@ -85,6 +85,17 @@ class ClaudeConfigWriter:
         ``model``/``systemPrompt``/``permissions`` written by ``prepare_workspace``.
         """
         credentials = token.credentials or {}
+        if token.type == "anthropic_api_key":
+            if not credentials.get("api_key"):
+                raise ValueError(
+                    f"Token id={token.id} label={token.label!r} is typed "
+                    "'anthropic_api_key' but credentials['api_key'] is missing or empty."
+                )
+            self._clear_oauth_state(build_dir)
+            return
+
+        self._remove_claude_json_backups(build_dir)
+
         raw_auth = credentials.get("raw_auth") or {}
         raw_creds = raw_auth.get("credentials") if isinstance(raw_auth, dict) else None
         claude_oauth = (raw_creds or {}).get("claudeAiOauth") if isinstance(raw_creds, dict) else None
@@ -99,6 +110,7 @@ class ClaudeConfigWriter:
             # file-based ``token:register`` using the legacy 4-field schema.
             access_token = credentials.get("subscription_key")
             if not access_token:
+                self._clear_oauth_state(build_dir)
                 return
             creds_payload = {
                 "claudeAiOauth": {
@@ -112,18 +124,20 @@ class ClaudeConfigWriter:
         claude_dir = build_dir / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
         creds_path = claude_dir / ".credentials.json"
-        creds_path.write_text(json.dumps(creds_payload, indent=2))
+        creds_path.write_text(json.dumps(creds_payload, indent=2) + "\n")
         os.chmod(creds_path, 0o600)
         logger.debug("Wrote Claude credentials to %s", creds_path)
 
         claude_json_payload = raw_auth.get("claude_json") if isinstance(raw_auth, dict) else None
         if not isinstance(claude_json_payload, dict) or not claude_json_payload:
+            self._strip_oauth_identity_state(build_dir)
             return
         sanitized = {
             k: v for k, v in claude_json_payload.items()
             if k in _AUTH_IDENTITY_KEYS
         }
         if not sanitized:
+            self._strip_oauth_identity_state(build_dir)
             return
         claude_json_path = build_dir / ".claude.json"
         existing: dict[str, Any] = {}
@@ -135,8 +149,44 @@ class ClaudeConfigWriter:
             except (json.JSONDecodeError, OSError):
                 existing = {}
         merged = {**existing, **sanitized}
-        claude_json_path.write_text(json.dumps(merged, indent=2))
+        claude_json_path.write_text(json.dumps(merged, indent=2) + "\n")
         logger.debug("Wrote Claude user state to %s", claude_json_path)
+
+    def _clear_oauth_state(self, build_dir: Path) -> None:
+        creds_path = build_dir / ".claude" / ".credentials.json"
+        creds_path.unlink(missing_ok=True)
+        self._strip_oauth_identity_state(build_dir)
+
+    def _remove_claude_json_backups(self, build_dir: Path) -> None:
+        backups_dir = build_dir / ".claude" / "backups"
+        if backups_dir.is_dir():
+            for backup in backups_dir.glob(".claude.json.backup.*"):
+                if backup.is_file() or backup.is_symlink():
+                    backup.unlink(missing_ok=True)
+
+    def _strip_oauth_identity_state(self, build_dir: Path) -> None:
+        self._remove_claude_json_backups(build_dir)
+
+        claude_json_path = build_dir / ".claude.json"
+        if not claude_json_path.exists():
+            return
+        try:
+            existing = json.loads(claude_json_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            claude_json_path.unlink(missing_ok=True)
+            return
+        if not isinstance(existing, dict):
+            claude_json_path.unlink(missing_ok=True)
+            return
+
+        cleaned = {
+            key: value for key, value in existing.items()
+            if key not in _AUTH_IDENTITY_KEYS
+        }
+        if cleaned:
+            claude_json_path.write_text(json.dumps(cleaned, indent=2) + "\n")
+        else:
+            claude_json_path.unlink(missing_ok=True)
 
     def migrate_legacy_workspace_config(self, build_dir: Path, workspace_root: Path) -> None:
         """Merge legacy shared-HOME Claude config into the per-agent build."""

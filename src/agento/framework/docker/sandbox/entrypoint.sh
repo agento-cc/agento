@@ -1,9 +1,8 @@
 #!/bin/bash
 set -e
 
-# SSH keys + agent credentials now come from per-agent_view workspace builds.
-# `workspace:build` materializes them into builds/<id>/.ssh/ and builds/<id>/.claude/
-# (or .codex/); the consumer sets HOME=<build_dir> when spawning the agent process,
-# so there is nothing to prepare at container startup.
+# SSH keys and agent configs come from per-agent_view workspace builds. Credentials
+# are selected again per run and written into the artifacts HOME. The consumer and
+# `agento run` set HOME=<artifacts_dir>, so there is nothing to prepare here.
 
 exec gosu agent "$@"

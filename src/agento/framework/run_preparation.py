@@ -18,9 +18,23 @@ from .artifacts_dir import (
 )
 from .event_manager import get_event_manager
 from .events import WorkspaceBuildCheckEvent
+from .persistent_home import ensure_state_dir, link_persistent_paths
+from .workspace_paths import BUILD_DIR
 
 if TYPE_CHECKING:
+    from .agent_manager.models import Token
     from .agent_view_runtime import AgentViewRuntime
+
+
+def _build_root_for_current_build(
+    current_build: Path,
+    workspace_code: str,
+    agent_view_code: str,
+) -> Path:
+    for parent in current_build.parents:
+        if parent.name == agent_view_code and parent.parent.name == workspace_code:
+            return parent.parent.parent
+    return Path(BUILD_DIR)
 
 
 def materialize_run_workspace(
@@ -30,18 +44,18 @@ def materialize_run_workspace(
     agent_config_svc=None,
     toolbox_url: str = "http://toolbox:3001",
     em=None,
+    token: Token | None = None,
 ) -> tuple[Path | None, Path | None]:
     """Prepare ``(home_dir, working_dir)`` for one run.
 
-    Mirrors ``consumer._run_job`` lines 453-486 byte-for-byte semantically:
-    dispatches ``workspace_build_check_before`` (re-raising ``event.error`` —
-    ``EventManager.dispatch`` swallows observer exceptions, so the observer
-    surfaces failures via ``event.error``), creates the per-run artifacts
-    dir, and copies the current build into it. Falls back to a fresh
-    ``ConfigWriter.prepare_workspace`` when no build exists yet.
+    Dispatches ``workspace_build_check_before`` (re-raising ``event.error``),
+    creates the per-run artifacts dir, copies the current build into it, and
+    materializes the selected token's credentials into the per-run HOME.
+    Falls back to a fresh ``ConfigWriter.prepare_workspace`` when no build
+    exists yet.
 
-    ``run_id`` is the job id (``int``) for the consumer or any stable string
-    (e.g. ``"run"``) for ``agento run``. Pass ``int`` job ids to get per-job
+    ``run_id`` is the job id (``int``) for the consumer or a unique string
+    for ``agento run``. Pass ``int`` job ids to get per-job
     ``inject_runtime_params``; ``str`` ids skip injection (interactive run
     uses the build's baked ``.mcp.json``).
 
@@ -66,6 +80,7 @@ def materialize_run_workspace(
     current_build = get_current_build_dir(
         runtime.workspace.code, runtime.agent_view.code,
     )
+    state_build_root: Path | None = None
     if current_build is not None:
         # int job ids drive per-job .mcp.json injection; str run ids skip it.
         inject_id = run_id if isinstance(run_id, int) else None
@@ -73,6 +88,11 @@ def materialize_run_workspace(
             current_build, artifacts_dir,
             job_id=inject_id,
             provider=runtime.provider,
+        )
+        state_build_root = _build_root_for_current_build(
+            current_build,
+            runtime.workspace.code,
+            runtime.agent_view.code,
         )
     elif runtime.provider:
         from .config_writer import get_agent_config, get_config_writer
@@ -84,4 +104,20 @@ def materialize_run_workspace(
             toolbox_url=toolbox_url,
         )
 
-    return current_build, artifacts_dir
+    if runtime.provider:
+        from .config_writer import all_persistent_home_paths, get_config_writer
+        persistent_paths = all_persistent_home_paths(runtime.provider)
+        if persistent_paths:
+            state_root = ensure_state_dir(
+                runtime.workspace.code,
+                runtime.agent_view.code,
+                persistent_paths,
+                build_root=state_build_root or BUILD_DIR,
+            )
+            link_persistent_paths(artifacts_dir, state_root, persistent_paths)
+
+        if token is not None:
+            writer = get_config_writer(runtime.provider)
+            writer.write_credentials(artifacts_dir, token)
+
+    return artifacts_dir, artifacts_dir

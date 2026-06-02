@@ -1,5 +1,5 @@
 -- Agento: consolidated fresh-install schema
--- Equivalent to applying migrations 001 through 019 on a blank database.
+-- Equivalent to applying migrations 001 through 024 on a blank database.
 -- This file is used ONLY for docker-entrypoint-initdb.d (fresh MySQL init).
 -- Incremental upgrades are handled by setup:upgrade using individual migration files.
 
@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS job (
     error_class     VARCHAR(100) NULL,
     pid             INT DEFAULT NULL,
     session_id      VARCHAR(255) DEFAULT NULL,
+    toolbox_mcp_calls INT DEFAULT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -100,19 +101,21 @@ CREATE TABLE IF NOT EXISTS job (
 CREATE TABLE IF NOT EXISTS oauth_token (
     id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     agent_type       VARCHAR(20)  NOT NULL,
+    type             VARCHAR(32)  NOT NULL DEFAULT 'oauth',
     label            VARCHAR(100) NOT NULL,
     credentials      MEDIUMTEXT   NULL,
     token_limit      BIGINT UNSIGNED NOT NULL DEFAULT 0,
     enabled          BOOLEAN NOT NULL DEFAULT TRUE,
     status           ENUM('ok','error') NOT NULL DEFAULT 'ok',
+    priority         INT          NOT NULL DEFAULT 0,
     error_msg        TEXT         NULL,
     expires_at       DATETIME     NULL,
-    used_at          DATETIME     NULL,
+    used_at          DATETIME(6)  NULL,
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uq_oauth_token_label (label),
     KEY idx_oauth_token_agent_enabled (agent_type, enabled),
-    KEY idx_oauth_token_pool_select (agent_type, enabled, status, used_at)
+    KEY idx_oauth_token_pool_select (agent_type, enabled, status, priority, used_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Usage tracking
@@ -184,4 +187,9 @@ INSERT INTO schema_migration (version) VALUES
     ('016_job_priority'),
     ('017_job_pid_session_tracking'),
     ('018_job_paused_status'),
-    ('019_oauth_token_inline_credentials');
+    ('019_oauth_token_inline_credentials'),
+    ('020_oauth_token_pool'),
+    ('021_job_toolbox_mcp_calls'),
+    ('022_oauth_token_type_priority'),
+    ('023_drop_oauth_token_model'),
+    ('024_oauth_token_used_at_precision');

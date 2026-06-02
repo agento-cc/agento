@@ -19,6 +19,8 @@ from agento.framework.events import (
     WorkspaceBuildFailedEvent,
     WorkspaceBuildStartedEvent,
 )
+from agento.framework.persistent_home import ensure_state_dir as _ensure_state_dir
+from agento.framework.persistent_home import link_persistent_paths
 from agento.framework.workspace_paths import BUILD_DIR, THEME_DIR
 
 _DEFAULT_MAX_BUILDS = 10
@@ -344,28 +346,15 @@ def _resolve_strategies(conn) -> dict[str, Strategy]:
     return {source: _read_strategy(conn, source) for source in _SOURCES}
 
 
-def _state_dir(workspace_code: str, agent_view_code: str) -> Path:
-    return Path(BUILD_DIR) / workspace_code / agent_view_code / "state"
-
-
 def ensure_state_dir(
     workspace_code: str,
     agent_view_code: str,
     persistent_paths: list[str],
 ) -> Path:
-    """Create the per-agent_view persistent ``state/`` directory and ensure every
-    declared relative path exists inside it (so symlinks from the build dir
-    resolve to real targets).
-    """
-    state = _state_dir(workspace_code, agent_view_code)
-    state.mkdir(parents=True, exist_ok=True)
-    for rel in persistent_paths:
-        target = state / rel
-        # Treat paths ending in a file-like name conservatively as dirs — the
-        # agent creates files inside. If an agent declares a literal file path
-        # that needs to pre-exist, they can touch it themselves on first run.
-        target.mkdir(parents=True, exist_ok=True)
-    return state
+    return _ensure_state_dir(
+        workspace_code, agent_view_code, persistent_paths,
+        build_root=BUILD_DIR,
+    )
 
 
 def materialize_ssh_identity(
@@ -403,28 +392,6 @@ def materialize_ssh_identity(
 
     if known_hosts:
         (ssh_dir / "known_hosts").write_text(known_hosts)
-
-
-def link_persistent_paths(
-    build_dir: Path,
-    state_dir: Path,
-    persistent_paths: list[str],
-) -> None:
-    """For each declared persistent path, create a relative symlink
-    ``build_dir/<rel>`` → ``state_dir/<rel>``. Existing files/dirs at the
-    build-dir path are removed first so the symlink takes their place.
-    """
-    for rel in persistent_paths:
-        build_target = build_dir / rel
-        state_target = state_dir / rel
-        build_target.parent.mkdir(parents=True, exist_ok=True)
-        if build_target.is_symlink() or build_target.exists():
-            if build_target.is_dir() and not build_target.is_symlink():
-                shutil.rmtree(build_target)
-            else:
-                build_target.unlink()
-        rel_target = os.path.relpath(state_target, build_target.parent)
-        build_target.symlink_to(rel_target)
 
 
 def _read_retention_max_builds(conn) -> int:

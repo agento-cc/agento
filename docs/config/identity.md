@@ -1,6 +1,6 @@
 # Agent Identity (SSH + Credentials)
 
-Each `agent_view` has its own identity: SSH private key, optional public key, optional `~/.ssh/config`, and (via `token:register`) its agent CLI credentials. All identity material is stored **encrypted in the database** and materialized on disk only at workspace-build time, inside the build directory that becomes the agent's `$HOME`.
+Each `agent_view` has its own identity: SSH private key, optional public key, optional `~/.ssh/config`, and (via `token:register`) its agent CLI credentials. All identity material is stored **encrypted in the database**. Workspace builds materialize reusable identity/config templates; each run copies that build into an artifacts directory and uses the artifacts directory as the agent's `$HOME`.
 
 ## Registering a New Agent — Quick Start
 
@@ -25,7 +25,7 @@ agento config:set agent_view/identity/ssh_public_key --agent-view dev_01
 # 4. Verify
 agento agent_view:identity:show dev_01
 
-# 5. Materialize the workspace (decrypts key into the build dir that becomes $HOME)
+# 5. Materialize the workspace build template
 agento workspace:build --agent-view dev_01
 ```
 
@@ -94,7 +94,7 @@ All four support the standard 3-level scope fallback: `agent_view → workspace 
 ## How It Reaches the Agent Process
 
 1. `agento workspace:build --agent-view <code>` resolves scoped overrides, decrypts the SSH private key, and writes identity files into `workspace/build/<ws>/<av>/builds/<id>/.ssh/` with correct permissions.
-2. `agento run` and the consumer both set `HOME=<build_dir>` on the agent subprocess **and** wrap the command with a short shell prelude that symlinks `<build_dir>/.ssh` into the process's passwd home (`/root` or `/home/agent`). This is required because OpenSSH expands `~/.ssh/` via `getpwuid(getuid())->pw_dir`, not `$HOME` — so merely setting `HOME` is not enough for `ssh` / `git` to find the materialized key. The symlink is established per-invocation by [`agento.framework.ssh_prelude`](../../src/agento/framework/ssh_prelude.py).
+2. `agento run` and the consumer copy the current build into a per-run artifacts directory, set `HOME=<artifacts_dir>` on the agent subprocess, and wrap the command with a short shell prelude that symlinks `<artifacts_dir>/.ssh` into the process's passwd home (`/root` or `/home/agent`). This is required because OpenSSH expands `~/.ssh/` via `getpwuid(getuid())->pw_dir`, not `$HOME` — so merely setting `HOME` is not enough for `ssh` / `git` to find the materialized key. The symlink is established per-invocation by [`agento.framework.ssh_prelude`](../../src/agento/framework/ssh_prelude.py).
 
 See [workspace-build.md](../cli/workspace-build.md) for the full build flow.
 

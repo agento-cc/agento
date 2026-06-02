@@ -117,10 +117,10 @@ class CodexConfigWriter:
         """Materialize Codex auth based on token.type.
 
         - codex_access_token: shell out to ``codex login --with-access-token``
-          with ``HOME=<build_dir>`` and the JWT on stdin so Codex itself
+          with ``HOME=<target_dir>`` and the JWT on stdin so Codex itself
           writes the correct auth.json shape.
         - openai_api_key: shell out to ``codex login --with-api-key`` with
-          ``HOME=<build_dir>`` and the API key on stdin so Codex writes the
+          ``HOME=<target_dir>`` and the API key on stdin so Codex writes the
           auth.json shape it requires.
         - oauth (default): write the captured raw_auth verbatim to
           ``.codex/auth.json``.
@@ -162,7 +162,7 @@ class CodexConfigWriter:
         logger.debug("Wrote Codex OAuth credentials to %s", path)
 
     def _login_with_access_token(self, build_dir: Path, token_str: str) -> None:
-        """Run `codex login --with-access-token` with HOME=<build_dir>; token
+        """Run `codex login --with-access-token` with HOME=<target_dir>; token
         is piped via stdin so it never appears in argv or env."""
         build_dir.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "HOME": str(build_dir)}
@@ -198,7 +198,7 @@ class CodexConfigWriter:
         )
 
     def _login_with_api_key(self, build_dir: Path, api_key: str) -> None:
-        """Run `codex login --with-api-key` with HOME=<build_dir>; key is
+        """Run `codex login --with-api-key` with HOME=<target_dir>; key is
         piped via stdin so it never appears in argv or env."""
         build_dir.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "HOME": str(build_dir)}

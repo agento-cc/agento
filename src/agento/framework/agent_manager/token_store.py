@@ -139,7 +139,7 @@ def select_token(
     agent_type: AgentProvider,
 ) -> Token | None:
     """Claim the least-recently-used healthy token for ``agent_type`` and stamp
-    ``used_at=UTC_TIMESTAMP()`` atomically.
+    ``used_at=UTC_TIMESTAMP(6)`` atomically.
 
     Filters: ``enabled=TRUE``, ``status='ok'``, and ``expires_at`` either NULL
     or in the future. Ordering: ``used_at`` ascending, NULLs first (never-used
@@ -170,7 +170,7 @@ def select_token(
             return None
         token_id = row["id"]
         cur.execute(
-            "UPDATE oauth_token SET used_at = UTC_TIMESTAMP() WHERE id = %s",
+            "UPDATE oauth_token SET used_at = UTC_TIMESTAMP(6) WHERE id = %s",
             (token_id,),
         )
         cur.execute("SELECT * FROM oauth_token WHERE id = %s", (token_id,))
