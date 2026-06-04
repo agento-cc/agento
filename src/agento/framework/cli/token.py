@@ -325,8 +325,9 @@ class TokenListCommand:
             data = []
             for t in tokens:
                 s = usage_map.get(t.id)
-                used = s.total_tokens if s else 0
-                calls = s.call_count if s else 0
+                # MySQL SUM() yields Decimal; coerce so json.dumps can serialize.
+                used = int(s.total_tokens or 0) if s else 0
+                calls = int(s.call_count or 0) if s else 0
                 pct_free = round((t.token_limit - used) / t.token_limit * 100, 1) if t.token_limit > 0 else None
                 data.append({
                     "id": t.id,

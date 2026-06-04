@@ -3,8 +3,8 @@ set -euo pipefail
 
 # test.sh — Validate JSON configs + run all test suites
 # Usage:
-#   bin/test           # run everything, including @pytest.mark.slow (real codex CLI etc.)
-#   bin/test --fast    # skip slow tests (pytest -m "not slow")
+#   bin/test           # run everything, including @pytest.mark.e2e (real codex CLI etc.)
+#   bin/test --fast    # skip e2e tests (pytest -m "not e2e")
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -21,7 +21,7 @@ for arg in "$@"; do
     --fast) fast_mode=1 ;;
     -h|--help)
       echo "Usage: bin/test [--fast]"
-      echo "  --fast    Skip slow tests (real CLI / paid APIs)"
+      echo "  --fast    Skip e2e tests (real CLI / paid APIs)"
       exit 0
       ;;
     *)
@@ -190,7 +190,7 @@ echo -e "${CYAN}[5/7] Python Tests — unit + integration${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR"
-if uv run pytest -q -m "not slow" 2>&1; then
+if uv run pytest -q -m "not e2e" 2>&1; then
   ((pass++)) || true
 else
   ((fail++)) || true
@@ -206,7 +206,7 @@ if [ "$fast_mode" -eq 1 ]; then
 else
   echo -e "${CYAN}[6/7] Python e2e Tests${NC}"
   echo "========================================"
-  if uv run pytest -q -m "slow" 2>&1; then
+  if uv run pytest -q -m "e2e" 2>&1; then
     ((pass++)) || true
   else
     ((fail++)) || true

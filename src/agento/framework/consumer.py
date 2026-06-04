@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from .agent_manager.errors import AuthenticationError
 from .agent_manager.models import AgentProvider
 from .agent_manager.token_resolver import TokenResolver
-from .agent_manager.token_store import mark_token_error
+from .agent_manager.token_store import count_tokens_for_provider, mark_token_error
 from .agent_view_runtime import resolve_agent_view_runtime
 from .bootstrap import bootstrap, dispatch_reload, dispatch_shutdown, get_module_config
 from .channels.registry import get_channel
@@ -566,6 +566,12 @@ class Consumer:
             try:
                 mark_token_error(conn, token_id, str(exc), logger=self.logger)
                 conn.commit()
+                # Pool-aware retry: now that the offending token is poisoned,
+                # let the job retry onto the next token if a healthy one remains
+                # for this provider. ``retry_policy.evaluate`` reads this flag to
+                # override AuthenticationError's default terminal disposition.
+                _total, healthy = count_tokens_for_provider(conn, agent_type)
+                exc.retry_with_other_token = healthy > 0
             finally:
                 conn.close()
         except Exception:

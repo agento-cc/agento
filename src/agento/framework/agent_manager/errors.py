@@ -16,3 +16,7 @@ class AuthenticationError(RuntimeError):
     def __init__(self, message: str, *, token_id: int | None = None) -> None:
         super().__init__(message)
         self.token_id = token_id
+        # Set by the consumer after poisoning the offending token: True when a
+        # healthy alternative remains in the pool, so the job retries onto it
+        # instead of dead-lettering. ``retry_policy.evaluate`` reads this flag.
+        self.retry_with_other_token = False

@@ -61,6 +61,26 @@ def evaluate(
             reason=f"Verification veto retry {attempt + 1}/{max_attempts} after {delay}s",
         )
 
+    # Auth failures are normally terminal — a single bad credential won't heal
+    # on retry. But with an LRU token pool, poisoning the offending token leaves
+    # healthy alternatives. The consumer sets ``retry_with_other_token`` on the
+    # exception when another healthy token exists, so the job retries onto the
+    # next token instead of dead-lettering on the first bad credential.
+    if error_class == "AuthenticationError" and getattr(error_obj, "retry_with_other_token", False):
+        if attempt >= max_attempts:
+            return RetryDecision(
+                should_retry=False,
+                delay_seconds=0,
+                reason=f"Max attempts ({max_attempts}) reached after auth failure",
+            )
+        delay_index = min(attempt - 1, len(BACKOFF_DELAYS) - 1)
+        delay = BACKOFF_DELAYS[delay_index]
+        return RetryDecision(
+            should_retry=True,
+            delay_seconds=delay,
+            reason=f"Auth failure retry {attempt + 1}/{max_attempts} after {delay}s (next healthy token)",
+        )
+
     if error_class and error_class in NON_RETRYABLE_ERRORS:
         return RetryDecision(
             should_retry=False,

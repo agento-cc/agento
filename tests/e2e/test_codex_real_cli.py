@@ -1,12 +1,12 @@
 """Real-codex-CLI smoke tests for the NDJSON parser.
 
-Marked ``@pytest.mark.slow`` because they:
+Marked ``@pytest.mark.e2e`` because they:
 - invoke the actual ``codex`` binary on the host
 - consume real OpenAI tokens (real money)
 - take 20-60s each
 
-Run them via the default ``bin/test`` (slow tests included).
-Skip them via ``bin/test --fast`` (passes ``-m "not slow"`` to pytest).
+Run them via the default ``bin/test`` (e2e tests included).
+Skip them via ``bin/test --fast`` (passes ``-m "not e2e"`` to pytest).
 
 Each test uses an isolated ``CODEX_HOME`` (a fresh tmp dir) so the
 developer's real ``~/.codex`` login is never touched, and the test
@@ -30,7 +30,7 @@ _PROJECT_ROOT = Path(__file__).parents[2]
 _SECRETS = parse_env_file(_PROJECT_ROOT / "secrets.env")
 
 pytestmark = [
-    pytest.mark.slow,
+    pytest.mark.e2e,
     pytest.mark.skipif(not _CODEX_PRESENT, reason="codex CLI not installed on PATH"),
 ]
 

@@ -323,6 +323,29 @@ class TestTokenListShowsTypeAndPriority:
         assert by_id[2]["type"] == "oauth"
         assert by_id[2]["priority"] == 0
 
+    def test_json_output_serializes_decimal_usage(self, capsys):
+        """Regression: MySQL SUM() returns usage totals as Decimal, which
+        json.dumps cannot serialize. ``token:list --json`` must coerce them."""
+        import json
+        from decimal import Decimal
+        from types import SimpleNamespace
+
+        from agento.framework.cli.token import TokenListCommand
+
+        tokens = [self._token(1, "anthropic_api_key", 0)]
+        summary = SimpleNamespace(token_id=1, total_tokens=Decimal("12345"), call_count=7)
+        args = argparse.Namespace(agent_type=None, all=False, json=True)
+        with patch("agento.framework.cli.token._load_framework_config",
+                   return_value=(MagicMock(), MagicMock(), MagicMock(usage_window_hours=24))), \
+             patch("agento.framework.cli.token.get_connection_or_exit"), \
+             patch("agento.framework.agent_manager.list_tokens", return_value=tokens), \
+             patch("agento.framework.agent_manager.get_usage_summaries", return_value=[summary]):
+            TokenListCommand().execute(args)
+
+        out = json.loads(capsys.readouterr().out)
+        assert out[0]["tokens_used"] == 12345
+        assert isinstance(out[0]["tokens_used"], int)
+
     def test_text_output_includes_type_and_priority(self, capsys):
         from agento.framework.cli.token import TokenListCommand
 

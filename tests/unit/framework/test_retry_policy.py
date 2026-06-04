@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from agento.framework.agent_manager.errors import AuthenticationError
 from agento.framework.events import JobVerificationFailed, Verdict, VerifyReason
 from agento.framework.retry_policy import BACKOFF_DELAYS, evaluate
+
+
+def _auth_error(*, healthy_alternative: bool) -> AuthenticationError:
+    """An AuthenticationError as the consumer hands it to evaluate(): the
+    ``retry_with_other_token`` flag reflects whether the pool still has a
+    healthy token to try after poisoning the offending one."""
+    exc = AuthenticationError("401 Unauthorized", token_id=7)
+    exc.retry_with_other_token = healthy_alternative
+    return exc
 
 
 def _veto(retryable: bool, reason: VerifyReason = VerifyReason.NO_MCP_CALLS) -> JobVerificationFailed:
@@ -111,3 +121,50 @@ def test_verification_veto_backoff_caps_at_last_delay():
     decision = evaluate("JobVerificationFailed", attempt=10, max_attempts=20, error_obj=exc)
     assert decision.should_retry is True
     assert decision.delay_seconds == BACKOFF_DELAYS[-1]
+
+
+# -- AuthenticationError pool-aware retry --------------------------------------
+# AuthenticationError is normally terminal (a single bad credential won't fix
+# itself on retry). But with an LRU token pool, a poisoned token leaves healthy
+# alternatives — the consumer flags ``retry_with_other_token`` so the job
+# retries onto the next token instead of dead-lettering immediately.
+
+def test_auth_error_retries_when_healthy_alternative_exists():
+    exc = _auth_error(healthy_alternative=True)
+    decision = evaluate("AuthenticationError", attempt=1, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is True
+    assert decision.delay_seconds == BACKOFF_DELAYS[0]
+
+
+def test_auth_error_terminal_without_healthy_alternative():
+    exc = _auth_error(healthy_alternative=False)
+    decision = evaluate("AuthenticationError", attempt=1, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is False
+    assert "Non-retryable" in decision.reason
+
+
+def test_auth_error_with_alternative_respects_max_attempts():
+    exc = _auth_error(healthy_alternative=True)
+    decision = evaluate("AuthenticationError", attempt=3, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is False
+    assert "Max attempts" in decision.reason
+
+
+def test_auth_error_without_flag_is_terminal():
+    """An auth error that never went through the pool (e.g. interactive login)
+    carries no flag and stays non-retryable."""
+    exc = AuthenticationError("Not logged in")
+    decision = evaluate("AuthenticationError", attempt=1, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is False
+    assert "Non-retryable" in decision.reason
+
+
+def test_retry_flag_on_non_auth_error_does_not_bypass_non_retryable():
+    """The pool-aware retry is scoped to AuthenticationError. A stray
+    ``retry_with_other_token`` on an unrelated, normally-terminal error must
+    NOT make it retryable."""
+    exc = ValueError("boom")
+    exc.retry_with_other_token = True  # type: ignore[attr-defined]
+    decision = evaluate("ValueError", attempt=1, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is False
+    assert "Non-retryable" in decision.reason
