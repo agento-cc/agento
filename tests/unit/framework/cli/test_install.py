@@ -380,10 +380,12 @@ class TestReinstall:
         # default. _reinstall must NOT overwrite their choice — sticky pin.
         self._scaffold_project(tmp_path)
         env_path = tmp_path / "docker" / ".env"
-        # Override the scaffold defaults with a customer choice.
+        # Override whatever defaults the scaffold wrote with a customer choice.
+        # Match on the keys (not concrete defaults) so this stays valid as the
+        # agento default pins are bumped on each release.
         text = env_path.read_text()
-        text = text.replace("CLAUDE_CODE_VERSION=2.1.142", "CLAUDE_CODE_VERSION=2.1.200")
-        text = text.replace("CODEX_VERSION=0.134.0", "CODEX_VERSION=0.999.0")
+        text = re.sub(r"CLAUDE_CODE_VERSION=.*", "CLAUDE_CODE_VERSION=2.1.200", text)
+        text = re.sub(r"CODEX_VERSION=.*", "CODEX_VERSION=0.999.0", text)
         env_path.write_text(text)
 
         _reinstall(tmp_path, 1000, 1000)

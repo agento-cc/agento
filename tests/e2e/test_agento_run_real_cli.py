@@ -10,16 +10,17 @@ For each registered token type we drive the REAL pipeline:
 - assert the run exits 0 (auth + model + execution all worked).
 
 Marked ``@pytest.mark.e2e`` because they invoke the real Docker stack and the
-real provider APIs (real money). They are gated behind an explicit opt-in
+real provider APIs (real money). They are gated behind a single explicit opt-in
 because they also TEMPORARILY MUTATE the deployment DB (one token's priority and
 the agent_view's provider/model), restored in a ``finally`` block:
 
-    AGENTO_E2E=1 AGENTO_E2E_AGENT_VIEW=<code> bin/test
+    AGENTO_E2E=1 bin/test
 
-Teardown captures the agent_view-scoped provider/model overrides BEFORE the run
-and restores them afterwards — setting them back if they existed, or removing
-them only if they were unset — so pre-existing config for AGENTO_E2E_AGENT_VIEW
-is preserved, not erased.
+The agent_view to drive is auto-discovered (the first row of ``agento
+workspace:build-status``) — there is no env override. Teardown captures the
+agent_view-scoped provider/model overrides BEFORE the run and restores them
+afterwards — setting them back if they existed, or removing them only if they
+were unset — so pre-existing config for that agent_view is preserved, not erased.
 
 All DB/run interaction goes through the ``agento`` CLI (which proxies into the
 containers); the deployment DB is not reachable directly from the host.
@@ -37,7 +38,6 @@ import pytest
 _PROJECT_ROOT = Path(__file__).parents[2]
 _AGENTO = shutil.which("agento") or str(_PROJECT_ROOT / "bin" / "agento")
 _E2E_ENABLED = os.environ.get("AGENTO_E2E") == "1"
-_AGENT_VIEW = os.environ.get("AGENTO_E2E_AGENT_VIEW")
 
 # Cheap model per provider — keeps the real run inexpensive.
 _MODEL_BY_PROVIDER = {"claude": "haiku", "codex": "gpt-5.4-mini"}
@@ -56,18 +56,6 @@ _TOKEN_MATRIX = [
 # selection (ORDER BY priority ASC) regardless of the others.
 _FORCE_PRIORITY = -1_000_000
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not _E2E_ENABLED,
-        reason="set AGENTO_E2E=1 to run (spends real provider tokens, mutates the pool)",
-    ),
-    pytest.mark.skipif(
-        not _AGENT_VIEW,
-        reason="set AGENTO_E2E_AGENT_VIEW=<code> to choose the agent_view to run",
-    ),
-]
-
 
 def _agento(args: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -77,6 +65,39 @@ def _agento(args: list[str], *, timeout: int = 60) -> subprocess.CompletedProces
         text=True,
         timeout=timeout,
     )
+
+
+def _discover_agent_view() -> str | None:
+    """The agent_view to drive: the first row of ``agento workspace:build-status``
+    (the most-recently-built agent_view). Returns None when the stack is down or
+    nothing has been built yet — the suite then skips. Rows look like
+    ``<id> <code> <checksum> <status> ...``; the header and the ``---`` separator
+    have a non-numeric first column, so we take the first numeric-id row."""
+    res = _agento(["workspace:build-status"])
+    if res.returncode != 0:
+        return None
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].isdigit():
+            return parts[1]
+    return None
+
+
+# Always auto-discovered — no env override. Resolved only when enabled so a
+# normal / ``--fast`` collection never shells out to the CLI.
+_AGENT_VIEW = _discover_agent_view() if _E2E_ENABLED else None
+
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        not _E2E_ENABLED,
+        reason="set AGENTO_E2E=1 to run (spends real provider tokens, mutates the pool)",
+    ),
+    pytest.mark.skipif(
+        _E2E_ENABLED and not _AGENT_VIEW,
+        reason="no agent_view found — start the stack and build one (agento workspace:build)",
+    ),
+]
 
 
 def _agento_ok(args: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
