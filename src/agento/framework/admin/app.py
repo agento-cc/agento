@@ -9,7 +9,9 @@ from .screens.agents import AgentsScreen
 from .screens.config import ConfigScreen
 from .screens.dashboard import DashboardScreen
 from .screens.jobs import JobsScreen
+from .screens.skills import SkillsScreen
 from .screens.tokens import TokensScreen
+from .screens.tools import ToolsScreen
 from .widgets.sidebar import Sidebar
 
 CSS_PATH = Path(__file__).parent / "styles" / "admin.tcss"
@@ -30,6 +32,8 @@ class AdminApp(App):
         "jobs": JobsScreen,
         "tokens": TokensScreen,
         "agents": AgentsScreen,
+        "skills": SkillsScreen,
+        "tools": ToolsScreen,
         "config": ConfigScreen,
     }
 

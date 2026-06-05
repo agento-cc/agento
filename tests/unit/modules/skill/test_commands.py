@@ -72,7 +72,11 @@ class TestSkillListCommand:
             SkillInfo(name="alpha", path="/a", description="Alpha skill", checksum="aaa"),
             SkillInfo(name="beta", path="/b", description="Beta skill", checksum="bbb"),
         ]
-        mock_overrides.return_value = {"skill/beta/is_enabled": ("0", False)}
+        # Opt-in: alpha explicitly enabled, beta explicitly disabled.
+        mock_overrides.return_value = {
+            "skill/alpha/is_enabled": ("1", False),
+            "skill/beta/is_enabled": ("0", False),
+        }
 
         cmd = SkillListCommand()
         cmd.execute(Namespace(agent_view_code=None))

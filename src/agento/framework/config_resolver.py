@@ -358,6 +358,15 @@ class ScopedConfigService:
 
         return self._resolve_config_json(path)
 
+    def is_set_at_scope(self, path: str) -> bool:
+        """True if a row for ``path`` exists at exactly this (scope, scope_id).
+
+        Used to distinguish a locally-set value from one inherited up the scope
+        chain. Matches DB keys verbatim (no dash normalization), so it is safe for
+        paths whose segments contain dashes (e.g. ``skill/git-workflow/is_enabled``).
+        """
+        return path in self._scope_overrides
+
     def resolve_all(self) -> dict[str, str]:
         """The full effective config, each path resolved ENV -> DB -> config.json.
 

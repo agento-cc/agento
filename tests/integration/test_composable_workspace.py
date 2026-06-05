@@ -233,6 +233,7 @@ class TestWorkspaceBuildIntegration:
 
     def test_build_includes_skills(self, tmp_path):
         """When skill module is available, enabled skills are written to .claude/skills/."""
+        from agento.framework.scoped_config import scoped_config_set
         from agento.modules.skill.src.registry import sync_skills
         from agento.modules.workspace_build.src.builder import execute_build
 
@@ -246,10 +247,15 @@ class TestWorkspaceBuildIntegration:
         (skills_dir / "git-workflow" / "references").mkdir()
         (skills_dir / "git-workflow" / "references" / "commands.md").write_text("# commands ref")
 
-        # Sync skills to DB
+        # Sync skills to DB, then enable (opt-in: skills are disabled by default).
         conn = _test_connection(autocommit=False)
         try:
             sync_skills(conn, skills_dir)
+        finally:
+            conn.close()
+        conn = _test_connection(autocommit=True)
+        try:
+            scoped_config_set(conn, "skill/git-workflow/is_enabled", "1", scope="default", scope_id=0)
         finally:
             conn.close()
 

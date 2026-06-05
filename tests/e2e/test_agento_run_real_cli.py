@@ -121,6 +121,8 @@ def _restore_override(path: str, prior: str | None) -> None:
     ids=[f"{p}-{t}" for p, t in _TOKEN_MATRIX],
 )
 def test_agento_run_happy_path_per_token_type(provider: str, token_type: str):
+    if (provider, token_type) == ("codex", "codex_access_token"):
+        pytest.skip("codex_access_token temporarily skipped (per request)")
     candidates = [
         t for t in _healthy_tokens()
         if t["agent_type"] == provider and t["type"] == token_type

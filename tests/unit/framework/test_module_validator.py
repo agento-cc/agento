@@ -42,6 +42,34 @@ class TestValidateModule:
         assert any("version" in e for e in errors)
         assert any("description" in e for e in errors)
 
+    def test_tool_missing_toolset_flagged(self, tmp_path: Path):
+        mod = tmp_path / "tool-no-toolset"
+        mod.mkdir()
+        (mod / "module.json").write_text(json.dumps({
+            "name": "tool-no-toolset",
+            "version": "1.0.0",
+            "description": "Tool without a toolset",
+            "tools": [{"type": "mysql", "name": "mysql_x", "description": "X"}],
+        }))
+
+        errors = validate_module(mod)
+        assert any("tools[0] missing 'toolset'" in e for e in errors)
+
+    def test_tool_with_toolset_passes(self, tmp_path: Path):
+        mod = tmp_path / "tool-ok"
+        mod.mkdir()
+        (mod / "module.json").write_text(json.dumps({
+            "name": "tool-ok",
+            "version": "1.0.0",
+            "description": "Tool with a toolset",
+            "tools": [{"type": "mysql", "name": "mysql_x", "description": "X", "toolset": "Group"}],
+            "log_servers": [],
+        }))
+        (mod / "config.json").write_text("{}")
+
+        errors = validate_module(mod)
+        assert errors == []
+
     def test_invalid_di_json_class(self, tmp_path: Path):
         mod = tmp_path / "bad-di"
         mod.mkdir()

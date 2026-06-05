@@ -137,13 +137,68 @@ export async function loadScopedDbOverrides(agentViewId) {
 }
 
 /**
- * Check if a tool is enabled via tools/{toolName}/is_enabled config path.
- * Returns false only if explicitly set to '0'. Default = enabled.
+ * Resolve a single config value by raw path through the standard fallback:
+ * 1. ENV var: CONFIG__{PATH_WITH___} (slash -> __, dash -> _, uppercased)
+ * 2. DB: core_config_data merged across the scope chain (decrypt-aware)
+ * 3. config.json defaults (merged across modules, keyed by literal path)
+ *
+ * This is the toolbox's single config-resolution entrypoint for raw paths —
+ * the mirror of Python's ScopedConfigService.get(). Callers must NOT index
+ * dbOverrides directly, so ENV and config.json fallbacks always apply.
  */
-export function isToolEnabled(toolName, dbOverrides) {
-  const override = dbOverrides[`tools/${toolName}/is_enabled`];
-  if (override && override.value === '0') return false;
-  return true;
+export function resolveConfigValue(configPath, dbOverrides = {}, configDefaults = {}) {
+  // 1. ENV var (highest priority)
+  const envKey = `CONFIG__${configPath.replace(/\//g, '__')}`.toUpperCase().replace(/-/g, '_');
+  if (process.env[envKey] !== undefined) return process.env[envKey];
+
+  // 2. DB override (merged scope chain)
+  const override = dbOverrides[configPath];
+  if (override) {
+    if (override.encrypted) {
+      if (!hasEncryptionKey()) {
+        console.warn(`[config-loader] Cannot decrypt ${configPath}: AGENTO_ENCRYPTION_KEY not set`);
+        return null;
+      }
+      try {
+        return decrypt(override.value);
+      } catch (err) {
+        console.error(`[config-loader] Failed to decrypt ${configPath}: ${err.message}`);
+        return null;
+      }
+    }
+    return override.value;
+  }
+
+  // 3. config.json default
+  const def = configDefaults?.[configPath];
+  return def !== undefined ? String(def) : null;
+}
+
+/**
+ * Merge every module's config.json into one path-keyed defaults map.
+ * Tool names are globally unique, so first-class defaults like
+ * `tools/email_send/is_enabled` declared in a module's config.json resolve
+ * without needing to know the owning module.
+ */
+export function loadConfigDefaults() {
+  const merged = {};
+  for (const mod of scanModules()) {
+    Object.assign(merged, readConfigDefaults(mod._path));
+  }
+  return merged;
+}
+
+/**
+ * Check if a tool is enabled via the `tools/{toolName}/is_enabled` config path.
+ * Opt-in: enabled only when the resolved value is explicitly '1'. Resolution
+ * goes through resolveConfigValue (ENV -> DB -> config.json), so a module may
+ * ship a first-class tool enabled-by-default in its config.json while a missing
+ * value (and explicit '0') both mean disabled. The scope chain is already merged
+ * into dbOverrides, so an agent_view '0' overriding an inherited '1' resolves to
+ * disabled.
+ */
+export function isToolEnabled(toolName, dbOverrides, configDefaults = {}) {
+  return resolveConfigValue(`tools/${toolName}/is_enabled`, dbOverrides, configDefaults) === '1';
 }
 
 /**
@@ -396,7 +451,8 @@ export async function registerTools(server, context, agentViewId = null, preload
 
   // Resolve module-level config (system.json fields) — passed to JS tools via context
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
-  const enabledCheck = (toolName) => isToolEnabled(toolName, dbOverrides);
+  const configDefaults = loadConfigDefaults();
+  const enabledCheck = (toolName) => isToolEnabled(toolName, dbOverrides, configDefaults);
   const fileManager = createFileManager(moduleConfigs, context.log);
   const enrichedContext = { ...context, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
 

@@ -581,8 +581,8 @@ describe('isToolEnabled', () => {
     vi.resetModules();
   });
 
-  it('returns true when no is_enabled config exists', () => {
-    expect(isToolEnabled('mysql_test', {})).toBe(true);
+  it('returns false when no is_enabled config exists (opt-in default)', () => {
+    expect(isToolEnabled('mysql_test', {})).toBe(false);
   });
 
   it('returns true when is_enabled is "1"', () => {
@@ -595,9 +595,60 @@ describe('isToolEnabled', () => {
     expect(isToolEnabled('mysql_test', overrides)).toBe(false);
   });
 
-  it('returns true for unrelated tool paths', () => {
-    const overrides = { 'tools/other_tool/is_enabled': { value: '0', encrypted: false } };
-    expect(isToolEnabled('mysql_test', overrides)).toBe(true);
+  it('returns false for a tool with no own is_enabled row even if others are set', () => {
+    const overrides = { 'tools/other_tool/is_enabled': { value: '1', encrypted: false } };
+    expect(isToolEnabled('mysql_test', overrides)).toBe(false);
+  });
+
+  it('three-state: merged "0" (agent_view) overriding inherited "1" stays disabled', () => {
+    // loadScopedDbOverrides merges the chain into one value before this runs,
+    // so an agent_view '0' that overrode a default '1' arrives here as '0'.
+    const overrides = { 'tools/mysql_test/is_enabled': { value: '0', encrypted: false } };
+    expect(isToolEnabled('mysql_test', overrides)).toBe(false);
+  });
+
+  it('enabled via a config.json "1" default when no DB row (first-class tool)', () => {
+    const configDefaults = { 'tools/email_send/is_enabled': '1' };
+    expect(isToolEnabled('email_send', {}, configDefaults)).toBe(true);
+  });
+
+  it('DB "0" overrides a config.json "1" default', () => {
+    const dbOverrides = { 'tools/email_send/is_enabled': { value: '0', encrypted: false } };
+    const configDefaults = { 'tools/email_send/is_enabled': '1' };
+    expect(isToolEnabled('email_send', dbOverrides, configDefaults)).toBe(false);
+  });
+});
+
+describe('resolveConfigValue', () => {
+  let resolveConfigValue;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock('../db.js', () => ({ getCronPool: () => ({ query: vi.fn().mockResolvedValue([[]]) }) }));
+    vi.doMock('../log.js', () => ({ logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn() }));
+    const mod = await import('../config-loader.js');
+    resolveConfigValue = mod.resolveConfigValue;
+  });
+
+  afterEach(() => {
+    delete process.env.CONFIG__TOOLS__EMAIL_SEND__IS_ENABLED;
+    vi.resetModules();
+  });
+
+  it('precedence ENV > DB > config.json', () => {
+    const dbOverrides = { 'tools/email_send/is_enabled': { value: '0', encrypted: false } };
+    const configDefaults = { 'tools/email_send/is_enabled': '1' };
+    // config.json only
+    expect(resolveConfigValue('tools/email_send/is_enabled', {}, configDefaults)).toBe('1');
+    // DB beats config.json
+    expect(resolveConfigValue('tools/email_send/is_enabled', dbOverrides, configDefaults)).toBe('0');
+    // ENV beats both
+    process.env.CONFIG__TOOLS__EMAIL_SEND__IS_ENABLED = '1';
+    expect(resolveConfigValue('tools/email_send/is_enabled', dbOverrides, configDefaults)).toBe('1');
+  });
+
+  it('returns null when no source has the path', () => {
+    expect(resolveConfigValue('tools/unknown/is_enabled', {}, {})).toBe(null);
   });
 });
 
@@ -645,6 +696,7 @@ describe('registerTools integration', () => {
       .mockResolvedValueOnce([[{ id: 2, workspace_id: 1, label: 'Dev', workspace_code: 'acme', agent_view_code: 'av2' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace: empty
       .mockResolvedValueOnce([[  // agent_view scope
+        { path: 'tools/mysql_prod/is_enabled', value: '1', encrypted: 0 },
         { path: 'myapp/tools/mysql_prod/host', value: 'scoped-db.internal', encrypted: 0 },
         { path: 'myapp/tools/mysql_prod/pass', value: 'secret', encrypted: 0 },
       ]]);
@@ -762,7 +814,7 @@ describe('registerTools integration', () => {
     expect(captured.emailEnabled).toBe(false);
   });
 
-  it('no agent_view_id serves globally enabled tools only', async () => {
+  it('no agent_view_id serves only globally enabled tools (opt-in)', async () => {
     createModule('myapp', {
       name: 'myapp',
       tools: [
@@ -771,11 +823,11 @@ describe('registerTools integration', () => {
       ],
     }, { tools: { mysql_a: { host: 'a.db' }, mysql_b: { host: 'b.db' } } });
 
-    // Disable mysql_b globally
+    // Opt-in: enable mysql_a globally; mysql_b has no '1' row so it stays disabled.
     vi.doMock('../db.js', () => ({
       getCronPool: () => ({
         query: vi.fn().mockResolvedValue([[
-          { path: 'tools/mysql_b/is_enabled', value: '0', encrypted: 0 },
+          { path: 'tools/mysql_a/is_enabled', value: '1', encrypted: 0 },
         ]]),
       }),
     }));
@@ -810,12 +862,15 @@ describe('registerTools integration', () => {
       ],
     }, { tools: { erp_read: { host: 'db.internal' }, erp_write: { host: 'db.internal' } } });
 
-    // --- Agent view 10 (developer): all tools enabled (no disable overrides) ---
+    // --- Agent view 10 (developer): both tools explicitly enabled (opt-in) ---
     const queryDev = vi.fn()
       .mockResolvedValueOnce([[]])  // global overrides
       .mockResolvedValueOnce([[{ id: 10, workspace_id: 1, label: 'Developer', workspace_code: 'acme', agent_view_code: 'av10' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace overrides
-      .mockResolvedValueOnce([[]]);  // agent_view overrides: nothing disabled
+      .mockResolvedValueOnce([[  // agent_view overrides: enable both
+        { path: 'tools/erp_read/is_enabled', value: '1', encrypted: 0 },
+        { path: 'tools/erp_write/is_enabled', value: '1', encrypted: 0 },
+      ]]);
 
     vi.doMock('../db.js', () => ({
       getCronPool: () => ({ query: queryDev }),
@@ -838,12 +893,13 @@ describe('registerTools integration', () => {
     expect(devTools).toHaveLength(2);
     expect(devTools.map(t => t.name).sort()).toEqual(['erp_read', 'erp_write']);
 
-    // --- Agent view 20 (qa-tester): erp_write disabled ---
+    // --- Agent view 20 (qa-tester): erp_read enabled, erp_write explicitly disabled ---
     const queryQa = vi.fn()
       .mockResolvedValueOnce([[]])  // global overrides
       .mockResolvedValueOnce([[{ id: 20, workspace_id: 1, label: 'QA Tester', workspace_code: 'acme', agent_view_code: 'av20' }]])  // agent_view lookup
       .mockResolvedValueOnce([[]])  // workspace overrides
-      .mockResolvedValueOnce([[  // agent_view overrides: disable erp_write
+      .mockResolvedValueOnce([[  // agent_view overrides: enable erp_read, disable erp_write
+        { path: 'tools/erp_read/is_enabled', value: '1', encrypted: 0 },
         { path: 'tools/erp_write/is_enabled', value: '0', encrypted: 0 },
       ]]);
 
@@ -927,6 +983,42 @@ describe('registerTools integration', () => {
     await mod.registerTools({ tool: vi.fn() }, { log: vi.fn(), db: {}, playwright: {} }, 31);
 
     tools = adapterMod.registerAdapterTools.mock.calls[0][1];
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe('crm_search');
+  });
+
+  it('agent_view inherits an enable ("1") set at workspace scope (opt-in)', async () => {
+    createModule('crm', {
+      name: 'crm',
+      tools: [
+        { type: 'mysql', name: 'crm_search', description: 'CRM Search', fields: { host: { type: 'string' } } },
+      ],
+    }, { tools: { crm_search: { host: 'crm.internal' } } });
+
+    // workspace enables crm_search; agent_view has no row -> inherits the enable
+    const queryInherit = vi.fn()
+      .mockResolvedValueOnce([[]])  // global
+      .mockResolvedValueOnce([[{ id: 50, workspace_id: 7, label: 'Team', workspace_code: 'acme', agent_view_code: 'av50' }]])
+      .mockResolvedValueOnce([[  // workspace: enable
+        { path: 'tools/crm_search/is_enabled', value: '1', encrypted: 0 },
+      ]])
+      .mockResolvedValueOnce([[]]);  // agent_view: empty -> inherits workspace enable
+
+    vi.doMock('../db.js', () => ({ getCronPool: () => ({ query: queryInherit }) }));
+    vi.doMock('../log.js', () => ({
+      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+    }));
+    vi.doMock('../adapters/index.js', () => ({
+      registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
+    }));
+
+    vi.resetModules();
+    const adapterMod = await import('../adapters/index.js');
+    const mod = await import('../config-loader.js');
+
+    await mod.registerTools({ tool: vi.fn() }, { log: vi.fn(), db: {}, playwright: {} }, 50);
+
+    const tools = adapterMod.registerAdapterTools.mock.calls[0][1];
     expect(tools).toHaveLength(1);
     expect(tools[0].name).toBe('crm_search');
   });

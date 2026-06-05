@@ -91,7 +91,8 @@ class TestSetupUpgrade:
             mod = Path(core_dir) / name
             mod.mkdir()
             (mod / "module.json").write_text(json.dumps({
-                "name": name, "order": order, "sequence": ["core"] if name == "jira" else [],
+                "name": name, "version": "1.0.0", "description": f"{name} module",
+                "order": order, "sequence": ["core"] if name == "jira" else [],
             }))
             sql = mod / "sql"
             sql.mkdir()
@@ -112,6 +113,26 @@ class TestSetupUpgrade:
         assert module_calls[0][1]["module"] == "core"
         assert module_calls[1][1]["module"] == "jira"
         assert result.module_migrations == {"core": ["001_init"], "jira": ["001_init"]}
+
+    @patch("agento.framework.setup.migrate")
+    def test_invalid_manifest_aborts_before_migrations(self, mock_migrate, tmp_path):
+        import pytest
+
+        from agento.framework.setup import ModuleValidationError
+
+        core_dir, user_dir = _setup_modules(tmp_path)
+        # Enabled module whose tool is missing the required 'toolset'.
+        mod = Path(core_dir) / "bad"
+        mod.mkdir()
+        (mod / "module.json").write_text(json.dumps({
+            "name": "bad", "version": "1.0.0", "description": "bad module",
+            "tools": [{"type": "mysql", "name": "mysql_x", "description": "x"}],
+        }))
+        conn, _ = _mock_conn()
+
+        with pytest.raises(ModuleValidationError):
+            setup_upgrade(conn, logging.getLogger("test"), core_dir=core_dir, user_dir=user_dir)
+        mock_migrate.assert_not_called()  # aborts before any migration
 
     @patch("agento.framework.setup.install_crontab", return_value=False)
     @patch("agento.framework.setup.get_current_crontab", return_value="")
@@ -139,7 +160,9 @@ class TestSetupUpgrade:
         # Module with cron.json
         mod = Path(core_dir) / "jira"
         mod.mkdir()
-        (mod / "module.json").write_text(json.dumps({"name": "jira"}))
+        (mod / "module.json").write_text(json.dumps(
+            {"name": "jira", "version": "1.0.0", "description": "jira module"}
+        ))
         (mod / "cron.json").write_text(json.dumps({
             "jobs": [{"name": "sync", "schedule": "0 * * * *", "command": "sync"}]
         }))
@@ -244,6 +267,7 @@ class TestStrictOnboarding:
         with patch("agento.framework.setup.install_crontab", return_value=False), \
              patch("agento.framework.setup.get_current_crontab", return_value=""), \
              patch("agento.framework.setup.migrate", return_value=[]), \
+             patch("agento.framework.setup.validate_module", return_value=[]), \
              patch("agento.framework.onboarding.get_onboardings", return_value=onboardings), \
              patch("agento.framework.bootstrap.get_module_config", return_value={}), \
              patch("agento.framework.cli.terminal.select", side_effect=select_returns) as mock_select, \

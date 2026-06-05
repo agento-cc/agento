@@ -52,7 +52,7 @@ Shortcut: `sk:li`
   brainstorming                  enabled    Creative exploration before implementation
 ```
 
-Skills are **enabled by default**. A skill is disabled only when `skill/{name}/is_enabled` is explicitly set to `0` in scoped config.
+Skills are **disabled by default (opt-in)**. A skill is `enabled` only when `skill/{name}/is_enabled` resolves to `1` for the scope. Running `skill:sync` registers a skill but grants no access until you explicitly enable it.
 
 If no skills are registered, prints: `No skills registered. Run skill:sync first.`
 
@@ -139,7 +139,13 @@ Enable/disable uses the standard 3-level scoped config system:
 - Value: `1` (enabled) or `0` (disabled)
 - Scopes: `default` → `workspace` → `agent_view` (most specific wins)
 
-Skills are enabled by default — no config entry needed. Only explicitly disabled skills are excluded.
+Skills are **opt-in**: the resolved value must be `1` for a skill to be materialized into a workspace build. Three-state semantics on the resolved value:
+
+- missing (no row at any scope) → **disabled**
+- `1` → enabled
+- `0` → disabled (explicit; an `agent_view`/`workspace` `0` overrides an inherited `1`)
+
+The admin TUI **Skills** screen (`agento admin`) lists all synced skills alphabetically with a checkbox per skill for the chosen scope.
 
 ### Integration with Workspace Builds
 

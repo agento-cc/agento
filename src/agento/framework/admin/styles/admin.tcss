@@ -105,6 +105,42 @@ DataTable {
     margin: 2 4;
 }
 
+/* Skills / Tools (enablement) screens */
+.enablement-top {
+    height: auto;
+    padding: 0 1;
+}
+
+.enablement-hint {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+.enablement-lists {
+    height: 1fr;
+}
+
+.toolset-section {
+    height: auto;
+}
+
+.toolset-header {
+    width: 100%;
+    margin: 1 1 0 1;
+}
+
+.enablement-list {
+    height: auto;
+    border: round $secondary;
+    margin: 0 1 0 1;
+    padding: 0 1;
+}
+
+.enablement-empty {
+    padding: 1 2;
+    color: $text-muted;
+}
+
 /* Config screen layout */
 #config-top {
     height: auto;

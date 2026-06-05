@@ -27,38 +27,34 @@ class ToolListCommand:
     def execute(self, args: argparse.Namespace) -> None:
         from agento.framework.bootstrap import get_manifests
         from agento.framework.cli.runtime import _load_framework_config
+        from agento.framework.config_resolver import ScopedConfigService
         from agento.framework.db import get_connection
-        from agento.framework.scoped_config import build_scoped_overrides
+        from agento.framework.scoped_config import Scope
         from agento.framework.workspace import get_agent_view_by_code
 
         db_config, _, _ = _load_framework_config()
         conn = get_connection(db_config)
         try:
-            agent_view_id = None
-            workspace_id = None
+            scope, scope_id, workspace_id = Scope.DEFAULT, 0, None
 
             if args.agent_view_code:
                 agent_view = get_agent_view_by_code(conn, args.agent_view_code)
                 if agent_view is None:
                     print(f"Error: agent_view '{args.agent_view_code}' not found")
                     return
-                agent_view_id = agent_view.id
-                workspace_id = agent_view.workspace_id
+                scope, scope_id, workspace_id = Scope.AGENT_VIEW, agent_view.id, agent_view.workspace_id
 
-            overrides = build_scoped_overrides(
-                conn,
-                agent_view_id=agent_view_id,
-                workspace_id=workspace_id,
-            )
+            # Resolve through the single config service (ENV -> DB -> config.json).
+            # Tool names are snake_case, so .get() is dash-safe and reflects any
+            # config.json first-class default.
+            svc = ScopedConfigService(conn, scope, scope_id, workspace_id=workspace_id)
 
             manifests = get_manifests()
             tools = []
             for manifest in manifests:
                 for tool in manifest.tools:
                     tool_name = tool["name"]
-                    path = f"tools/{tool_name}/is_enabled"
-                    entry = overrides.get(path)
-                    enabled = entry is None or entry[0] != "0"
+                    enabled = svc.get(f"tools/{tool_name}/is_enabled") == "1"
                     tools.append((tool_name, manifest.name, enabled))
 
             if not tools:

@@ -210,7 +210,7 @@ class TestSkillScopedEnableDisable:
         av_id = _insert_agent_view(ws_id)
         return ws_id, av_id
 
-    def test_all_skills_enabled_by_default(self, tmp_path):
+    def test_no_skills_enabled_by_default(self, tmp_path):
         from agento.modules.skill.src.registry import get_enabled_skills
 
         ws_id, av_id = self._setup_skills(tmp_path)
@@ -221,11 +221,10 @@ class TestSkillScopedEnableDisable:
         finally:
             conn.close()
 
-        assert len(enabled) == 2
-        names = {s.name for s in enabled}
-        assert names == {"skill-a", "skill-b"}
+        # Opt-in: nothing is enabled until an explicit '1' row exists.
+        assert len(enabled) == 0
 
-    def test_disable_skill_for_agent_view(self, tmp_path):
+    def test_enable_skill_for_agent_view(self, tmp_path):
         from agento.framework.scoped_config import scoped_config_set
         from agento.modules.skill.src.registry import get_enabled_skills
 
@@ -233,6 +232,41 @@ class TestSkillScopedEnableDisable:
 
         conn = _test_connection(autocommit=True)
         try:
+            scoped_config_set(conn, "skill/skill-a/is_enabled", "1", scope="agent_view", scope_id=av_id)
+            enabled = get_enabled_skills(conn, agent_view_id=av_id, workspace_id=ws_id)
+        finally:
+            conn.close()
+
+        assert len(enabled) == 1
+        assert enabled[0].name == "skill-a"
+
+    def test_enable_skill_globally_inherited_by_agent_view(self, tmp_path):
+        from agento.framework.scoped_config import scoped_config_set
+        from agento.modules.skill.src.registry import get_enabled_skills
+
+        ws_id, av_id = self._setup_skills(tmp_path)
+
+        conn = _test_connection(autocommit=True)
+        try:
+            scoped_config_set(conn, "skill/skill-a/is_enabled", "1", scope="default", scope_id=0)
+            enabled = get_enabled_skills(conn, agent_view_id=av_id, workspace_id=ws_id)
+        finally:
+            conn.close()
+
+        # agent_view has no own row -> inherits the default enable.
+        assert len(enabled) == 1
+        assert enabled[0].name == "skill-a"
+
+    def test_agent_view_disable_overrides_default_enable(self, tmp_path):
+        from agento.framework.scoped_config import scoped_config_set
+        from agento.modules.skill.src.registry import get_enabled_skills
+
+        ws_id, av_id = self._setup_skills(tmp_path)
+
+        conn = _test_connection(autocommit=True)
+        try:
+            scoped_config_set(conn, "skill/skill-a/is_enabled", "1", scope="default", scope_id=0)
+            scoped_config_set(conn, "skill/skill-b/is_enabled", "1", scope="default", scope_id=0)
             scoped_config_set(conn, "skill/skill-a/is_enabled", "0", scope="agent_view", scope_id=av_id)
             enabled = get_enabled_skills(conn, agent_view_id=av_id, workspace_id=ws_id)
         finally:
@@ -240,22 +274,6 @@ class TestSkillScopedEnableDisable:
 
         assert len(enabled) == 1
         assert enabled[0].name == "skill-b"
-
-    def test_disable_skill_globally(self, tmp_path):
-        from agento.framework.scoped_config import scoped_config_set
-        from agento.modules.skill.src.registry import get_enabled_skills
-
-        ws_id, av_id = self._setup_skills(tmp_path)
-
-        conn = _test_connection(autocommit=True)
-        try:
-            scoped_config_set(conn, "skill/skill-b/is_enabled", "0", scope="default", scope_id=0)
-            enabled = get_enabled_skills(conn, agent_view_id=av_id, workspace_id=ws_id)
-        finally:
-            conn.close()
-
-        assert len(enabled) == 1
-        assert enabled[0].name == "skill-a"
 
     def test_agent_view_re_enables_globally_disabled_skill(self, tmp_path):
         from agento.framework.scoped_config import scoped_config_set

@@ -36,7 +36,8 @@ class TestToolListCommand:
     @patch("agento.framework.bootstrap.get_manifests")
     @patch("agento.framework.db.get_connection")
     @patch("agento.framework.cli.runtime._load_framework_config")
-    def test_list_all_enabled(self, mock_config, mock_conn_fn, mock_manifests, mock_overrides, mock_av, capsys):
+    def test_list_all_disabled_by_default(self, mock_config, mock_conn_fn, mock_manifests, mock_overrides, mock_av, capsys):
+        # Opt-in: with no override rows, every tool lists as disabled.
         mock_config.return_value = ({}, None, None)
         conn, _ = _mock_conn()
         mock_conn_fn.return_value = conn
@@ -52,14 +53,15 @@ class TestToolListCommand:
         output = capsys.readouterr().out
         assert "jira_search" in output
         assert "slack_post" in output
-        assert "enabled" in output
+        assert "disabled" in output
+        assert "enabled" not in output
 
     @patch("agento.framework.workspace.get_agent_view_by_code")
     @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.framework.bootstrap.get_manifests")
     @patch("agento.framework.db.get_connection")
     @patch("agento.framework.cli.runtime._load_framework_config")
-    def test_list_with_disabled_tool(self, mock_config, mock_conn_fn, mock_manifests, mock_overrides, mock_av, capsys):
+    def test_list_with_mixed_status(self, mock_config, mock_conn_fn, mock_manifests, mock_overrides, mock_av, capsys):
         mock_config.return_value = ({}, None, None)
         conn, _ = _mock_conn()
         mock_conn_fn.return_value = conn
@@ -69,7 +71,9 @@ class TestToolListCommand:
                 {"name": "jira_create", "type": "mysql"},
             ]),
         ]
+        # Opt-in: jira_create explicitly enabled; jira_search explicitly disabled.
         mock_overrides.return_value = {
+            "tools/jira_create/is_enabled": ("1", False),
             "tools/jira_search/is_enabled": ("0", False),
         }
 

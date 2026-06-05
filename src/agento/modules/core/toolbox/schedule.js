@@ -11,7 +11,8 @@ export async function healthcheck({ db }) {
   }
 }
 
-export function register(server, { log, db }) {
+export function register(server, { log, db, isToolEnabled }) {
+  if (isToolEnabled && !isToolEnabled('schedule_followup')) return;
   server.tool(
     'schedule_followup',
     [

@@ -159,7 +159,8 @@ class TestGetAllSkills:
 class TestGetEnabledSkills:
     @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.modules.skill.src.registry.get_all_skills")
-    def test_all_enabled_by_default(self, mock_get_all, mock_overrides):
+    def test_none_enabled_by_default(self, mock_get_all, mock_overrides):
+        # Opt-in: with no override rows, every skill is disabled.
         mock_get_all.return_value = [
             SkillInfo(name="a", path="/a", description="", checksum=""),
             SkillInfo(name="b", path="/b", description="", checksum=""),
@@ -168,16 +169,20 @@ class TestGetEnabledSkills:
         conn = MagicMock()
 
         result = get_enabled_skills(conn)
-        assert len(result) == 2
+        assert len(result) == 0
 
     @patch("agento.framework.scoped_config.build_scoped_overrides")
     @patch("agento.modules.skill.src.registry.get_all_skills")
-    def test_disabled_skill_excluded(self, mock_get_all, mock_overrides):
+    def test_only_explicitly_enabled_included(self, mock_get_all, mock_overrides):
         mock_get_all.return_value = [
             SkillInfo(name="a", path="/a", description="", checksum=""),
             SkillInfo(name="b", path="/b", description="", checksum=""),
         ]
-        mock_overrides.return_value = {"skill/b/is_enabled": ("0", False)}
+        # "a" enabled with '1'; "b" explicitly disabled with '0'.
+        mock_overrides.return_value = {
+            "skill/a/is_enabled": ("1", False),
+            "skill/b/is_enabled": ("0", False),
+        }
         conn = MagicMock()
 
         result = get_enabled_skills(conn)
@@ -195,6 +200,26 @@ class TestGetEnabledSkills:
 
         result = get_enabled_skills(conn)
         assert len(result) == 1
+
+    @patch("agento.framework.scoped_config.build_scoped_overrides")
+    @patch("agento.modules.skill.src.registry.get_all_skills")
+    def test_three_state_semantics(self, mock_get_all, mock_overrides):
+        # build_scoped_overrides already merges agent_view > workspace > default
+        # into one value per path, so we assert against the merged result:
+        #   missing -> disabled, '1' -> enabled, '0' -> disabled.
+        mock_get_all.return_value = [
+            SkillInfo(name="missing", path="/m", description="", checksum=""),
+            SkillInfo(name="on", path="/o", description="", checksum=""),
+            SkillInfo(name="off", path="/f", description="", checksum=""),
+        ]
+        mock_overrides.return_value = {
+            "skill/on/is_enabled": ("1", False),
+            "skill/off/is_enabled": ("0", False),  # e.g. agent_view '0' over inherited '1'
+        }
+        conn = MagicMock()
+
+        result = get_enabled_skills(conn)
+        assert [s.name for s in result] == ["on"]
 
 
 class TestScanSkillsMulti:

@@ -78,7 +78,10 @@ def _validate_module(module_dir: Path) -> tuple[list[str], dict | None]:
             if not isinstance(tool, dict):
                 errors.append(f"module.json: tools[{i}] must be an object")
                 continue
-            for tf in ("type", "name", "description"):
+            # 'toolset' is required so every tool declares its admin-UI group
+            # explicitly (the Tools screen falls back to the module name at
+            # runtime, but validation makes the grouping intentional).
+            for tf in ("type", "name", "description", "toolset"):
                 if tf not in tool:
                     errors.append(f"module.json: tools[{i}] missing '{tf}'")
 

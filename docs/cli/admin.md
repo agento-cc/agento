@@ -84,6 +84,32 @@ Token list with 24-hour usage statistics.
 
 **Detail panel** shows type, status, enabled status, token limit, usage, and free percentage.
 
+### Skills
+
+Checkbox view for enabling/disabling **skills** per scope, as a single **alphabetical** list. Skills are opt-in (disabled by default), so this is where you grant them.
+
+**Scope selector** at the top switches between default, workspace, and agent_view scopes. Each checkbox reflects the **resolved** `is_enabled` value at the selected scope — a box inherited from a parent scope shows as checked and is labelled `(inherited)`.
+
+| Key | Action |
+|-----|--------|
+| `Space` / `Enter` | Toggle the highlighted skill |
+| arrow keys | Move between skills |
+
+Toggling writes `skill/{name}/is_enabled` at the selected scope: checking writes `1`, unchecking writes `0`. An explicit `0` at `agent_view`/`workspace` overrides an inherited `1`. (To clear an override and fall back to the parent scope, use the Config screen's `d` Delete.)
+
+### Tools
+
+Checkbox view for enabling/disabling **tools** per scope, **grouped into sections per toolset** (alphabetical within each, toolsets alphabetical). A tool's toolset comes from its `toolset` field in module.json (defaults to the module name). Tools are opt-in.
+
+Each toolset section has a **toggle-all** button: clicking it enables every tool in the toolset if any is off, or disables the whole toolset when all are on. The scope selector and inherited-checkbox behaviour match the Skills screen.
+
+| Key | Action |
+|-----|--------|
+| `Space` / `Enter` | Toggle the highlighted tool, or activate a toolset's toggle-all button |
+| arrow keys | Move between tools, toolset buttons, and sections |
+
+Toggling writes `tools/{name}/is_enabled` at the selected scope (`1`/`0`); the toggle-all button writes every tool in the toolset at once.
+
 ### Config
 
 ![Admin Config Screen](../images/admin-config.png)

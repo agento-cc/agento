@@ -44,6 +44,8 @@ class Sidebar(Widget):
         ("jobs", "  Jobs"),
         ("agents", "  Agents"),
         ("tokens", "  Tokens"),
+        ("skills", "  Skills"),
+        ("tools", "  Tools"),
         ("config", "  Config"),
     ]
 

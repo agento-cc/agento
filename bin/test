@@ -45,7 +45,7 @@ check() {
 }
 
 # ============================================================
-echo -e "${CYAN}[1/7] JSON Config Validation${NC}"
+echo -e "${CYAN}[1/8] JSON Config Validation${NC}"
 echo "========================================"
 
 json_errors=0
@@ -144,7 +144,32 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[2/7] Ruff Lint${NC}"
+echo -e "${CYAN}[2/8] Module Validation${NC}"
+echo "========================================"
+
+cd "$PROJECT_DIR"
+if uv run python -c "
+import sys
+from pathlib import Path
+from agento.framework.bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
+from agento.framework.module_validator import validate_all
+results = validate_all(Path(CORE_MODULES_DIR), Path(USER_MODULES_DIR))
+for name in sorted(results):
+    for err in results[name]:
+        print(f'  {name}: {err}')
+sys.exit(1 if results else 0)
+" 2>&1; then
+  echo -e "  ${GREEN}module:validate: all modules valid${NC}"
+  ((pass++)) || true
+else
+  echo -e "  ${RED}module validation failed${NC}"
+  ((fail++)) || true
+fi
+
+echo ""
+
+# ============================================================
+echo -e "${CYAN}[3/8] Ruff Lint${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR"
@@ -158,7 +183,7 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[3/7] Basedpyright${NC}"
+echo -e "${CYAN}[4/8] Basedpyright${NC}"
 echo "========================================"
 
 if uv run basedpyright 2>&1; then
@@ -171,7 +196,7 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[4/7] ESLint (Toolbox)${NC}"
+echo -e "${CYAN}[5/8] ESLint (Toolbox)${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR/src/agento/toolbox"
@@ -186,7 +211,7 @@ cd "$PROJECT_DIR"
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[5/7] Python Tests — unit + integration${NC}"
+echo -e "${CYAN}[6/8] Python Tests — unit + integration${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR"
@@ -200,11 +225,11 @@ echo ""
 
 # ============================================================
 if [ "$fast_mode" -eq 1 ]; then
-  echo -e "${CYAN}[6/7] Python e2e Tests ${DIM}(--fast)${NC}"
+  echo -e "${CYAN}[7/8] Python e2e Tests ${DIM}(--fast)${NC}"
   echo "========================================"
   echo -e "  ${DIM}-- skipped --${NC}"
 else
-  echo -e "${CYAN}[6/7] Python e2e Tests${NC}"
+  echo -e "${CYAN}[7/8] Python e2e Tests${NC}"
   echo "========================================"
   if uv run pytest -q -m "e2e" 2>&1; then
     ((pass++)) || true
@@ -216,7 +241,7 @@ fi
 echo ""
 
 # ============================================================
-echo -e "${CYAN}[7/7] JS Toolbox Tests${NC}"
+echo -e "${CYAN}[8/8] JS Toolbox Tests${NC}"
 echo "========================================"
 
 cd "$PROJECT_DIR/src/agento/toolbox"
@@ -227,6 +252,7 @@ else
 fi
 
 cd "$PROJECT_DIR"
+echo ""
 
 # Summary
 echo ""

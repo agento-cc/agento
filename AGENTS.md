@@ -28,9 +28,9 @@ Automates Jira tasks using AI agents (Claude Code, OpenAI Codex) in Docker conta
 - **Cron container env contract:** Any env var the cron/consumer needs from `docker-compose` must use the `AGENTO_*` prefix (e.g. `AGENTO_CONSUMER_MAX_WORKERS`). The entrypoint whitelist only persists `AGENTO_*`, `MYSQL_*`, `CONFIG__*`, `TZ`, `PYTHONPATH`, `PROVIDER`, `DISABLE_LLM`, and `DISABLE_AUTOUPDATER` across the `su - agent` env wipe — non-prefixed framework knobs are silently dropped. See [docs/architecture/cron-env-contract.md](docs/architecture/cron-env-contract.md).
 - **Routing:** Ingress identities map inbound requests to agent_views. Channels auto-resolve via `resolve_agent_view()` before publishing.
 - **Agent view config:** Scoped DB paths `agent_view/provider`, `agent_view/model`, `agent_view/scheduling/priority`, `agent_view/instructions/agents_md`, `agent_view/instructions/soul_md` — resolved with agent_view → workspace → global fallback.
-- **Security:** Toolbox = only container with secrets. Agent has NO credentials.
+- **Security:** Toolbox = only container with secrets. Agent has NO credentials. Tools and skills are **opt-in** (disabled by default) — least privilege: a tool/skill is available only when `is_enabled` resolves to `1` for the scope (agent_view > workspace > default). Adding a module or syncing a skill grants no access until explicitly enabled.
 - **DB tables:** singular names (e.g., `job`, `schedule`, `oauth_token`). Exception: `core_config_data` (Magento convention).
-- **Setup:** `setup:upgrade` on deploy — applies schema migrations, data patches, installs crontab, runs module onboarding (strict: complete, disable+dependents, or quit). Use `--skip-onboarding` for CI/CD. Manual alternative: pre-set config values via `config:set`. See [docs/cli/onboarding.md](docs/cli/onboarding.md).
+- **Setup:** `setup:upgrade` on deploy — **validates enabled module manifests first** (aborts before any DB change if a manifest is invalid, e.g. a tool missing `toolset`), then applies schema migrations, data patches, installs crontab, runs module onboarding (strict: complete, disable+dependents, or quit). Use `--skip-onboarding` for CI/CD. `bin/test` runs the same `module:validate` check. Manual alternative: pre-set config values via `config:set`. See [docs/cli/onboarding.md](docs/cli/onboarding.md).
 - **Module setup files:** `sql/*.sql` (schema migrations), `data_patch.json` (data patches), `cron.json` (cron jobs), `di.json` onboarding (interactive external system setup)
 - **Migration tracking:** `schema_migration` table (with `module` column), `data_patch` table
 - **Events:** Naming convention: `{subject}_{verb}_{before|after}` — e.g. `job_claim_after`, `module_register_before`, `workspace_build_complete_after`. Third-party: `{vendor}_{module}_{subject}_{verb}_{before|after}`. Prefer `_after` events; use `_before` only when observers need pre-action state. See [docs/architecture/events.md](docs/architecture/events.md).
@@ -115,12 +115,12 @@ agento ingress:bind <type> <value> <agent_view_code>   # e.g. ingress:bind jira 
 agento ingress:list [--type <type>] [--json]
 agento ingress:unbind <type> <value>
 
-# Tools (per-agent_view enable/disable — toolbox uses existing isToolEnabled mechanism)
+# Tools (OPT-IN: disabled by default; enabled only when is_enabled resolves to '1' — toolbox isToolEnabled)
 agento tool:list [--agent-view <code>]                 # List tools with enabled/disabled status
 agento tool:enable <name> [--agent-view <code>]        # Enable a tool (also: --scope/--scope-id)
 agento tool:disable <name> [--agent-view <code>]       # Disable a tool (also: --scope/--scope-id)
 
-# Skills (scan from disk, enable/disable per agent_view)
+# Skills (OPT-IN: disabled by default; enabled only when is_enabled resolves to '1')
 agento skill:sync                                      # Scan skills from disk → sync to DB registry
 agento skill:list [--agent-view <code>]                # List skills with enabled/disabled status
 agento skill:enable <name> [--agent-view <code>]       # Enable a skill (also: --scope/--scope-id)

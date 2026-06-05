@@ -31,7 +31,7 @@ Shortcut: `to:li`
   browser                        core                 enabled
 ```
 
-Columns: tool name, module name, status. Tools are **enabled by default** — disabled only when `tools/{name}/is_enabled` is explicitly set to `0`.
+Columns: tool name, module name, status. Tools are **disabled by default (opt-in)** — a tool is `enabled` only when `tools/{name}/is_enabled` resolves to `1` for the scope. Adding a module grants no access until you explicitly enable its tools.
 
 ## `tool:enable`
 
@@ -39,16 +39,18 @@ Columns: tool name, module name, status. Tools are **enabled by default** — di
 
 ```bash
 # Enable at default scope
-agento tool:enable jira_search
+agento tool:enable mysql_reporting
 
 # Enable for a specific agent_view
-agento tool:enable jira_search --agent-view developer
+agento tool:enable mysql_reporting --agent-view developer
 
 # Enable at explicit scope
-agento tool:enable jira_search --scope workspace --scope-id 1
+agento tool:enable mysql_reporting --scope workspace --scope-id 1
 ```
 
 Shortcut: `to:en`
+
+> **Gate key vs. tool name.** For adapter tools (mysql/mssql/opensearch) the gate key *is* the tool name. Some JS-implemented modules gate **all** their tools under one module key — e.g. every tool in the `jira` module is gated by `tools/jira/is_enabled`, so you enable the whole group with `agento tool:enable jira` (not per individual `jira_*` tool).
 
 ### Options
 
@@ -98,7 +100,15 @@ Enable/disable uses the standard 3-level scoped config system:
 - Value: `1` (enabled) or `0` (disabled)
 - Scopes: `default` → `workspace` → `agent_view` (most specific wins)
 
-Tools are enabled by default — no config entry needed. Only explicitly disabled tools are filtered out.
+Tools are **opt-in**: the resolved value must be `1` for a tool to be available. The value is resolved by the single config service (toolbox `config-loader.js` / Python `ScopedConfigService`) with the standard fallback **ENV → DB → `config.json`**, then three-state semantics apply:
+
+- missing (no ENV/DB/`config.json` value) → **disabled**
+- `1` → enabled
+- `0` → disabled (explicit; an `agent_view`/`workspace` `0` overrides an inherited `1`)
+
+This least-privilege default means a newly added module's tools — including DB tools that carry credentials — are unavailable until an operator enables them. Enable broadly at `default`, then narrow per `workspace`/`agent_view`, or enable only where needed. The admin TUI **Tools** screen (`agento admin`) offers a checkbox view of all tools grouped into sections by toolset (each with a "toggle all") for a chosen scope. A tool's toolset is its required `toolset` field in `module.json` (checked by `agento module:validate`; the screen falls back to the module name only if a value is absent).
+
+**First-class (built-in) tools default-on.** Because the gate consults `config.json`, a module may ship a tool enabled by default. The framework's built-in tools do this — `core/config.json` sets `tools/email_send/is_enabled`, `tools/browser/is_enabled`, `tools/schedule_followup/is_enabled` to `1`, and `jira/config.json` sets `tools/jira/is_enabled` to `1` — so the agent's baseline toolkit works out of the box. Credentialed/customer adapter tools ship no such default and stay opt-in. A DB `0` at any scope still disables a built-in (e.g. to lock `browser` out of a restricted agent_view).
 
 ### The `--agent-view` Shortcut
 

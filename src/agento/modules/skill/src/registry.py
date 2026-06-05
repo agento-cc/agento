@@ -142,19 +142,38 @@ def get_all_skills(conn) -> list[SkillInfo]:
 
 
 def get_enabled_skills(conn, agent_view_id: int | None = None, workspace_id: int | None = None) -> list[SkillInfo]:
-    """Get skills that are enabled for the given scope."""
-    from agento.framework.scoped_config import build_scoped_overrides
+    """Get skills that are enabled for the given scope.
+
+    Opt-in: a skill is enabled only when its resolved value is explicitly '1'.
+    Missing (no row) and explicit '0' both mean disabled. Resolution goes through
+    the one config service (ScopedConfigService) as the source of truth for the
+    merged agent_view > workspace > default scope chain. Skill names may contain
+    dashes (e.g. ``git-workflow``); ``.get()`` path-normalizes dashes, so we read
+    the service's merged ``.overrides`` to stay dash-exact (skills carry no
+    config.json/ENV is_enabled defaults, so the DB scope chain is the full story).
+    """
+    from agento.framework.config_resolver import ScopedConfigService
+    from agento.framework.scoped_config import Scope
 
     all_skills = get_all_skills(conn)
-    overrides = build_scoped_overrides(conn, agent_view_id=agent_view_id, workspace_id=workspace_id)
+    svc = _scoped_config(conn, agent_view_id, workspace_id, ScopedConfigService, Scope)
 
     enabled = []
     for skill in all_skills:
-        entry = overrides.get(f"skill/{skill.name}/is_enabled")
-        if entry is not None and entry[0] == "0":
+        entry = svc.overrides.get(f"skill/{skill.name}/is_enabled")
+        if entry is None or entry[0] != "1":
             continue
         enabled.append(skill)
     return enabled
+
+
+def _scoped_config(conn, agent_view_id, workspace_id, service_cls, scope_cls):
+    """Build the config service for a (agent_view_id, workspace_id) pair."""
+    if agent_view_id is not None:
+        return service_cls(conn, scope_cls.AGENT_VIEW, agent_view_id, workspace_id=workspace_id)
+    if workspace_id is not None:
+        return service_cls(conn, scope_cls.WORKSPACE, workspace_id)
+    return service_cls(conn, scope_cls.DEFAULT, 0)
 
 
 def get_skill_content(name: str, skills_dir: Path, path: str | None = None) -> str | None:

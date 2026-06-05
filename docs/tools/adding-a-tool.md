@@ -45,6 +45,7 @@ This generates `app/code/acme/` with three files:
       "type": "mysql",
       "name": "mysql_acme_staging",
       "description": "Staging MySQL. Same schema as production.",
+      "toolset": "Acme Databases",
       "fields": {
         "host":     {"type": "string",  "label": "Host"},
         "port":     {"type": "integer", "label": "Port", "default": 3306},
@@ -58,6 +59,8 @@ This generates `app/code/acme/` with three files:
 ```
 
 The `fields` block is the **schema** — it tells the framework what config each tool needs and how to handle it (`obscure` = encrypt in DB).
+
+Every tool must declare a **`toolset`** — the group it appears under in the admin TUI **Tools** screen (one section per toolset, with a "toggle all" control). It is **required**: `agento module:validate`, `bin/test`, and `setup:upgrade` all flag a tool missing `toolset` (and `setup:upgrade` aborts before applying anything). Tools from different modules that share a `toolset` are grouped together. It has no effect on resolution or runtime — it's purely a management/grouping label (the Tools screen falls back to the module name only as a defensive default if a value is somehow absent).
 
 ### config.json (non-secret defaults)
 

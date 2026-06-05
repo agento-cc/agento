@@ -166,8 +166,12 @@ class TestToolEnableDisableInDB:
         value, _encrypted = overrides["tools/email/is_enabled"]
         assert value == "1"
 
-    def test_absent_config_means_enabled(self):
-        """When no config exists for a tool, it defaults to enabled."""
+    def test_absent_config_means_disabled(self):
+        """Opt-in: when no config row exists for a tool, it is disabled.
+
+        The merged overrides simply omit the path; the gate (isToolEnabled)
+        treats a missing entry as disabled.
+        """
         from agento.framework.scoped_config import build_scoped_overrides
 
         ws_id = _insert_workspace()
@@ -179,4 +183,5 @@ class TestToolEnableDisableInDB:
         finally:
             conn.close()
 
+        # No row -> path absent from the merged map -> tool disabled under opt-in.
         assert "tools/jira_search/is_enabled" not in overrides

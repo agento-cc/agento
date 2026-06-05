@@ -23,10 +23,9 @@ class SkillListCommand:
     def execute(self, args: argparse.Namespace) -> None:
         from agento.framework.cli.runtime import _load_framework_config
         from agento.framework.db import get_connection
-        from agento.framework.scoped_config import build_scoped_overrides
         from agento.framework.workspace import get_agent_view_by_code
 
-        from ..registry import get_all_skills
+        from ..registry import get_all_skills, get_enabled_skills
 
         db_config, _, _ = _load_framework_config()
         conn = get_connection(db_config)
@@ -46,11 +45,11 @@ class SkillListCommand:
                 agent_view_id = agent_view.id
                 workspace_id = agent_view.workspace_id
 
-            overrides = build_scoped_overrides(conn, agent_view_id=agent_view_id, workspace_id=workspace_id)
+            # Same source of truth as runtime materialization (dash-safe service read).
+            enabled_names = {s.name for s in get_enabled_skills(conn, agent_view_id=agent_view_id, workspace_id=workspace_id)}
 
             for skill in all_skills:
-                entry = overrides.get(f"skill/{skill.name}/is_enabled")
-                status = "disabled" if entry is not None and entry[0] == "0" else "enabled"
+                status = "enabled" if skill.name in enabled_names else "disabled"
                 desc = skill.description[:60] if skill.description else ""
                 print(f"  {skill.name:<30} {status:<10} {desc}")
         finally:

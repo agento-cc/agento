@@ -495,6 +495,109 @@ def delete_config_override(conn, path: str, scope: str = Scope.DEFAULT, scope_id
     return result
 
 
+# --- Tool/skill enablement (Access screen) ------------------------------------
+#
+# Opt-in model: a tool/skill is enabled only when its resolved is_enabled value
+# is '1'. These helpers feed the Access screen's checkbox lists; the checkbox
+# state is the *resolved* value at the selected scope (so inherited '1's show as
+# checked), and `explicit_here` tells whether a row is set at this very scope.
+
+
+@dataclass
+class EnablementItem:
+    name: str
+    path: str  # core_config_data path, e.g. tools/<name>/is_enabled
+    enabled: bool  # resolved value at the selected scope == '1'
+    explicit_here: bool  # a row exists at this exact (scope, scope_id)
+
+
+def get_all_skill_names(conn) -> list[str]:
+    """All synced skills, alphabetical. Empty if the skill module/table is absent."""
+    if conn is None:
+        return []
+    try:
+        _ensure_conn(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM skill_registry ORDER BY name")
+            return [row["name"] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def _scan_tools_by_toolset() -> list[tuple[str, list[str]]]:
+    """All registered tools grouped by toolset, toolsets and names both sorted.
+
+    A tool's group is its ``toolset`` field in module.json (declared next to the
+    tool), falling back to the module name when absent. Tools from different
+    modules that share a ``toolset`` are grouped together. Enumerates manifests
+    directly (like ``tool:list``) so field-less tools are included.
+    """
+    from ..bootstrap import CORE_MODULES_DIR, USER_MODULES_DIR
+    from ..module_loader import scan_modules
+    from ..module_status import filter_enabled
+
+    groups: dict[str, list[str]] = {}
+    for modules_dir in (CORE_MODULES_DIR, USER_MODULES_DIR):
+        if not Path(modules_dir).is_dir():
+            continue
+        try:
+            manifests = filter_enabled(scan_modules(modules_dir))
+        except Exception:
+            continue
+        for m in manifests:
+            for tool in m.tools:
+                name = tool.get("name")
+                if not name:
+                    continue
+                toolset = tool.get("toolset") or m.name
+                groups.setdefault(toolset, []).append(name)
+    return [(toolset, sorted(names)) for toolset, names in sorted(groups.items())]
+
+
+def get_tool_states(conn, scope: str = Scope.DEFAULT, scope_id: int = 0) -> list[tuple[str, list[EnablementItem]]]:
+    """Resolved tool enablement grouped by toolset, for the Tools screen.
+
+    Resolution routes through the single config service (ScopedConfigService).
+    Tool names are snake_case, so ``.get()`` is dash-safe and honors a config.json
+    first-class default and ENV.
+    """
+    if conn is None:
+        return []
+
+    from ..config_resolver import ScopedConfigService
+
+    _ensure_conn(conn)
+    svc = ScopedConfigService(conn, scope, scope_id)
+
+    def _item(name: str) -> EnablementItem:
+        path = f"tools/{name}/is_enabled"
+        return EnablementItem(name, path, svc.get(path) == "1", svc.is_set_at_scope(path))
+
+    return [(toolset, [_item(n) for n in names]) for toolset, names in _scan_tools_by_toolset()]
+
+
+def get_skill_states(conn, scope: str = Scope.DEFAULT, scope_id: int = 0) -> list[EnablementItem]:
+    """Resolved skill enablement (alphabetical) for the Skills screen.
+
+    Skill names may contain dashes (e.g. ``git-workflow``), which the service's
+    ``.get()`` path-normalizes; read the merged ``.overrides`` to stay dash-exact.
+    """
+    if conn is None:
+        return []
+
+    from ..config_resolver import ScopedConfigService
+
+    _ensure_conn(conn)
+    svc = ScopedConfigService(conn, scope, scope_id)
+
+    def _item(name: str) -> EnablementItem:
+        path = f"skill/{name}/is_enabled"
+        entry = svc.overrides.get(path)
+        return EnablementItem(name, path, entry is not None and entry[0] == "1", svc.is_set_at_scope(path))
+
+    return [_item(s) for s in get_all_skill_names(conn)]
+
+
 def do_reset_token_error(conn, token_id: int) -> bool:
     from ..agent_manager.token_store import clear_token_error
 

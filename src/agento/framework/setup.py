@@ -32,6 +32,7 @@ from .events import CrontabInstalledEvent, SetupBeforeEvent, SetupCompleteEvent
 from .migrate import get_pending, migrate
 from .module_loader import scan_modules
 from .module_status import filter_enabled
+from .module_validator import validate_module
 
 FRAMEWORK_SQL_DIR = Path(__file__).parent / "sql"
 FRAMEWORK_CRON_JSON = Path(__file__).parent / "cron.json"
@@ -60,6 +61,29 @@ class SetupResult:
         )
 
 
+class ModuleValidationError(Exception):
+    """Raised when an enabled module's manifest fails validation during setup."""
+
+
+def _validate_manifests(enabled, logger: logging.Logger) -> None:
+    """Validate every enabled module's manifest. Raise (fail-fast) on any error.
+
+    Runs before any migration so a broken manifest aborts setup:upgrade before
+    the database is mutated.
+    """
+    errors = {m.name: errs for m in enabled if (errs := validate_module(m.path))}
+    if not errors:
+        return
+    for name, errs in sorted(errors.items()):
+        for err in errs:
+            logger.error("module '%s' invalid: %s", name, err)
+    total = sum(len(e) for e in errors.values())
+    raise ModuleValidationError(
+        f"{total} manifest error(s) in {len(errors)} enabled module(s); "
+        f"fix module.json (see log above) or run 'agento module:validate' before setup:upgrade"
+    )
+
+
 def setup_upgrade(
     conn: pymysql.Connection,
     logger: logging.Logger,
@@ -75,6 +99,14 @@ def setup_upgrade(
 
     em.dispatch("setup_upgrade_before", SetupBeforeEvent(dry_run=dry_run))
 
+    # 0. Scan modules and validate enabled manifests up front — fail before
+    #    mutating the database if any manifest is invalid.
+    all_scanned = scan_modules(core_dir) + scan_modules(user_dir)
+    enabled = filter_enabled(all_scanned)
+    _validate_manifests(enabled, logger)
+    validate_dependencies(enabled, all_scanned)
+    manifests = resolve_order(enabled)
+
     # 1. Framework SQL migrations
     if dry_run:
         fw_pending = get_pending(conn, module="framework")
@@ -83,10 +115,6 @@ def setup_upgrade(
         result.framework_migrations = migrate(conn, logger, module="framework")
 
     # 2. Module SQL migrations in dependency order
-    all_scanned = scan_modules(core_dir) + scan_modules(user_dir)
-    enabled = filter_enabled(all_scanned)
-    validate_dependencies(enabled, all_scanned)
-    manifests = resolve_order(enabled)
 
     for m in manifests:
         sql_dir = m.path / "sql"

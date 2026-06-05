@@ -8,6 +8,7 @@
       "type": "mysql",
       "name": "mysql_myapp_prod",
       "description": "My App Production MySQL (read-only). Database: myapp.",
+      "toolset": "MyApp Databases",
       "fields": {
         "host": {"type": "string", "label": "Host"},
         "port": {"type": "integer", "label": "Port"},
