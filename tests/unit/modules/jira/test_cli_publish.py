@@ -231,3 +231,124 @@ class TestCmdPublishTodoDispatch:
         mock_publisher.publish_todo.assert_called_once()
         _, kwargs = mock_publisher.publish_todo.call_args
         assert kwargs.get("agent_view_id") == 2
+
+    @patch("agento.modules.jira.src.commands.publish._publisher")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
+    @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
+    def test_publishes_all_tasks_for_agent_view(
+        self, mock_priority, mock_scoped_config, mock_get_avs,
+        mock_bootstrap, mock_logger, mock_toolbox_cls, mock_builder_cls, mock_publisher,
+    ):
+        """Publisher must enqueue every task returned by get_todo_tasks, not just tasks[0]."""
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        av = _make_agent_view()
+        mock_get_avs.return_value = [av]
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
+
+        tasks = [
+            _make_task("AI-72", updated="2026-05-26T07:13:00.000+0000"),
+            _make_task("AI-100", updated="2026-05-26T07:13:00.000+0000"),
+            _make_task("AI-107", updated="2026-05-26T07:13:00.000+0000"),
+        ]
+        builder = MagicMock()
+        builder.get_todo_tasks.return_value = tasks
+        mock_builder_cls.return_value = builder
+        mock_publisher.publish_todo.return_value = True
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        assert mock_publisher.publish_todo.call_count == 3
+        published_keys = [call.kwargs["reference_id"] for call in mock_publisher.publish_todo.call_args_list]
+        assert published_keys == ["AI-72", "AI-100", "AI-107"]
+
+    @patch("agento.modules.jira.src.commands.publish._publisher")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
+    @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
+    def test_deduped_skips_do_not_inflate_published_count(
+        self, mock_priority, mock_scoped_config, mock_get_avs,
+        mock_bootstrap, mock_logger, mock_toolbox_cls, mock_builder_cls, mock_publisher,
+    ):
+        """When publish_todo returns False (active/duplicate), the X-of-Y log must reflect actual inserts."""
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        av = _make_agent_view()
+        mock_get_avs.return_value = [av]
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
+
+        tasks = [
+            _make_task("AI-72", updated="2026-05-26T07:13:00.000+0000"),
+            _make_task("AI-100", updated="2026-05-26T07:13:00.000+0000"),
+            _make_task("AI-107", updated="2026-05-26T07:13:00.000+0000"),
+        ]
+        builder = MagicMock()
+        builder.get_todo_tasks.return_value = tasks
+        mock_builder_cls.return_value = builder
+        mock_publisher.publish_todo.side_effect = [True, False, True]
+
+        logger_instance = MagicMock()
+        mock_logger.return_value = logger_instance
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        assert mock_publisher.publish_todo.call_count == 3
+        summary_calls = [
+            call for call in logger_instance.info.call_args_list
+            if "Published %d of %d todo jobs for agent_view %d" in call.args[0]
+        ]
+        assert len(summary_calls) == 1
+        assert summary_calls[0].args[1:] == (2, 3, 1)
+
+
+class TestCmdPublishTodoGlobalFallback:
+    """PublishCommand jira-todo with no active agent_views — global fallback path."""
+
+    @patch("agento.modules.jira.src.channel.publish_todo")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.bootstrap.get_module_config")
+    def test_global_publishes_all_tasks(
+        self, mock_get_module_cfg, mock_get_avs, mock_bootstrap,
+        mock_logger, mock_toolbox_cls, mock_builder_cls, mock_channel_publish,
+    ):
+        """Global fallback must iterate the full task list, not just tasks[0]."""
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        mock_get_avs.return_value = []
+        mock_get_module_cfg.return_value = _make_jira_config()
+
+        tasks = [
+            _make_task("AI-72", updated="2026-05-26T07:13:00.000+0000"),
+            _make_task("AI-100", updated="2026-05-26T07:13:00.000+0000"),
+            _make_task("AI-107", updated="2026-05-26T07:13:00.000+0000"),
+        ]
+        builder = MagicMock()
+        builder.get_todo_tasks.return_value = tasks
+        mock_builder_cls.return_value = builder
+        mock_channel_publish.return_value = True
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        assert mock_channel_publish.call_count == 3
+        published_keys = [call.kwargs["issue_key"] for call in mock_channel_publish.call_args_list]
+        assert published_keys == ["AI-72", "AI-100", "AI-107"]
+        for call in mock_channel_publish.call_args_list:
+            assert call.kwargs.get("updated") == "2026-05-26T07:13:00.000+0000"
+            assert isinstance(call.kwargs.get("payload"), dict)
+            assert call.kwargs["payload"]["key"] == call.kwargs["issue_key"]

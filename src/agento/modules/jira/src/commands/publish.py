@@ -158,28 +158,33 @@ class PublishCommand:
                 continue
 
     def _publish_todo_for_agent_view(self, args, db_config, jira_config, agent_view_id, priority, logger):
-        """Publish todo for a specific agent_view."""
+        """Publish all TODO tasks for a specific agent_view."""
         if args.issue_key:
             _publisher.publish_todo(
                 db_config, args.issue_key, logger=logger,
                 agent_view_id=agent_view_id, priority=priority,
             )
-        else:
-            ai_user = jira_config.jira_assignee or jira_config.user
-            if not ai_user:
-                logger.warning("jira_assignee/user not set for this agent_view, skipping")
-                return
-            toolbox = ToolboxClient(jira_config.toolbox_url)
-            builder = TaskListBuilder(toolbox, jira_config, ai_user, logger, agent_view_id=agent_view_id)
-            tasks = builder.get_todo_tasks()
-            if not tasks:
-                logger.debug("No TODO tasks, skipping")
-                return
-            _publisher.publish_todo(
-                db_config, reference_id=tasks[0].issue.key,
-                updated=tasks[0].issue.updated, logger=logger,
+            return
+        ai_user = jira_config.jira_assignee or jira_config.user
+        if not ai_user:
+            logger.warning("jira_assignee/user not set for this agent_view, skipping")
+            return
+        toolbox = ToolboxClient(jira_config.toolbox_url)
+        builder = TaskListBuilder(toolbox, jira_config, ai_user, logger, agent_view_id=agent_view_id)
+        tasks = builder.get_todo_tasks()
+        if not tasks:
+            logger.debug("No TODO tasks, skipping")
+            return
+        published = 0
+        for task in tasks:
+            inserted = _publisher.publish_todo(
+                db_config, reference_id=task.issue.key,
+                updated=task.issue.updated, logger=logger,
                 agent_view_id=agent_view_id, priority=priority,
             )
+            if inserted:
+                published += 1
+        logger.info("Published %d of %d todo jobs for agent_view %d", published, len(tasks), agent_view_id)
 
     def _execute_global(self, kind, args, db_config, jira_config, logger):
         """Fallback: execute with global config (no agent_views configured)."""
@@ -199,11 +204,16 @@ class PublishCommand:
                 if not tasks:
                     logger.debug("No TODO tasks in Jira, skipping publish")
                     return
-                publish_todo(
-                    db_config, issue_key=tasks[0].issue.key,
-                    updated=tasks[0].issue.updated, logger=logger,
-                    payload=dataclasses.asdict(tasks[0].issue),
-                )
+                published = 0
+                for task in tasks:
+                    inserted = publish_todo(
+                        db_config, issue_key=task.issue.key,
+                        updated=task.issue.updated, logger=logger,
+                        payload=dataclasses.asdict(task.issue),
+                    )
+                    if inserted:
+                        published += 1
+                logger.info("Published %d of %d todo jobs (global)", published, len(tasks))
         elif kind == "jira-mention":
             count = publish_mentions(jira_config, logger, db_config=db_config)
             logger.info("Published %d mention jobs", count)
