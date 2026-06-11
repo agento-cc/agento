@@ -6,10 +6,15 @@ registrations, and the TranscriptReader registry via the real ``import_class``
 machinery. Dispatching a real event here exercises:
 
   events.json → observer class import → JobFinalizeEvent → get_transcript_reader →
-  ClaudeTranscriptReader → JSONL parse → verify() → Verdict
+  ClaudeTranscriptReader → JSONL parse → toolbox-call count → _save_mcp_telemetry
 
 — as a single chain. Broken wiring (events.json, di.json, registry, protocol
 implementation) would fail here even when isolated unit tests pass.
+
+The observer is telemetry-only: it records ``toolbox_mcp_calls`` /
+``toolbox_mcp_connected`` and never sets a verdict. We stub ``_save_mcp_telemetry``
+to capture the computed signals without needing a DB, and confirm ``verdict``
+stays ``None`` on every path.
 
 NOTE: we never call ``clear_event_manager`` here. The integration session
 shares one EventManager across all tests; clearing it would de-register every
@@ -25,7 +30,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from agento.framework.event_manager import get_event_manager
-from agento.framework.events import JobFinalizeEvent, VerifyReason
+from agento.framework.events import JobFinalizeEvent
+from agento.modules.app_monitor.src import observers as obs
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "transcripts"
 CODEX_FIXTURES = FIXTURES / "codex"
@@ -58,36 +64,44 @@ def workspace_root(tmp_path: Path, monkeypatch) -> Path:
         shutil.copy(src, projects / f"{src.stem}.jsonl")
     from agento.modules.claude.src import transcript_reader as claude_tr
     monkeypatch.setattr(claude_tr, "BUILD_DIR", str(tmp_path / "build"))
-    # Bypass the session-wide policy=trust override so the verifier actually runs.
-    from agento.modules.app_monitor.src import observers as obs
+    # Flag off + no SMTP so no alert path runs during the wiring check.
     monkeypatch.setattr(obs, "_config", lambda: {})
     return tmp_path
 
 
-def test_verify_observer_passes_through_good_transcript(workspace_root):
+def test_telemetry_observer_records_good_transcript(workspace_root, monkeypatch):
+    saver = MagicMock()
+    monkeypatch.setattr(obs, "_save_mcp_telemetry", saver)
     event = JobFinalizeEvent(
         job=_Job(session_id="good_with_mcp"), job_result=None, provider="claude",
     )
     get_event_manager().dispatch("job_finalize_before", event)
+    # Telemetry only — never vetoes.
     assert event.verdict is None
+    # good_with_mcp has exactly one mcp__toolbox__* call; job_result=None → connected unknown.
+    saver.assert_called_once_with(1, 1, None)
 
 
-def test_verify_observer_vetoes_bad_transcript(workspace_root):
+def test_telemetry_observer_records_zero_calls_bad_transcript(workspace_root, monkeypatch):
+    saver = MagicMock()
+    monkeypatch.setattr(obs, "_save_mcp_telemetry", saver)
     event = JobFinalizeEvent(
         job=_Job(session_id="bad_no_mcp"), job_result=None, provider="claude",
     )
     get_event_manager().dispatch("job_finalize_before", event)
-    assert event.verdict is not None
-    assert event.verdict.reason == VerifyReason.NO_MCP_CALLS
-    assert event.verdict.fresh_start is True
+    assert event.verdict is None  # zero calls is recorded, NOT vetoed
+    saver.assert_called_once_with(1, 0, None)
 
 
-def test_verify_observer_trusts_when_no_reader_for_provider(workspace_root):
+def test_telemetry_observer_null_calls_when_no_reader_for_provider(workspace_root, monkeypatch):
+    saver = MagicMock()
+    monkeypatch.setattr(obs, "_save_mcp_telemetry", saver)
     event = JobFinalizeEvent(
         job=_Job(session_id="any"), job_result=None, provider="unregistered",
     )
     get_event_manager().dispatch("job_finalize_before", event)
-    assert event.verdict is None  # no reader → can't verify → trust
+    assert event.verdict is None  # no reader → calls unknown → NULL, no veto
+    saver.assert_called_once_with(1, None, None)
 
 
 @pytest.fixture
@@ -110,7 +124,6 @@ def codex_workspace_root(tmp_path: Path, monkeypatch) -> Path:
     )
     from agento.modules.codex.src import transcript_reader as codex_tr
     monkeypatch.setattr(codex_tr, "BUILD_DIR", str(tmp_path / "build"))
-    from agento.modules.app_monitor.src import observers as obs
     monkeypatch.setattr(obs, "_config", lambda: {})
     return tmp_path
 
@@ -125,26 +138,30 @@ def test_codex_reader_registered_via_bootstrap():
     assert isinstance(reader, CodexTranscriptReader)
 
 
-def test_verify_observer_passes_through_good_codex_transcript(codex_workspace_root):
+def test_telemetry_observer_records_good_codex_transcript(codex_workspace_root, monkeypatch):
+    saver = MagicMock()
+    monkeypatch.setattr(obs, "_save_mcp_telemetry", saver)
     event = JobFinalizeEvent(
         job=_Job(session_id=CODEX_GOOD_ID), job_result=None, provider="codex",
     )
     get_event_manager().dispatch("job_finalize_before", event)
     assert event.verdict is None
+    # codex_good_with_mcp has three mcp__toolbox__* calls; codex emits no init → connected NULL.
+    saver.assert_called_once_with(1, 3, None)
 
 
-def test_verify_observer_vetoes_bad_codex_transcript(codex_workspace_root):
+def test_telemetry_observer_records_zero_calls_bad_codex_transcript(codex_workspace_root, monkeypatch):
+    saver = MagicMock()
+    monkeypatch.setattr(obs, "_save_mcp_telemetry", saver)
     event = JobFinalizeEvent(
         job=_Job(session_id=CODEX_BAD_ID), job_result=None, provider="codex",
     )
     get_event_manager().dispatch("job_finalize_before", event)
-    assert event.verdict is not None
-    assert event.verdict.reason == VerifyReason.NO_MCP_CALLS
-    assert event.verdict.fresh_start is True
+    assert event.verdict is None
+    saver.assert_called_once_with(1, 0, None)
 
 
 def test_alert_observer_sends_email_when_configured(monkeypatch):
-    from agento.modules.app_monitor.src import observers as obs
     from agento.modules.app_monitor.src.constants import (
         CFG_ALERT_EMAIL_TO,
         CFG_ALERT_SMTP_FROM,

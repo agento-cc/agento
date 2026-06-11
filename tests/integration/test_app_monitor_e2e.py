@@ -1,10 +1,11 @@
-"""Full end-to-end coverage for the ``app_monitor`` verification gate.
+"""Full end-to-end coverage for the ``app_monitor`` MCP-health telemetry.
 
 These tests drive the real ``Consumer`` against the integration MySQL DB with
 a patched runner that:
 
 - Reports rc=0 success (``RunResult`` with ``subtype=<uuid>`` as the
-  session_id and ``agent_type`` set to the provider name).
+  session_id, ``agent_type`` set to the provider name, and an optional
+  ``mcp_init`` self-report).
 - Writes a deterministic transcript JSONL at the per-provider production
   layout under the consumer-resolved ``home_dir`` (a real per-agent_view
   build dir under the patched ``BUILD_DIR``).
@@ -12,22 +13,24 @@ a patched runner that:
   session_id on the job row before ``_finalize_job`` dispatches
   ``job_finalize_before``.
 
-The verification observer then resolves the per-provider ``TranscriptReader``
-via the framework registry, parses the synthesized transcript, and emits a
-``Verdict`` based on its contents (zero ``mcp__toolbox__*`` calls,
-unrecognized format, or a clean run with at least one toolbox call).
+``McpHealthTelemetryObserver`` then records two independent, nullable signals
+on the ``job`` row — ``toolbox_mcp_calls`` (from the per-provider
+``TranscriptReader``) and ``toolbox_mcp_connected`` (from ``mcp_init``) — and
+optionally emails ops. It NEVER sets a verdict: every rc=0 job stays a SUCCESS.
 
 The cases prove:
 
-1. claude no-MCP → first attempt re-queued with ``session_id`` cleared.
-2. claude no-MCP exhausting ``max_attempts`` → DEAD + email sent.
-3. claude with MCP calls → SUCCESS (control case — no false positives).
-4. codex no-MCP → same end-state via the *Codex* transcript reader
-   (agent-agnostic proof point).
-5. unknown provider (e.g. ``hermes``) → trust rc=0 → SUCCESS + no email.
-6. claude format drift (10 JSON records, none recognized) → DEAD on first
-   attempt with ``transcript_parse_failed`` verdict and parser-specific
-   email body.
+1. claude connected + toolbox calls → SUCCESS, columns N/TRUE, no alert.
+2. claude not-connected + 0 calls + flag on → SUCCESS (no DEAD!), columns
+   0/FALSE, ONE combined alert.
+3. claude connected + 0 calls + flag on → SUCCESS, columns 0/TRUE, one alert.
+4. claude connected + 0 calls + flag off → SUCCESS, columns 0/TRUE, no alert.
+5. codex (runner emits no ``mcp_init``) + 0 calls + flag on → SUCCESS, columns
+   0/NULL, one alert (the count clause fires; NULL connected does not).
+6. unknown provider (no reader, no init) → SUCCESS, columns NULL/NULL, no
+   alert (both signals unknown).
+7. claude format drift (10 JSON records, none recognized) → SUCCESS (no
+   DEAD!), columns NULL/<connected>, drift logged at ERROR, telemetry only.
 """
 from __future__ import annotations
 
@@ -40,6 +43,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agento.framework.consumer import Consumer
+from agento.framework.runner import McpInitReport, McpServerStatus
 from agento.modules.app_monitor.src import observers as obs
 from agento.modules.app_monitor.src.constants import (
     CFG_ALERT_EMAIL_TO,
@@ -47,8 +51,7 @@ from agento.modules.app_monitor.src.constants import (
     CFG_ALERT_SMTP_HOST,
     CFG_ALERT_SMTP_PORT,
     CFG_ALERT_SMTP_TLS,
-    CFG_MISSING_TRANSCRIPT_POLICY,
-    POLICY_DEAD,
+    CFG_SEND_ALERT_ON_MCP_ISSUES,
 )
 from agento.modules.claude.src.output_parser import ClaudeResult
 
@@ -60,6 +63,9 @@ from .conftest import (
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "transcripts"
 CODEX_FIXTURES = FIXTURES / "codex"
+
+_MCP_CONNECTED = McpInitReport(servers=(McpServerStatus("toolbox", "connected"),))
+_MCP_FAILED = McpInitReport(servers=(McpServerStatus("toolbox", "failed"),))
 
 
 # --- DB helpers ---------------------------------------------------------------
@@ -132,21 +138,6 @@ def _cleanup_test_data() -> None:
         conn.close()
 
 
-def _force_immediate_redeque(job_id: int) -> None:
-    """Rewind ``scheduled_after`` so the next dequeue picks the job up
-    immediately, regardless of the configured retry backoff."""
-    conn = _test_connection(autocommit=True)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE job SET scheduled_after = NOW() - INTERVAL 1 SECOND "
-                "WHERE id = %s",
-                (job_id,),
-            )
-    finally:
-        conn.close()
-
-
 # --- runner callbacks: produce rc=0 + write a transcript ---------------------
 
 
@@ -154,11 +145,13 @@ def _claude_callback(
     transcript_payload: str,
     *,
     captured: list[str] | None = None,
+    mcp_init: McpInitReport | None = None,
 ):
     """Build a ``TokenClaudeRunner.run`` replacement that writes the given
     transcript content to the production layout under
     ``<home_dir>/.claude/projects/<X>/<session_id>.jsonl``, fires the
-    session_id callback, and returns a successful ``ClaudeResult``.
+    session_id callback, and returns a successful ``ClaudeResult`` carrying the
+    given ``mcp_init`` self-report.
     """
     def _run(self_runner, prompt, *, model=None):
         home = Path(self_runner.home_dir)
@@ -176,6 +169,7 @@ def _claude_callback(
             duration_ms=1000,
             subtype=sid,
             agent_type="claude",
+            mcp_init=mcp_init,
         )
     return _run
 
@@ -184,9 +178,11 @@ def _codex_callback(
     transcript_payload: str,
     *,
     captured: list[str] | None = None,
+    mcp_init: McpInitReport | None = None,
 ):
     """Build a ``TokenCodexRunner.run`` replacement that writes the given
     transcript content to ``<home_dir>/.codex/sessions/2026/05/14/rollout-...-<sid>.jsonl``.
+    Codex emits no ``mcp_init`` in practice, so it defaults to ``None``.
     """
     def _run(self_runner, prompt, *, model=None):
         home = Path(self_runner.home_dir)
@@ -205,13 +201,15 @@ def _codex_callback(
             subtype=sid,
             agent_type="codex",
             model="o3",
+            mcp_init=mcp_init,
         )
     return _run
 
 
 def _hermes_callback(self_runner, prompt, *, model=None):
     """Claude runner patched to report ``agent_type="hermes"`` — a provider
-    with no registered ``TranscriptReader``. Writes no transcript."""
+    with no registered ``TranscriptReader`` and no ``mcp_init``. Writes no
+    transcript, so both telemetry signals resolve to NULL."""
     sid = str(uuid.uuid4())
     if self_runner.session_id_callback:
         self_runner.session_id_callback(sid)
@@ -227,14 +225,13 @@ def _hermes_callback(self_runner, prompt, *, model=None):
 # --- common fixtures ---------------------------------------------------------
 
 
-def _patch_app_monitor(monkeypatch) -> MagicMock:
-    """Override the session-wide ``policy=trust`` set in conftest, configure
-    email alerts, and intercept ``send_alert``. Reverts automatically at
-    test teardown."""
+def _patch_app_monitor(monkeypatch, *, alert_flag: bool, smtp_host: str = "smtp.example.com") -> MagicMock:
+    """Configure the MCP-issue alert flag + SMTP and intercept ``send_alert``.
+    Reverts automatically at test teardown."""
     monkeypatch.setattr(obs, "_config", lambda: {
-        CFG_MISSING_TRANSCRIPT_POLICY: POLICY_DEAD,
+        CFG_SEND_ALERT_ON_MCP_ISSUES: alert_flag,
         CFG_ALERT_EMAIL_TO: "ops@example.com",
-        CFG_ALERT_SMTP_HOST: "smtp.example.com",
+        CFG_ALERT_SMTP_HOST: smtp_host,
         CFG_ALERT_SMTP_FROM: "agento@example.com",
         CFG_ALERT_SMTP_PORT: 587,
         CFG_ALERT_SMTP_TLS: False,
@@ -261,14 +258,14 @@ def _enter_build_dir_patches(stack: ExitStack, build_root: Path) -> None:
 
 
 class TestAppMonitorE2E:
-    """End-to-end coverage for the verification gate against real MySQL."""
+    """End-to-end telemetry coverage against real MySQL — never DEAD-letters."""
 
     @pytest.fixture(autouse=True)
     def _patch_observer_db(self, int_db_config):
         """Make observers see the integration test DB (mirrors the recipe in
         ``tests/integration/test_instruction_files.py``).
 
-        ``app_monitor.observers`` is here too because ``_save_toolbox_mcp_calls``
+        ``app_monitor.observers`` is here too because ``_save_mcp_telemetry``
         opens its own connection via ``DatabaseConfig.from_env()``.
         """
         with patch(
@@ -289,198 +286,174 @@ class TestAppMonitorE2E:
     def teardown_method(self):
         _cleanup_test_data()
 
-    # -- happy + sad paths for Claude --------------------------------------
-
-    def test_claude_no_mcp_first_attempt_retries_with_fresh_session(
-        self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
-    ):
-        sender = _patch_app_monitor(monkeypatch)
-        insert_primary_token("claude")
-        ws_id = _insert_workspace("acme")
-        av_id = _insert_agent_view(ws_id, "developer")
-        job_id = _insert_job_with_agent_view(av_id, max_attempts=2, reference_id="AI-101")
-
-        captured: list[str] = []
-        payload = (FIXTURES / "bad_no_mcp.jsonl").read_text()
+    def _run_one(self, int_db_config, int_consumer_config, tmp_path, run_patch):
         with ExitStack() as stack:
-            stack.enter_context(patch(
-                "agento.modules.claude.src.runner.TokenClaudeRunner.run",
-                _claude_callback(payload, captured=captured),
-            ))
+            stack.enter_context(run_patch)
             _enter_build_dir_patches(stack, tmp_path / "build")
             consumer = Consumer(int_db_config, int_consumer_config, logging.getLogger("e2e"))
             job = consumer._try_dequeue()
             assert job is not None
             consumer._execute_job(job)
 
-        row = fetch_job(job_id)
-        assert row["status"] == "TODO", row
-        assert row["attempt"] == 1
-        # fresh_start=True → session_id cleared so the next attempt starts a
-        # brand-new agent session (the fix for the resume-loop incident).
-        assert row["session_id"] is None
-        assert row["error_class"] == "JobVerificationFailed"
-        assert "no_mcp_calls" in (row["error_message"] or "")
-        # Parse succeeded, zero toolbox calls observed → column = 0 (not NULL).
-        assert row["toolbox_mcp_calls"] == 0
-        # No DEAD yet → email observer must not have fired.
-        sender.assert_not_called()
-        assert len(captured) == 1
+    # -- 1. connected + toolbox calls --------------------------------------
 
-    def test_claude_no_mcp_exhausts_retries_then_dead_letters_with_email(
+    def test_claude_connected_with_calls_succeeds_no_alert(
         self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
     ):
-        sender = _patch_app_monitor(monkeypatch)
+        sender = _patch_app_monitor(monkeypatch, alert_flag=False)
         insert_primary_token("claude")
-        ws_id = _insert_workspace("acme")
-        av_id = _insert_agent_view(ws_id, "developer")
-        job_id = _insert_job_with_agent_view(av_id, max_attempts=2, reference_id="AI-102")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-201")
 
-        payload = (FIXTURES / "bad_no_mcp.jsonl").read_text()
-        with ExitStack() as stack:
-            stack.enter_context(patch(
-                "agento.modules.claude.src.runner.TokenClaudeRunner.run",
-                _claude_callback(payload),
-            ))
-            _enter_build_dir_patches(stack, tmp_path / "build")
-            consumer = Consumer(int_db_config, int_consumer_config, logging.getLogger("e2e"))
-            for _ in range(2):
-                job = consumer._try_dequeue()
-                if job is None:
-                    _force_immediate_redeque(job_id)
-                    job = consumer._try_dequeue()
-                assert job is not None
-                consumer._execute_job(job)
-                _force_immediate_redeque(job_id)
+        captured: list[str] = []
+        payload = (FIXTURES / "good_with_mcp.jsonl").read_text()
+        self._run_one(int_db_config, int_consumer_config, tmp_path, patch(
+            "agento.modules.claude.src.runner.TokenClaudeRunner.run",
+            _claude_callback(payload, captured=captured, mcp_init=_MCP_CONNECTED),
+        ))
 
         row = fetch_job(job_id)
-        assert row["status"] == "DEAD", row
-        assert row["attempt"] == 2
-        assert row["error_class"] == "JobVerificationFailed"
+        assert row["status"] == "SUCCESS", row
+        assert row["session_id"] == captured[0]
+        assert row["toolbox_mcp_calls"] == 1
+        assert row["toolbox_mcp_connected"] == 1  # TRUE
+        sender.assert_not_called()
+
+    # -- 2. not connected + 0 calls + flag on → one combined alert, no DEAD --
+
+    def test_claude_not_connected_zero_calls_one_alert_no_dead(
+        self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
+    ):
+        sender = _patch_app_monitor(monkeypatch, alert_flag=True)
+        insert_primary_token("claude")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-202")
+
+        payload = (FIXTURES / "bad_no_mcp.jsonl").read_text()
+        self._run_one(int_db_config, int_consumer_config, tmp_path, patch(
+            "agento.modules.claude.src.runner.TokenClaudeRunner.run",
+            _claude_callback(payload, mcp_init=_MCP_FAILED),
+        ))
+
+        row = fetch_job(job_id)
+        assert row["status"] == "SUCCESS", row  # NO DEAD — telemetry only
+        assert row["toolbox_mcp_calls"] == 0
+        assert row["toolbox_mcp_connected"] == 0  # FALSE
 
         sender.assert_called_once()
         smtp_cfg, to, subject, body = sender.call_args.args
         assert to == "ops@example.com"
         assert smtp_cfg.host == "smtp.example.com"
-        assert smtp_cfg.tls is False
-        assert str(job_id) in subject
-        assert "JobVerificationFailed" in subject
-        assert "AI-102" in body
-        assert "no_mcp_calls" in body
-        assert "Attempt:      2/2" in body
+        # Combined condition → one email naming both clauses.
+        assert "0 toolbox calls" in subject
+        assert "toolbox not connected" in subject
+        assert "AI-202" in body
 
-    def test_claude_with_mcp_calls_succeeds_no_email(
+    # -- 3. connected + 0 calls + flag on → one alert (count clause) --------
+
+    def test_claude_connected_zero_calls_flag_on_one_alert(
         self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
     ):
-        sender = _patch_app_monitor(monkeypatch)
+        sender = _patch_app_monitor(monkeypatch, alert_flag=True)
         insert_primary_token("claude")
-        ws_id = _insert_workspace("acme")
-        av_id = _insert_agent_view(ws_id, "developer")
-        job_id = _insert_job_with_agent_view(av_id, max_attempts=3, reference_id="AI-103")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-203")
 
-        captured: list[str] = []
-        payload = (FIXTURES / "good_with_mcp.jsonl").read_text()
-        with ExitStack() as stack:
-            stack.enter_context(patch(
-                "agento.modules.claude.src.runner.TokenClaudeRunner.run",
-                _claude_callback(payload, captured=captured),
-            ))
-            _enter_build_dir_patches(stack, tmp_path / "build")
-            consumer = Consumer(int_db_config, int_consumer_config, logging.getLogger("e2e"))
-            job = consumer._try_dequeue()
-            assert job is not None
-            consumer._execute_job(job)
+        payload = (FIXTURES / "bad_no_mcp.jsonl").read_text()
+        self._run_one(int_db_config, int_consumer_config, tmp_path, patch(
+            "agento.modules.claude.src.runner.TokenClaudeRunner.run",
+            _claude_callback(payload, mcp_init=_MCP_CONNECTED),
+        ))
 
         row = fetch_job(job_id)
         assert row["status"] == "SUCCESS", row
-        assert row["session_id"] == captured[0]
-        # Good fixture has one mcp__toolbox__* call → column = 1.
-        assert row["toolbox_mcp_calls"] == 1
-        sender.assert_not_called()
+        assert row["toolbox_mcp_calls"] == 0
+        assert row["toolbox_mcp_connected"] == 1  # TRUE
+        sender.assert_called_once()
+        _, _, subject, _ = sender.call_args.args
+        assert "0 toolbox calls" in subject
+        assert "toolbox not connected" not in subject  # connected was TRUE
 
-    # -- agent-agnostic proof: Codex follows the same contract --------------
+    # -- 4. connected + 0 calls + flag OFF → no alert -----------------------
 
-    def test_codex_no_mcp_exhausts_retries_then_dead_letters_with_email(
+    def test_claude_zero_calls_flag_off_no_alert(
         self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
     ):
-        sender = _patch_app_monitor(monkeypatch)
+        sender = _patch_app_monitor(monkeypatch, alert_flag=False)
+        insert_primary_token("claude")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-204")
+
+        payload = (FIXTURES / "bad_no_mcp.jsonl").read_text()
+        self._run_one(int_db_config, int_consumer_config, tmp_path, patch(
+            "agento.modules.claude.src.runner.TokenClaudeRunner.run",
+            _claude_callback(payload, mcp_init=_MCP_CONNECTED),
+        ))
+
+        row = fetch_job(job_id)
+        assert row["status"] == "SUCCESS", row
+        assert row["toolbox_mcp_calls"] == 0
+        assert row["toolbox_mcp_connected"] == 1
+        sender.assert_not_called()
+
+    # -- 5. codex (no mcp_init) + 0 calls + flag on → one alert via count ----
+
+    def test_codex_no_init_zero_calls_one_alert(
+        self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
+    ):
+        sender = _patch_app_monitor(monkeypatch, alert_flag=True)
         insert_primary_token("codex")
-        ws_id = _insert_workspace("acme")
-        av_id = _insert_agent_view(ws_id, "developer")
-        job_id = _insert_job_with_agent_view(av_id, max_attempts=2, reference_id="AI-104")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-205")
 
         payload = (CODEX_FIXTURES / "codex_bad_no_mcp.jsonl").read_text()
-        with ExitStack() as stack:
-            stack.enter_context(patch(
-                "agento.modules.codex.src.runner.TokenCodexRunner.run",
-                _codex_callback(payload),
-            ))
-            _enter_build_dir_patches(stack, tmp_path / "build")
-            consumer = Consumer(int_db_config, int_consumer_config, logging.getLogger("e2e"))
-            for _ in range(2):
-                job = consumer._try_dequeue()
-                if job is None:
-                    _force_immediate_redeque(job_id)
-                    job = consumer._try_dequeue()
-                assert job is not None
-                consumer._execute_job(job)
-                _force_immediate_redeque(job_id)
-
-        row = fetch_job(job_id)
-        assert row["status"] == "DEAD", row
-        assert row["attempt"] == 2
-        # The Codex transcript fixture only contains local tool calls
-        # (``exec_command``, ``apply_patch``) — verifier vetoes via the
-        # Codex-registered reader, with **no** claude-specific code in the
-        # path.
-        assert row["error_class"] == "JobVerificationFailed"
-        assert "no_mcp_calls" in (row["error_message"] or "")
-
-        sender.assert_called_once()
-        _, _, subject, body = sender.call_args.args
-        assert str(job_id) in subject
-        assert "AI-104" in body
-        assert "no_mcp_calls" in body
-
-    # -- unknown provider must fail safe -----------------------------------
-
-    def test_unknown_provider_is_trusted_no_veto_no_email(
-        self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
-    ):
-        sender = _patch_app_monitor(monkeypatch)
-        # Use the claude pool/auth but report agent_type="hermes" — there is
-        # no Hermes TranscriptReader registered, so the verifier must trust
-        # rc=0 instead of trying to parse anything.
-        insert_primary_token("claude")
-        ws_id = _insert_workspace("acme")
-        av_id = _insert_agent_view(ws_id, "developer")
-        job_id = _insert_job_with_agent_view(av_id, max_attempts=3, reference_id="AI-105")
-
-        with ExitStack() as stack:
-            stack.enter_context(patch(
-                "agento.modules.claude.src.runner.TokenClaudeRunner.run",
-                _hermes_callback,
-            ))
-            _enter_build_dir_patches(stack, tmp_path / "build")
-            consumer = Consumer(int_db_config, int_consumer_config, logging.getLogger("e2e"))
-            job = consumer._try_dequeue()
-            assert job is not None
-            consumer._execute_job(job)
+        self._run_one(int_db_config, int_consumer_config, tmp_path, patch(
+            "agento.modules.codex.src.runner.TokenCodexRunner.run",
+            _codex_callback(payload),  # mcp_init defaults to None
+        ))
 
         row = fetch_job(job_id)
         assert row["status"] == "SUCCESS", row
-        sender.assert_not_called()
+        assert row["toolbox_mcp_calls"] == 0
+        assert row["toolbox_mcp_connected"] is None  # NULL — codex has no init signal
+        # The count==0 clause fires; NULL connected does not.
+        sender.assert_called_once()
+        _, _, subject, body = sender.call_args.args
+        assert "0 toolbox calls" in subject
+        assert "toolbox not connected" not in subject
+        assert "AI-205" in body
 
-    # -- silent provider format drift ---------------------------------------
+    # -- 6. unknown provider → NULL/NULL, no alert --------------------------
 
-    def test_claude_format_drift_dead_letters_first_attempt_with_parser_alert(
+    def test_unknown_provider_null_columns_no_alert(
+        self, int_db_config, int_consumer_config, tmp_path, monkeypatch,
+    ):
+        sender = _patch_app_monitor(monkeypatch, alert_flag=True)
+        # claude pool/auth but agent_type="hermes" — no reader, no init.
+        insert_primary_token("claude")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-206")
+
+        self._run_one(int_db_config, int_consumer_config, tmp_path, patch(
+            "agento.modules.claude.src.runner.TokenClaudeRunner.run",
+            _hermes_callback,
+        ))
+
+        row = fetch_job(job_id)
+        assert row["status"] == "SUCCESS", row
+        assert row["toolbox_mcp_calls"] is None   # no reader → unknown
+        assert row["toolbox_mcp_connected"] is None  # no init → unknown
+        sender.assert_not_called()  # both signals NULL — neither clause fires
+
+    # -- 7. format drift → no DEAD, telemetry only --------------------------
+
+    def test_claude_format_drift_no_dead_telemetry_only(
         self, int_db_config, int_consumer_config, tmp_path, monkeypatch, caplog,
     ):
-        sender = _patch_app_monitor(monkeypatch)
+        sender = _patch_app_monitor(monkeypatch, alert_flag=True)
         insert_primary_token("claude")
-        ws_id = _insert_workspace("acme")
-        av_id = _insert_agent_view(ws_id, "developer")
-        job_id = _insert_job_with_agent_view(av_id, max_attempts=3, reference_id="AI-106")
+        av_id = _insert_agent_view(_insert_workspace("acme"), "developer")
+        job_id = _insert_job_with_agent_view(av_id, reference_id="AI-207")
 
         # 10 JSON-parseable lines whose outer shape doesn't match the Claude
         # ``message.content`` envelope — simulates a silent CLI upgrade.
@@ -491,7 +464,7 @@ class TestAppMonitorE2E:
         with ExitStack() as stack:
             stack.enter_context(patch(
                 "agento.modules.claude.src.runner.TokenClaudeRunner.run",
-                _claude_callback(drift_payload),
+                _claude_callback(drift_payload, mcp_init=_MCP_CONNECTED),
             ))
             _enter_build_dir_patches(stack, tmp_path / "build")
             consumer = Consumer(int_db_config, int_consumer_config, logging.getLogger("e2e"))
@@ -501,20 +474,14 @@ class TestAppMonitorE2E:
                 consumer._execute_job(job)
 
         row = fetch_job(job_id)
-        # Parser drift is non-retryable: first occurrence dead-letters and
-        # immediately surfaces the issue to ops.
-        assert row["status"] == "DEAD", row
-        assert row["attempt"] == 1
-        assert row["error_class"] == "JobVerificationFailed"
-        assert "transcript_parse_failed" in (row["error_message"] or "")
-        # Parser drift → measurement is unreliable, column stays NULL.
+        # Drift no longer dead-letters — telemetry only.
+        assert row["status"] == "SUCCESS", row
+        # Parse unreliable → calls NULL; connected resolves independently of the
+        # transcript (from mcp_init) → TRUE.
         assert row["toolbox_mcp_calls"] is None
-
-        sender.assert_called_once()
-        _, _, _, body = sender.call_args.args
-        assert "transcript_parse_failed" in body
-        assert "0 of 10" in body  # "parser recognized 0 of 10 JSON records ..."
-
+        assert row["toolbox_mcp_connected"] == 1
+        # calls NULL + connected TRUE → neither alert clause fires.
+        sender.assert_not_called()
         assert any(
             rec.levelno == logging.ERROR and "drift detected" in rec.getMessage()
             for rec in caplog.records

@@ -141,7 +141,8 @@ def test_concurrent_jobs_materialize_isolated_credentials_per_run_dir(
          patch("agento.framework.artifacts_dir.BUILD_DIR", str(tmp_path)), \
          patch("agento.modules.workspace_build.src.builder.BUILD_DIR", str(tmp_path)), \
          patch("agento.modules.agent_view.src.observers.DatabaseConfig.from_env", return_value=int_db_config), \
-         patch("agento.modules.workspace_build.src.observers.DatabaseConfig.from_env", return_value=int_db_config):
+         patch("agento.modules.workspace_build.src.observers.DatabaseConfig.from_env", return_value=int_db_config), \
+         patch("agento.modules.app_monitor.src.observers.DatabaseConfig.from_env", return_value=int_db_config):
         consumer = Consumer(int_db_config, cfg, logger)
 
         # Warm-up: one job sequentially so the shared workspace build exists

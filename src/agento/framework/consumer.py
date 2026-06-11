@@ -40,7 +40,7 @@ from .events import (
 from .job_models import Job, JobStatus
 from .retry_policy import evaluate as evaluate_retry
 from .run_preparation import materialize_run_workspace
-from .runner import RunResult
+from .runner import McpInitReport, RunResult
 from .runner_factory import create_runner
 from .workflows import get_workflow_class
 from .workflows.base import JobContext
@@ -57,6 +57,7 @@ class _JobResult:
     prompt: str | None = None
     output: str | None = None
     session_id: str | None = None
+    mcp_init: McpInitReport | None = None
 
     @classmethod
     def from_run_result(cls, result: RunResult, summary: str) -> _JobResult:
@@ -69,6 +70,7 @@ class _JobResult:
             prompt=result.prompt,
             output=result.raw_output,
             session_id=result.subtype,
+            mcp_init=result.mcp_init,
         )
 
 DEQUEUE_SQL = """

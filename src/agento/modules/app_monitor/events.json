@@ -1,6 +1,6 @@
 {
   "job_finalize_before": [
-    {"name": "verify_mcp_usage", "class": "src.observers.VerifyMcpUsageObserver", "order": 100}
+    {"name": "mcp_health_telemetry", "class": "src.observers.McpHealthTelemetryObserver", "order": 100}
   ],
   "job_dead_after": [
     {"name": "alert_email", "class": "src.observers.AlertEmailObserver", "order": 100}

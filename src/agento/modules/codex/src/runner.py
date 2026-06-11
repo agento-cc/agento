@@ -94,6 +94,7 @@ class TokenCodexRunner(TokenRunner):
         result = RunResult(raw_output=_extract_agent_text(events))
         _populate_session(events, result)
         _populate_usage(events, result)
+        _populate_mcp_init(events, result)
         return result
 
 
@@ -166,3 +167,31 @@ def _populate_usage(events: list[dict], result: RunResult) -> None:
         if total_out:
             result.output_tokens = total_out
         return
+
+
+def _populate_mcp_init(events: list[dict], result: RunResult) -> None:
+    """Scan codex NDJSON events for a session-level MCP-server init self-report.
+
+    Empirical finding (codex 0.128.0, verified against a real production session
+    captured in ``tests/fixtures/codex/real_success_with_mcp.ndjson`` — see the
+    note in ``app_monitor/README.md``): ``codex exec --json`` emits NO startup
+    event listing MCP servers and their connection status. The only event types
+    observed are ``thread.started``, ``turn.{started,completed,failed}``,
+    ``item.{started,completed}`` (with ``item.type`` in {``agent_message``,
+    ``command_execution``, ``mcp_tool_call``}), and ``error``. MCP only ever
+    surfaces as per-tool-call ``mcp_tool_call`` items — those report that a tool
+    was *invoked*, NOT whether the server *connected* at session start.
+
+    There is therefore no init self-report to capture, and ``result.mcp_init``
+    is intentionally left as ``None`` ("we don't know"). Deliberately we do NOT
+    infer connection status from ``mcp_tool_call`` items: that would conflate
+    "tool was used" (the ``toolbox_mcp_calls`` count, derived independently from
+    the transcript reader) with "server connected at init".
+
+    This helper is kept (rather than omitted) so that a future codex version
+    which *does* emit a structured init report has one obvious place to wire it
+    in — at which point add a fixture under ``tests/fixtures/codex/`` and a
+    matching test. Inventing an init schema before codex ships one is out of
+    scope.
+    """
+    return None

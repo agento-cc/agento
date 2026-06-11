@@ -187,6 +187,11 @@ class TestApplyMigration:
         assert "toolbox_mcp_calls INT DEFAULT NULL" in sql
         assert "('021_job_toolbox_mcp_calls')" in sql
 
+    def test_fresh_init_includes_toolbox_mcp_connected_column(self):
+        sql = Path("src/agento/framework/sql/init/000_init.sql").read_text()
+        assert "toolbox_mcp_connected BOOLEAN DEFAULT NULL" in sql
+        assert "('025_job_toolbox_mcp_connected')" in sql
+
 
 class TestMigrate:
     @patch("agento.framework.migrate.apply_migration")

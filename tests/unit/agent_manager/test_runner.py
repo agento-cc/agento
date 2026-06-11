@@ -496,6 +496,25 @@ class TestTokenCodexRunnerJsonOutput:
         assert result.output_tokens == 1904 + 833
         # raw_output is the concatenated agent_message text(s) from item.completed
         assert "353043085362789" in result.raw_output
+        # codex emits no session-level MCP init self-report (only per-call
+        # mcp_tool_call items), so the connection signal stays unknown.
+        assert result.mcp_init is None
+
+    def test_codex_populate_mcp_init_returns_none_when_absent(self):
+        """Empirical: ``codex exec --json`` (through 0.128.0) emits no
+        session-level MCP-server init self-report — MCP only appears as
+        per-call ``mcp_tool_call`` items, which report invocation, not
+        startup connection status. ``_populate_mcp_init`` therefore leaves
+        ``result.mcp_init = None`` ("we don't know"). See the README note in
+        ``app_monitor`` and the docstring on ``_populate_mcp_init``. If a
+        future codex version ships a real init event, add a
+        ``with_mcp_init.ndjson`` fixture and a positive test here."""
+        raw = (_CODEX_FIXTURES / "real_success_with_mcp.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)
+
+        assert result.mcp_init is None
 
     def test_extract_raw_uses_stdout_only_not_stderr(self):
         """The new parser MUST NOT concatenate stderr. Codex log lines on

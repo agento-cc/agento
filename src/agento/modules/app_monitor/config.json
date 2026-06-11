@@ -1,5 +1,5 @@
 {
-  "missing_transcript_policy": "dead",
+  "send_alert_on_mcp_issues": false,
   "alerts/email_to": "",
   "alerts/smtp_host": "",
   "alerts/smtp_port": 587,

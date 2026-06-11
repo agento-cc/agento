@@ -5,7 +5,7 @@ transcript: file location, JSON shape, what counts as a "tool use". Framework
 defines the protocol and registry; modules register implementations via
 ``di.json`` under ``"transcript_readers"``.
 
-Consumers (such as ``app_monitor.VerifyMcpUsageObserver``) look up the reader
+Consumers (such as ``app_monitor.McpHealthTelemetryObserver``) look up the reader
 by provider — they must never read provider-specific files directly.
 
 Readers return a :class:`ParseSummary` so callers can distinguish "agent did

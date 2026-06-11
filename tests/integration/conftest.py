@@ -178,15 +178,13 @@ def _bootstrap_registries():
         jira_projects=["AI"],
         jira_assignee="agenty@example.com",
     ))
-    # app_monitor: integration tests use fake runners that don't produce real
-    # transcript JSONLs. Setting policy=trust prevents the verifier from
-    # dead-lettering every successful job. Dedicated coverage for the verifier
-    # lives in tests/unit/modules/app_monitor/ + tests/integration/test_app_monitor_wiring.py.
-    from agento.modules.app_monitor.src.constants import (
-        CFG_MISSING_TRANSCRIPT_POLICY,
-        POLICY_TRUST,
-    )
-    set_module_config("app_monitor", {CFG_MISSING_TRANSCRIPT_POLICY: POLICY_TRUST})
+    # app_monitor: the observer is now telemetry-only — it never sets a verdict,
+    # so fake-runner jobs (no real transcript JSONL) are no longer at risk of
+    # dead-lettering. Keep the MCP-issue alert flag explicitly off so tests don't
+    # depend on a global SMTP send; dedicated coverage lives in
+    # tests/unit/modules/app_monitor/ + tests/integration/test_app_monitor_wiring.py.
+    from agento.modules.app_monitor.src.constants import CFG_SEND_ALERT_ON_MCP_ISSUES
+    set_module_config("app_monitor", {CFG_SEND_ALERT_ON_MCP_ISSUES: False})
     set_module_config("jira_periodic_tasks", PeriodicTasksConfig(
         jira_status="Cykliczne",
         jira_frequency_field="customfield_10709",

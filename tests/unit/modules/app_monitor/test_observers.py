@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agento.framework.events import JobVerificationFailed, Verdict, VerifyReason
+from agento.framework.runner import McpInitReport, McpServerStatus
 from agento.framework.transcript_reader import ParseSummary, ToolUse
 from agento.modules.app_monitor.src import observers as obs
 from agento.modules.app_monitor.src.constants import (
@@ -17,9 +18,7 @@ from agento.modules.app_monitor.src.constants import (
     CFG_ALERT_SMTP_PORT,
     CFG_ALERT_SMTP_TLS,
     CFG_ALERT_SMTP_USER,
-    CFG_MISSING_TRANSCRIPT_POLICY,
-    POLICY_RETRY,
-    POLICY_TRUST,
+    CFG_SEND_ALERT_ON_MCP_ISSUES,
 )
 
 
@@ -31,6 +30,11 @@ class _Job:
     attempt: int = 1
     max_attempts: int = 3
     session_id: str | None = None
+
+
+@dataclass
+class _JobResult:
+    mcp_init: object | None = None
 
 
 @dataclass
@@ -67,8 +71,6 @@ class _FakeReader:
 def _summary(tool_use_names: list[str], *, total_json_lines: int | None = None,
              recognized_records: int | None = None) -> ParseSummary:
     tool_uses = tuple(ToolUse(name=n, tool_use_id=f"t{i}") for i, n in enumerate(tool_use_names))
-    # Default: every tool use is "recognized" and we tack on a couple of
-    # non-tool-use lines so total_json_lines > recognized_records is realistic.
     if recognized_records is None:
         recognized_records = max(len(tool_uses), 1)
     if total_json_lines is None:
@@ -80,11 +82,34 @@ def _summary(tool_use_names: list[str], *, total_json_lines: int | None = None,
     )
 
 
+def _mcp_init(*pairs: tuple[str, str]) -> McpInitReport:
+    return McpInitReport(servers=tuple(McpServerStatus(n, s) for n, s in pairs))
+
+
+def _toolbox(n: int) -> list[str]:
+    """n distinct ``mcp__toolbox__*`` tool-use names."""
+    return [f"mcp__toolbox__tool_{i}" for i in range(n)]
+
+
+# Full SMTP config so _smtp_config() returns a usable object.
+_SMTP = {
+    CFG_ALERT_EMAIL_TO: "ops@example.com",
+    CFG_ALERT_SMTP_HOST: "smtp.example.com",
+    CFG_ALERT_SMTP_PORT: 587,
+    CFG_ALERT_SMTP_USER: "u",
+    CFG_ALERT_SMTP_PASSWORD: "p",
+    CFG_ALERT_SMTP_FROM: "agento@example.com",
+    CFG_ALERT_SMTP_TLS: True,
+}
+
+
 @pytest.fixture
 def fake_reader(monkeypatch):
     reader = _FakeReader({
-        "good_with_mcp": _summary(["Read", "mcp__toolbox__jira_get_issue"]),
-        "bad_no_mcp": _summary(["Read", "Bash"]),
+        "calls_3": _summary([*_toolbox(3), "Read"]),
+        "calls_5": _summary(_toolbox(5)),
+        "zero_calls": _summary(["Read", "Bash"]),
+        "drifted": ParseSummary(total_json_lines=10, recognized_records=0, tool_uses=()),
     })
     monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: reader)
     return reader
@@ -94,80 +119,277 @@ def _patch_config(monkeypatch, **kwargs):
     monkeypatch.setattr(obs, "_config", lambda: kwargs)
 
 
-class TestVerifyMcpUsageObserver:
-    def test_skips_when_verdict_already_set(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)
-        existing = object()
-        event = _FinalizeEvent(job=_Job(session_id="good_with_mcp"), verdict=existing)
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is existing
+def _patch_saver(monkeypatch) -> MagicMock:
+    saver = MagicMock()
+    monkeypatch.setattr(obs, "_save_mcp_telemetry", saver)
+    return saver
 
-    def test_passes_with_mcp_toolbox_call(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)
-        event = _FinalizeEvent(job=_Job(session_id="good_with_mcp"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is None
 
-    def test_vetoes_when_no_mcp_calls(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)
-        event = _FinalizeEvent(job=_Job(session_id="bad_no_mcp"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.NO_MCP_CALLS
-        assert event.verdict.fresh_start is True
+def _patch_sender(monkeypatch) -> MagicMock:
+    sender = MagicMock()
+    monkeypatch.setattr(obs, "send_alert", sender)
+    return sender
 
-    def test_missing_transcript_policy_dead_by_default(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)  # no key set → default DEAD
-        event = _FinalizeEvent(job=_Job(session_id="nope"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.TRANSCRIPT_MISSING
-        assert event.verdict.retryable is False
 
-    def test_missing_transcript_policy_retry(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch, **{CFG_MISSING_TRANSCRIPT_POLICY: POLICY_RETRY})
-        event = _FinalizeEvent(job=_Job(session_id="nope"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is not None
-        assert event.verdict.retryable is True
-        assert event.verdict.fresh_start is True
+class TestMcpHealthTelemetry:
+    """Telemetry truth table — dual nullable signals, combined alert, no verdict."""
 
-    def test_missing_transcript_policy_trust(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch, **{CFG_MISSING_TRANSCRIPT_POLICY: POLICY_TRUST})
-        event = _FinalizeEvent(job=_Job(session_id="nope"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is None  # trust rc=0
-
-    def test_no_session_id_applies_policy(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch, **{CFG_MISSING_TRANSCRIPT_POLICY: POLICY_RETRY})
-        event = _FinalizeEvent(job=_Job(session_id=None))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.TRANSCRIPT_MISSING
-
-    def test_no_reader_registered_trusts_run(self, monkeypatch):
-        """Provider with no registered TranscriptReader → we can't verify; trust rc=0."""
-        _patch_config(monkeypatch)  # default DEAD if we WERE verifying
-        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+    def test_persists_both_signals_connected_with_calls(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch)  # flag off (missing key)
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
         event = _FinalizeEvent(
-            job=_Job(session_id="any"),
-            provider="unknown-provider",
+            job=_Job(id=10, session_id="calls_3"),
+            job_result=_JobResult(_mcp_init(("toolbox", "connected"))),
         )
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is None  # no veto without a reader
-
-    def test_no_provider_trusts_run(self, monkeypatch):
-        _patch_config(monkeypatch)
-        monkeypatch.setattr(
-            obs, "get_transcript_reader",
-            lambda provider: pytest.fail("should not be called when provider is None"),
-        )
-        event = _FinalizeEvent(job=_Job(session_id="any"), provider=None)
-        obs.VerifyMcpUsageObserver().execute(event)
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(10, 3, True)
+        sender.assert_not_called()
         assert event.verdict is None
 
-    def test_reader_raising_unexpected_error_applies_policy(self, monkeypatch):
-        _patch_config(monkeypatch, **{CFG_MISSING_TRANSCRIPT_POLICY: POLICY_RETRY})
+    def test_persists_connected_zero_calls_no_alert(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: False, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=11, session_id="zero_calls"),
+            job_result=_JobResult(_mcp_init(("toolbox", "connected"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(11, 0, True)
+        sender.assert_not_called()
+        assert event.verdict is None
+
+    def test_persists_connected_zero_calls_alerts(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=12, session_id="zero_calls"),
+            job_result=_JobResult(_mcp_init(("toolbox", "connected"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(12, 0, True)
+        sender.assert_called_once()
+        _, _, subject, _ = sender.call_args.args
+        assert "0 toolbox calls" in subject
+        assert event.verdict is None
+
+    def test_persists_not_connected_with_calls_alerts(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=13, session_id="calls_5"),
+            job_result=_JobResult(_mcp_init(("toolbox", "failed"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(13, 5, False)
+        sender.assert_called_once()
+        _, _, subject, _ = sender.call_args.args
+        assert "toolbox not connected" in subject
+        assert event.verdict is None
+
+    def test_persists_not_connected_no_calls_alerts_once(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=14, session_id="zero_calls"),
+            job_result=_JobResult(_mcp_init(("toolbox", "failed"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(14, 0, False)
+        # Combined condition -> exactly ONE email naming both.
+        sender.assert_called_once()
+        _, _, subject, _ = sender.call_args.args
+        assert "0 toolbox calls" in subject
+        assert "toolbox not connected" in subject
+        assert event.verdict is None
+
+    def test_persists_no_init_data_with_calls(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=15, session_id="calls_5"),
+            job_result=_JobResult(mcp_init=None),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(15, 5, None)
+        sender.assert_not_called()  # NULL connected is "unknown", not "bad"
+        assert event.verdict is None
+
+    def test_null_calls_does_not_alert(self, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=16, session_id="any"),
+            provider="unknown",
+            job_result=_JobResult(_mcp_init(("toolbox", "connected"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(16, None, True)
+        sender.assert_not_called()  # calls == 0 is False for None
+        assert event.verdict is None
+
+    def test_null_connected_does_not_alert(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=17, session_id="calls_5"),
+            job_result=_JobResult(mcp_init=None),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        saver.assert_called_once_with(17, 5, None)
+        sender.assert_not_called()  # connected is False is False for None
+        assert event.verdict is None
+
+    def test_both_null_still_updates_row(self, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=18, session_id="any"),
+            provider="unknown",
+            job_result=_JobResult(mcp_init=None),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        # UPDATE issued with (NULL, NULL) — overwrites any stale per-attempt values.
+        saver.assert_called_once_with(18, None, None)
+        sender.assert_not_called()
+        assert event.verdict is None
+
+    def test_retry_overwrites_prior_attempt_values(self, monkeypatch):
+        """Same job row, two attempts: attempt 1 connected/3 → attempt 2 None/None.
+        The observer recomputes per attempt and always writes both columns, so a
+        prior attempt's values cannot survive into the next."""
+        _patch_config(monkeypatch)
+        saver = _patch_saver(monkeypatch)
+        observer = obs.McpHealthTelemetryObserver()
+
+        # Attempt 1: readable transcript w/ 3 toolbox calls + connected init.
+        reader = _FakeReader({"s1": _summary(_toolbox(3))})
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: reader)
+        observer.execute(_FinalizeEvent(
+            job=_Job(id=20, session_id="s1"),
+            job_result=_JobResult(_mcp_init(("toolbox", "connected"))),
+        ))
+
+        # Attempt 2 (same row): no reader, no init report.
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        observer.execute(_FinalizeEvent(
+            job=_Job(id=20, session_id="s2"),
+            provider="unknown",
+            job_result=_JobResult(mcp_init=None),
+        ))
+
+        assert saver.call_args_list[0].args == (20, 3, True)
+        assert saver.call_args_list[1].args == (20, None, None)
+
+    def test_no_alert_when_smtp_unconfigured(self, fake_reader, monkeypatch):
+        _patch_config(monkeypatch, **{
+            CFG_SEND_ALERT_ON_MCP_ISSUES: True,
+            CFG_ALERT_EMAIL_TO: "ops@example.com",
+            CFG_ALERT_SMTP_HOST: "",  # host empty -> _smtp_config() is None
+        })
+        saver = _patch_saver(monkeypatch)
+        sender = _patch_sender(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=21, session_id="zero_calls"),
+            job_result=_JobResult(_mcp_init(("toolbox", "failed"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)  # must not raise
+        saver.assert_called_once_with(21, 0, False)
+        sender.assert_not_called()
+
+    def test_alert_smtp_failure_logged_not_raised(self, fake_reader, monkeypatch, caplog):
+        _patch_config(monkeypatch, **{CFG_SEND_ALERT_ON_MCP_ISSUES: True, **_SMTP})
+        saver = _patch_saver(monkeypatch)
+
+        def _boom(*_a, **_kw):
+            raise OSError("smtp down")
+        monkeypatch.setattr(obs, "send_alert", _boom)
+
+        event = _FinalizeEvent(
+            job=_Job(id=22, session_id="zero_calls"),
+            job_result=_JobResult(_mcp_init(("toolbox", "failed"))),
+        )
+        with caplog.at_level(logging.WARNING, logger=obs.logger.name):
+            obs.McpHealthTelemetryObserver().execute(event)  # returns cleanly
+
+        saver.assert_called_once_with(22, 0, False)  # columns still persisted
+        assert any("SMTP send failed" in r.message for r in caplog.records)
+
+    def test_drift_logs_persists_null_calls_and_known_connected(self, fake_reader, monkeypatch, caplog):
+        _patch_config(monkeypatch)
+        saver = _patch_saver(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=23, session_id="drifted"),
+            job_result=_JobResult(_mcp_init(("toolbox", "connected"))),
+        )
+        with caplog.at_level(logging.ERROR, logger=obs.logger.name):
+            obs.McpHealthTelemetryObserver().execute(event)
+
+        # calls NULL (parse unreliable) but connected TRUE (independent of transcript).
+        saver.assert_called_once_with(23, None, True)
+        assert event.verdict is None
+        assert any("parser drift detected" in r.message for r in caplog.records)
+
+    def test_toolbox_absent_from_init_list_is_false(self, monkeypatch):
+        _patch_config(monkeypatch)
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        saver = _patch_saver(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=24, session_id="any"),
+            provider="unknown",
+            job_result=_JobResult(_mcp_init(("context7", "connected"))),
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        # init present, toolbox not visible -> FALSE
+        assert saver.call_args.args == (24, None, False)
+
+    def test_empty_servers_list_is_false(self, monkeypatch):
+        _patch_config(monkeypatch)
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        saver = _patch_saver(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=25, session_id="any"),
+            provider="unknown",
+            job_result=_JobResult(_mcp_init()),  # servers=()
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        assert saver.call_args.args == (25, None, False)
+
+    def test_toolbox_provider_lacks_init_is_null(self, monkeypatch):
+        _patch_config(monkeypatch)
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        saver = _patch_saver(monkeypatch)
+        event = _FinalizeEvent(
+            job=_Job(id=26, session_id="any"),
+            provider="unknown",
+            job_result=_JobResult(mcp_init=None),  # provider exposed no init report
+        )
+        obs.McpHealthTelemetryObserver().execute(event)
+        # NULL is distinct from FALSE.
+        assert saver.call_args.args == (26, None, None)
+
+    def test_observer_never_raises(self, monkeypatch):
+        observer = obs.McpHealthTelemetryObserver()
+
+        # 1. _config() itself throws (covers _flag/_smtp_config too).
+        def _bad_config():
+            raise RuntimeError("config backend down")
+        monkeypatch.setattr(obs, "_config", _bad_config)
+        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
+        observer.execute(_FinalizeEvent(job=_Job(session_id="x")))
+
+        # 2. reader.parse throws unexpectedly.
+        _patch_config(monkeypatch)
 
         class _Broken:
             def parse(self, session_id):
@@ -177,128 +399,39 @@ class TestVerifyMcpUsageObserver:
                 return self.parse(session_id)
 
         monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: _Broken())
-        event = _FinalizeEvent(job=_Job(session_id="any"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.TRANSCRIPT_MISSING
+        observer.execute(_FinalizeEvent(job=_Job(session_id="x")))
 
-
-class TestVerifyMcpUsageObserverToolboxCount:
-    """``toolbox_mcp_calls`` column population. We assert the call shape only;
-    the integration test pins the actual SQL effect on a real DB row.
-    """
-
-    def test_persists_zero_when_no_mcp_calls(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)
-        saver = MagicMock()
-        monkeypatch.setattr(obs, "_save_toolbox_mcp_calls", saver)
-        event = _FinalizeEvent(job=_Job(id=42, session_id="bad_no_mcp"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        saver.assert_called_once_with(42, 0)
-
-    def test_persists_count_when_mcp_calls_present(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)
-        saver = MagicMock()
-        monkeypatch.setattr(obs, "_save_toolbox_mcp_calls", saver)
-        event = _FinalizeEvent(job=_Job(id=43, session_id="good_with_mcp"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        # good_with_mcp fixture has exactly one mcp__toolbox__* tool use.
-        saver.assert_called_once_with(43, 1)
-
-    def test_skips_persist_when_parser_drift(self, monkeypatch):
-        """Drift verdict → leave column NULL (count is unreliable)."""
-        _patch_config(monkeypatch)
-        reader = _FakeReader({
-            "drifted": ParseSummary(
-                total_json_lines=10, recognized_records=0, tool_uses=(),
-            ),
-        })
-        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: reader)
-        saver = MagicMock()
-        monkeypatch.setattr(obs, "_save_toolbox_mcp_calls", saver)
-        event = _FinalizeEvent(job=_Job(id=44, session_id="drifted"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        saver.assert_not_called()
-
-    def test_skips_persist_when_transcript_missing(self, fake_reader, monkeypatch):
-        _patch_config(monkeypatch)
-        saver = MagicMock()
-        monkeypatch.setattr(obs, "_save_toolbox_mcp_calls", saver)
-        event = _FinalizeEvent(job=_Job(id=45, session_id="nope"))
-        obs.VerifyMcpUsageObserver().execute(event)
-        saver.assert_not_called()
-
-    def test_skips_persist_when_no_reader_for_provider(self, monkeypatch):
-        _patch_config(monkeypatch)
+        # 3. persist throws.
         monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: None)
-        saver = MagicMock()
-        monkeypatch.setattr(obs, "_save_toolbox_mcp_calls", saver)
-        event = _FinalizeEvent(
-            job=_Job(id=46, session_id="any"),
-            provider="unknown",
-        )
-        obs.VerifyMcpUsageObserver().execute(event)
-        saver.assert_not_called()
 
+        def _bad_save(*_a, **_kw):
+            raise RuntimeError("db down")
+        monkeypatch.setattr(obs, "_save_mcp_telemetry", _bad_save)
+        observer.execute(_FinalizeEvent(
+            job=_Job(session_id="x"),
+            job_result=_JobResult(mcp_init=None),
+        ))
 
-class TestVerifyMcpUsageObserverDrift:
-    """Coverage for Fix 3 — silent parser-drift detection."""
+        # 4. job_result is None entirely.
+        observer.execute(_FinalizeEvent(job=_Job(session_id="x"), job_result=None))
 
-    def test_drift_detected_emits_parse_failed_verdict(self, monkeypatch, caplog):
-        _patch_config(monkeypatch)
-        reader = _FakeReader({
-            "drifted": ParseSummary(
-                total_json_lines=10, recognized_records=0, tool_uses=(),
-            ),
-        })
-        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: reader)
+    def test_flag_default_off_and_string_truthy(self, monkeypatch):
+        monkeypatch.setattr(obs, "_config", lambda: {})
+        assert obs._flag(CFG_SEND_ALERT_ON_MCP_ISSUES) is False  # missing key
 
-        event = _FinalizeEvent(job=_Job(session_id="drifted"))
-        with caplog.at_level(logging.ERROR, logger=obs.logger.name):
-            obs.VerifyMcpUsageObserver().execute(event)
+        for truthy in ("true", "TRUE", "yes", "1", "on", "On"):
+            monkeypatch.setattr(obs, "_config", lambda v=truthy: {CFG_SEND_ALERT_ON_MCP_ISSUES: v})
+            assert obs._flag(CFG_SEND_ALERT_ON_MCP_ISSUES) is True, truthy
 
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.TRANSCRIPT_PARSE_FAILED
-        assert event.verdict.retryable is False
-        assert event.verdict.fresh_start is False
-        assert event.verdict.detail is not None
-        assert "0 of 10" in event.verdict.detail
-        assert any(rec.levelno == logging.ERROR for rec in caplog.records)
+        for falsy in ("false", "0", "no", "off", "", "nonsense"):
+            monkeypatch.setattr(obs, "_config", lambda v=falsy: {CFG_SEND_ALERT_ON_MCP_ISSUES: v})
+            assert obs._flag(CFG_SEND_ALERT_ON_MCP_ISSUES) is False, falsy
 
-    def test_short_unrecognized_file_falls_through_to_no_mcp_veto(self, monkeypatch):
-        """Below PARSE_DRIFT_MIN_LINES, we don't treat unrecognized records as
-        drift — too noisy. The normal NO_MCP_CALLS veto still fires."""
-        _patch_config(monkeypatch)
-        reader = _FakeReader({
-            "short": ParseSummary(
-                total_json_lines=2, recognized_records=0, tool_uses=(),
-            ),
-        })
-        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: reader)
-
-        event = _FinalizeEvent(job=_Job(session_id="short"))
-        obs.VerifyMcpUsageObserver().execute(event)
-
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.NO_MCP_CALLS
-
-    def test_recognized_records_with_no_mcp_uses_existing_veto(self, monkeypatch):
-        """Records were recognized but no MCP — existing NO_MCP_CALLS path, not drift."""
-        _patch_config(monkeypatch)
-        reader = _FakeReader({
-            "no_mcp_but_parsed": ParseSummary(
-                total_json_lines=10,
-                recognized_records=8,
-                tool_uses=(ToolUse(name="Read", tool_use_id="t1"),),
-            ),
-        })
-        monkeypatch.setattr(obs, "get_transcript_reader", lambda provider: reader)
-
-        event = _FinalizeEvent(job=_Job(session_id="no_mcp_but_parsed"))
-        obs.VerifyMcpUsageObserver().execute(event)
-
-        assert event.verdict is not None
-        assert event.verdict.reason == VerifyReason.NO_MCP_CALLS
+        # Native bools pass straight through (config.json default is JSON false/true).
+        monkeypatch.setattr(obs, "_config", lambda: {CFG_SEND_ALERT_ON_MCP_ISSUES: True})
+        assert obs._flag(CFG_SEND_ALERT_ON_MCP_ISSUES) is True
+        monkeypatch.setattr(obs, "_config", lambda: {CFG_SEND_ALERT_ON_MCP_ISSUES: False})
+        assert obs._flag(CFG_SEND_ALERT_ON_MCP_ISSUES) is False
 
 
 class TestAlertEmailObserver:
@@ -323,15 +456,7 @@ class TestAlertEmailObserver:
         sender.assert_not_called()
 
     def test_sends_when_configured(self, monkeypatch):
-        _patch_config(monkeypatch, **{
-            CFG_ALERT_EMAIL_TO: "ops@example.com",
-            CFG_ALERT_SMTP_HOST: "smtp.example.com",
-            CFG_ALERT_SMTP_PORT: 587,
-            CFG_ALERT_SMTP_USER: "u",
-            CFG_ALERT_SMTP_PASSWORD: "p",
-            CFG_ALERT_SMTP_FROM: "agento@example.com",
-            CFG_ALERT_SMTP_TLS: True,
-        })
+        _patch_config(monkeypatch, **_SMTP)
         sender = MagicMock()
         monkeypatch.setattr(obs, "send_alert", sender)
 

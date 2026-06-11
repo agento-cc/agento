@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from agento.framework.runner import McpInitReport, McpServerStatus
 from agento.modules.claude.src.output_parser import (
     AuthenticationError,
     parse_claude_output,
@@ -124,3 +125,91 @@ def test_parse_stream_json_no_result_event():
 
     assert result.raw_output == raw
     assert result.input_tokens is None
+
+
+# ---- MCP init self-report (system/init line) ----
+
+def _result_line(session_id: str = "sess-mcp") -> str:
+    return (
+        '{"type": "result", "result": "ok", "is_error": false, '
+        '"usage": {"input_tokens": 10, "output_tokens": 5}, '
+        f'"session_id": "{session_id}"}}\n'
+    )
+
+
+def test_parse_claude_output_extracts_mcp_init():
+    raw = (
+        '{"type": "system", "subtype": "init", "session_id": "sess-mcp", '
+        '"mcp_servers": [{"name": "toolbox", "status": "connected"}, '
+        '{"name": "context7", "status": "failed"}]}\n'
+        + _result_line()
+    )
+    result = parse_claude_output(raw)
+
+    assert result.mcp_init == McpInitReport(
+        servers=(
+            McpServerStatus("toolbox", "connected"),
+            McpServerStatus("context7", "failed"),
+        )
+    )
+
+
+def test_parse_claude_output_empty_servers_list():
+    raw = (
+        '{"type": "system", "subtype": "init", "mcp_servers": []}\n'
+        + _result_line()
+    )
+    result = parse_claude_output(raw)
+
+    # Empty list IS a valid init report ("started, no MCP servers visible"),
+    # NOT the same as "no init at all".
+    assert result.mcp_init == McpInitReport(servers=())
+    assert result.mcp_init is not None
+
+
+def test_parse_claude_output_no_init_event():
+    raw = _result_line()
+    result = parse_claude_output(raw)
+
+    assert result.mcp_init is None
+
+
+def test_parse_claude_output_malformed_init_skipped():
+    # Server entry missing "status" -> whole report untrusted, no exception.
+    raw = (
+        '{"type": "system", "subtype": "init", '
+        '"mcp_servers": [{"name": "toolbox"}]}\n'
+        + _result_line()
+    )
+    result = parse_claude_output(raw)
+
+    assert result.mcp_init is None
+
+
+def test_parse_claude_output_only_first_init_wins():
+    raw = (
+        '{"type": "system", "subtype": "init", '
+        '"mcp_servers": [{"name": "toolbox", "status": "connected"}]}\n'
+        '{"type": "system", "subtype": "init", '
+        '"mcp_servers": [{"name": "context7", "status": "failed"}]}\n'
+        + _result_line()
+    )
+    result = parse_claude_output(raw)
+
+    assert result.mcp_init == McpInitReport(
+        servers=(McpServerStatus("toolbox", "connected"),)
+    )
+
+
+def test_parse_claude_output_mcp_init_survives_missing_result_event():
+    # Partial output (timeout): init line present, no result event.
+    raw = (
+        '{"type": "system", "subtype": "init", "session_id": "sess-x", '
+        '"mcp_servers": [{"name": "toolbox", "status": "connected"}]}\n'
+    )
+    result = parse_claude_output(raw)
+
+    assert result.subtype == "sess-x"
+    assert result.mcp_init == McpInitReport(
+        servers=(McpServerStatus("toolbox", "connected"),)
+    )

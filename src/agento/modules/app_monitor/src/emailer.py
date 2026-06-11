@@ -17,6 +17,10 @@ class SmtpConfig:
     password: str
     from_addr: str
     tls: bool
+    # Telemetry now sends on every successful job finalize (not just DEAD), so a
+    # slow/wedged SMTP host must not stall the consumer worker even though the
+    # observer swallows exceptions. Conservative default; connect+send bounded.
+    timeout_seconds: float = 10.0
 
 
 def send_alert(cfg: SmtpConfig, to: str, subject: str, body: str) -> None:
@@ -27,7 +31,7 @@ def send_alert(cfg: SmtpConfig, to: str, subject: str, body: str) -> None:
     msg["Subject"] = subject
     msg.set_content(body)
 
-    with smtplib.SMTP(cfg.host, cfg.port) as smtp:
+    with smtplib.SMTP(cfg.host, cfg.port, timeout=cfg.timeout_seconds) as smtp:
         if cfg.tls:
             smtp.starttls()
         if cfg.user:

@@ -444,17 +444,18 @@
       <div class="arrow">↓</div>
 
       <div class="card observer">
-        <div class="card-title">Verification gate (rc=0 path)</div>
+        <div class="card-title">MCP-health telemetry (rc=0 path)</div>
         <div class="card-body">
           <a href="../../src/agento/framework/consumer.py#L637"><code>consumer.py:637</code></a> dispatches with
           <code>JobFinalizeEvent(job, job_result, elapsed_ms, provider, verdict=None)</code>.
-          Observer <code>VerifyMcpUsageObserver</code>
+          Observer <code>McpHealthTelemetryObserver</code>
           (<a href="../../src/agento/modules/app_monitor/events.json"><code>app_monitor/events.json</code></a>, order=100) parses the
           transcript via <a href="../../src/agento/framework/transcript_reader.py#L85"><code>get_transcript_reader(provider)</code></a>
-          and may set <code>event.verdict</code>
-          (<a href="../../src/agento/framework/events.py#L74"><code>VerifyReason</code></a>:
-          <code>NO_MCP_CALLS</code>, <code>TRANSCRIPT_MISSING</code>, <code>TRANSCRIPT_PARSE_FAILED</code>).
-          A non-<code>None</code> verdict raises <code>JobVerificationFailed</code> → routes to retry/dead.
+          and records two nullable signals on the <code>job</code> row —
+          <code>toolbox_mcp_calls</code> (count of <code>mcp__toolbox__*</code> tool-uses) and
+          <code>toolbox_mcp_connected</code> (from <code>job_result.mcp_init</code>) — then optionally emails ops.
+          It is <b>telemetry only</b>: <code>verdict</code> stays <code>None</code>, so an <code>rc=0</code> job always commits SUCCESS.
+          The framework's verdict plumbing remains for future modules, but no in-tree observer sets a verdict.
         </div>
         <div class="events">
           <span class="evt before"><a href="../../src/agento/framework/consumer.py#L637">job_finalize_before</a></span>

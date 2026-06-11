@@ -1,5 +1,5 @@
 -- Agento: consolidated fresh-install schema
--- Equivalent to applying migrations 001 through 024 on a blank database.
+-- Equivalent to applying migrations 001 through 025 on a blank database.
 -- This file is used ONLY for docker-entrypoint-initdb.d (fresh MySQL init).
 -- Incremental upgrades are handled by setup:upgrade using individual migration files.
 
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS job (
     pid             INT DEFAULT NULL,
     session_id      VARCHAR(255) DEFAULT NULL,
     toolbox_mcp_calls INT DEFAULT NULL,
+    toolbox_mcp_connected BOOLEAN DEFAULT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -192,4 +193,5 @@ INSERT INTO schema_migration (version) VALUES
     ('021_job_toolbox_mcp_calls'),
     ('022_oauth_token_type_priority'),
     ('023_drop_oauth_token_model'),
-    ('024_oauth_token_used_at_precision');
+    ('024_oauth_token_used_at_precision'),
+    ('025_job_toolbox_mcp_connected');
