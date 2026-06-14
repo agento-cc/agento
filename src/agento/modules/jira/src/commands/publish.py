@@ -5,10 +5,44 @@ import argparse
 import dataclasses
 import sys
 
+from agento.framework.job_models import JobRequester, RequesterTrust
 from agento.framework.log import get_logger
 from agento.modules.jira.src.channel import JiraPublisher, publish_cron
 from agento.modules.jira.src.task_list import TaskListBuilder
 from agento.modules.jira.src.toolbox_client import ToolboxClient
+
+
+def _todo_requester(builder, issue) -> JobRequester | None:
+    change, complete = builder.get_status_change(issue.key, issue.status)  # change None -> no authoritative actor
+    author = (change or {}).get("author") or {}
+    if change and author.get("accountId"):                        # `change and` keeps the type-checker happy
+        return JobRequester(
+            key=f"jira:{author['accountId']}",
+            email=author.get("emailAddress"),                     # JobRequester normalizes (strip+lower)
+            trust=RequesterTrust.ACCOUNT,
+            meta={"basis": "status_change", "issue_key": issue.key, "status": issue.status,
+                  "display_name": author.get("displayName"),
+                  "changelog_id": change.get("id"), "changed_at": change.get("created")},
+        )
+    if issue.reporter_account_id:  # weaker attribution (reporter != status-changer) - flagged via basis
+        # honest audit: 3 distinct reasons we fell back to the reporter. We only reach this
+        # branch when the status_change actor was unusable, so `change` being truthy here means
+        # a transition WAS found but its author had no accountId (unattributable actor).
+        if change:
+            fallback_reason = "status_change_actor_unavailable"
+        elif complete:                                            # full scan, no transition into current status
+            fallback_reason = "no_status_transition"
+        else:                                                     # changelog unreadable (fetch error / page cap)
+            fallback_reason = "changelog_unavailable"
+        return JobRequester(
+            key=f"jira:{issue.reporter_account_id}",
+            email=issue.reporter_email,                           # JobRequester normalizes
+            trust=RequesterTrust.ACCOUNT,
+            meta={"basis": "reporter", "issue_key": issue.key, "status": issue.status,
+                  "display_name": issue.reporter,
+                  "fallback_reason": fallback_reason},
+        )
+    return None
 
 
 def _load_configs():
@@ -181,6 +215,7 @@ class PublishCommand:
                 db_config, reference_id=task.issue.key,
                 updated=task.issue.updated, logger=logger,
                 agent_view_id=agent_view_id, priority=priority,
+                requester=_todo_requester(builder, task.issue),
             )
             if inserted:
                 published += 1
@@ -206,10 +241,13 @@ class PublishCommand:
                     return
                 published = 0
                 for task in tasks:
+                    payload = dataclasses.asdict(task.issue)
+                    payload.pop("reporter_email", None)  # audit-only: keep PII out of routing payload + routing events
                     inserted = publish_todo(
                         db_config, issue_key=task.issue.key,
                         updated=task.issue.updated, logger=logger,
-                        payload=dataclasses.asdict(task.issue),
+                        payload=payload,
+                        requester=_todo_requester(builder, task.issue),
                     )
                     if inserted:
                         published += 1

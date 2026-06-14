@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from agento.framework.agent_view_runtime import resolve_publish_priority
 from agento.framework.channels.base import PromptFragments, WorkItem
 from agento.framework.db import get_connection
-from agento.framework.job_models import AgentType
+from agento.framework.job_models import AgentType, JobRequester, RequesterTrust
 from agento.framework.publisher import publish
 from agento.framework.router import RoutingContext, resolve_agent_view
 from agento.modules.jira.src.mention_detector import find_unanswered_mention
@@ -195,6 +195,7 @@ class JiraPublisher:
         agent_view_id: int | None = None,
         priority: int = 50,
         payload: dict | None = None,
+        requester: JobRequester | None = None,
     ) -> bool:
         if agent_view_id is None:
             agent_view_id, priority = self._resolve_routing(config, "todo", logger, payload=payload)
@@ -204,6 +205,7 @@ class JiraPublisher:
             reference_id=reference_id, logger=logger,
             agent_view_id=agent_view_id, priority=priority,
             skip_if_active=True,
+            requester=requester,
         )
 
     def publish_mentions(
@@ -244,10 +246,22 @@ class JiraPublisher:
 
                 comment_id = mention["id"]
                 idem_key = f"jira:mention:{task.issue.key}:{comment_id}"
+                author = mention.get("author") or {}
+                account_id = author.get("accountId")
+                requester = None
+                if account_id:
+                    requester = JobRequester(
+                        key=f"jira:{account_id}",
+                        email=author.get("emailAddress"),  # JobRequester normalizes (strip+lower)
+                        trust=RequesterTrust.ACCOUNT,
+                        meta={"basis": "comment_author", "issue_key": task.issue.key,
+                              "comment_id": comment_id, "display_name": author.get("displayName")},
+                    )
                 inserted = publish(
                     publish_cfg, AgentType.TODO, self.name, idem_key,
                     reference_id=task.issue.key, logger=logger,
                     agent_view_id=agent_view_id, priority=priority,
+                    requester=requester,
                 )
                 if inserted:
                     published += 1
@@ -293,8 +307,12 @@ def publish_todo(
     updated: str | None = None,
     logger: logging.Logger | None = None,
     payload: dict | None = None,
+    requester: JobRequester | None = None,
 ) -> bool:
-    return _jira.publish_todo(config, issue_key, updated=updated, logger=logger, payload=payload)
+    return _jira.publish_todo(
+        config, issue_key, updated=updated, logger=logger,
+        payload=payload, requester=requester,
+    )
 
 
 def publish_mentions(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from agento.framework.job_models import AgentType
+from agento.framework.job_models import AgentType, RequesterTrust
 from agento.modules.jira.src.channel import JiraChannel
 from agento.modules.jira.src.config import JiraConfig
 from agento.modules.jira.src.models import JiraIssue, TaskAction, TaskPriority, TaskSource
@@ -274,6 +274,97 @@ class TestPublishMentionsMultipleCandidates:
         assert count == 1
         assert mock_publish.call_args[0][3] == "jira:mention:AI-11:200"
         logger.exception.assert_called_once()
+
+
+class TestPublishMentionsRequester:
+    """The forwarded requester is the unanswered-mention's comment author."""
+
+    @patch("agento.modules.jira.src.channel.publish")
+    @patch("agento.modules.jira.src.channel.ToolboxClient")
+    @patch("agento.modules.jira.src.channel.TaskListBuilder")
+    def test_requester_is_comment_author_with_email(self, MockBuilder, MockToolbox, mock_publish):
+        config = _make_config()
+        logger = MagicMock()
+
+        builder = MagicMock()
+        builder.get_unanswered_mentions.return_value = [_make_task("AI-8")]
+        MockBuilder.return_value = builder
+
+        toolbox = MagicMock()
+        toolbox.jira_get_comments.return_value = [
+            _jira_comment(
+                "150318", USER_MARCIN,
+                f"[~accountid:{AGENT_ACCOUNT_ID}] pomoz",
+                display_name="Marcin Klauza",
+                email="Marcin@Example.com",
+            ),
+        ]
+        MockToolbox.return_value = toolbox
+        mock_publish.return_value = True
+
+        JiraChannel().publish_mentions(config, logger)
+
+        requester = mock_publish.call_args.kwargs["requester"]
+        assert requester is not None
+        assert requester.key == f"jira:{USER_MARCIN}"
+        assert requester.trust is RequesterTrust.ACCOUNT
+        assert requester.email == "marcin@example.com"  # normalized
+        assert requester.meta["basis"] == "comment_author"
+        assert requester.meta["issue_key"] == "AI-8"
+        assert requester.meta["comment_id"] == "150318"
+        assert requester.meta["display_name"] == "Marcin Klauza"
+
+    @patch("agento.modules.jira.src.channel.publish")
+    @patch("agento.modules.jira.src.channel.ToolboxClient")
+    @patch("agento.modules.jira.src.channel.TaskListBuilder")
+    def test_requester_email_absent(self, MockBuilder, MockToolbox, mock_publish):
+        config = _make_config()
+        logger = MagicMock()
+
+        builder = MagicMock()
+        builder.get_unanswered_mentions.return_value = [_make_task("AI-8")]
+        MockBuilder.return_value = builder
+
+        toolbox = MagicMock()
+        toolbox.jira_get_comments.return_value = [
+            _jira_comment("150318", USER_MARCIN, f"[~accountid:{AGENT_ACCOUNT_ID}] pomoz"),
+        ]
+        MockToolbox.return_value = toolbox
+        mock_publish.return_value = True
+
+        JiraChannel().publish_mentions(config, logger)
+
+        requester = mock_publish.call_args.kwargs["requester"]
+        assert requester is not None
+        assert requester.key == f"jira:{USER_MARCIN}"
+        assert requester.email is None
+
+    @patch("agento.modules.jira.src.channel.publish")
+    @patch("agento.modules.jira.src.channel.ToolboxClient")
+    @patch("agento.modules.jira.src.channel.TaskListBuilder")
+    def test_author_without_account_id_yields_no_requester(self, MockBuilder, MockToolbox, mock_publish):
+        config = _make_config()
+        logger = MagicMock()
+
+        builder = MagicMock()
+        builder.get_unanswered_mentions.return_value = [_make_task("AI-8")]
+        MockBuilder.return_value = builder
+
+        # comment whose author has no accountId, but body still mentions the agent
+        comment = {
+            "id": "150318",
+            "author": {"displayName": "Anonymous"},
+            "body": f"[~accountid:{AGENT_ACCOUNT_ID}] pomoz",
+        }
+        toolbox = MagicMock()
+        toolbox.jira_get_comments.return_value = [comment]
+        MockToolbox.return_value = toolbox
+        mock_publish.return_value = True
+
+        JiraChannel().publish_mentions(config, logger)
+
+        mock_publish.assert_called_once()
+        assert mock_publish.call_args.kwargs["requester"] is None
 
 
 class TestPublishMentionsIdempotency:

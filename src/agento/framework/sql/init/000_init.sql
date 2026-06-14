@@ -1,5 +1,5 @@
 -- Agento: consolidated fresh-install schema
--- Equivalent to applying migrations 001 through 025 on a blank database.
+-- Equivalent to applying migrations 001 through 026 on a blank database.
 -- This file is used ONLY for docker-entrypoint-initdb.d (fresh MySQL init).
 -- Incremental upgrades are handled by setup:upgrade using individual migration files.
 
@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS job (
     output          MEDIUMTEXT NULL,
     context         TEXT NULL,
     idempotency_key VARCHAR(255) NOT NULL,
+    requester_key   VARCHAR(255) NULL,
+    requester_email VARCHAR(320) NULL,
+    requester_trust VARCHAR(32) NOT NULL DEFAULT 'claimed',
+    requester_meta  JSON NULL,
     status          ENUM('TODO', 'RUNNING', 'SUCCESS', 'FAILED', 'DEAD', 'PAUSED') NOT NULL DEFAULT 'TODO',
     attempt         TINYINT UNSIGNED NOT NULL DEFAULT 0,
     max_attempts    TINYINT UNSIGNED NOT NULL DEFAULT 3,
@@ -90,6 +94,8 @@ CREATE TABLE IF NOT EXISTS job (
     KEY idx_job_schedule (schedule_id),
     KEY idx_job_agent_view (agent_view_id),
     KEY idx_job_priority_created (priority DESC, created_at ASC),
+    KEY idx_job_requester_key (requester_key),
+    KEY idx_job_requester_email (requester_email),
 
     CONSTRAINT fk_job_schedule
         FOREIGN KEY (schedule_id) REFERENCES schedule(id) ON DELETE SET NULL,
@@ -194,4 +200,5 @@ INSERT INTO schema_migration (version) VALUES
     ('022_oauth_token_type_priority'),
     ('023_drop_oauth_token_model'),
     ('024_oauth_token_used_at_precision'),
-    ('025_job_toolbox_mcp_connected');
+    ('025_job_toolbox_mcp_connected'),
+    ('026_job_requester');

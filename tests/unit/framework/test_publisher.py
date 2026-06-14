@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agento.framework.job_models import AgentType
+from agento.framework.job_models import AgentType, JobRequester, RequesterTrust
 from agento.framework.publisher import publish
 
 
@@ -166,3 +167,101 @@ class TestSkipIfActive:
         assert "agent_view_id" in sql and "reference_id" in sql
         assert "status" in sql
         assert params == ("todo", "jira", 2, "AI-64")
+
+
+def _insert_call(mock_cursor):
+    """Return the (sql, params) of the INSERT IGNORE execute call."""
+    return next(
+        (c[0][0], c[0][1]) for c in mock_cursor.execute.call_args_list
+        if "INSERT IGNORE" in c[0][0]
+    )
+
+
+class TestRequester:
+    """requester is threaded into the INSERT (audit metadata only - never dedupe)."""
+
+    @patch("agento.framework.publisher.get_connection")
+    def test_no_requester_inserts_null_claimed_defaults(self, mock_get_conn, sample_config):
+        mock_conn, mock_cursor = _mock_connection(rowcount=1)
+        mock_get_conn.return_value = mock_conn
+
+        publish(sample_config, AgentType.CRON, "jira", "key:nr", reference_id="AI-1")
+
+        sql, params = _insert_call(mock_cursor)
+        for col in ("requester_key", "requester_email", "requester_trust", "requester_meta"):
+            assert col in sql
+        # last 4 params are the requester fields
+        assert params[-4:] == (None, None, "claimed", None)
+
+    @patch("agento.framework.publisher.get_connection")
+    def test_requester_values_persisted(self, mock_get_conn, sample_config):
+        mock_conn, mock_cursor = _mock_connection(rowcount=1)
+        mock_get_conn.return_value = mock_conn
+
+        requester = JobRequester(
+            key="jira:acct-1", email="USER@Example.com",
+            trust=RequesterTrust.ACCOUNT, meta={"basis": "comment_author"},
+        )
+        publish(
+            sample_config, AgentType.TODO, "jira", "key:r",
+            reference_id="AI-2", requester=requester,
+        )
+
+        _sql, params = _insert_call(mock_cursor)
+        r_key, r_email, r_trust, r_meta = params[-4:]
+        assert r_key == "jira:acct-1"
+        assert r_email == "user@example.com"  # normalized
+        assert r_trust == "account"
+        assert json.loads(r_meta) == {"basis": "comment_author"}
+
+    @patch("agento.framework.publisher.get_connection")
+    def test_requester_does_not_change_idempotency_key_param(self, mock_get_conn, sample_config):
+        mock_conn, mock_cursor = _mock_connection(rowcount=1)
+        mock_get_conn.return_value = mock_conn
+
+        requester = JobRequester(key="jira:x", trust=RequesterTrust.ACCOUNT)
+        publish(
+            sample_config, AgentType.TODO, "jira", "idem:abc",
+            reference_id="AI-3", requester=requester,
+        )
+
+        _sql, params = _insert_call(mock_cursor)
+        assert "idem:abc" in params  # idempotency_key passed through unchanged
+
+    @patch("agento.framework.publisher.get_connection")
+    def test_requester_does_not_affect_skip_if_active_select(self, mock_get_conn, sample_config):
+        mock_conn, mock_cursor = _mock_connection(rowcount=1)
+        mock_cursor.fetchone.return_value = None
+        mock_get_conn.return_value = mock_conn
+
+        requester = JobRequester(key="jira:x", trust=RequesterTrust.ACCOUNT)
+        publish(
+            sample_config, AgentType.TODO, "jira", "key:s",
+            reference_id="AI-64", agent_view_id=2, skip_if_active=True,
+            requester=requester,
+        )
+
+        select_call = next(
+            c for c in mock_cursor.execute.call_args_list if "SELECT" in c[0][0]
+        )
+        # SELECT params unchanged by the requester - still only the 4 dedupe keys
+        assert select_call[0][1] == ("todo", "jira", 2, "AI-64")
+
+    @patch("agento.framework.publisher.get_event_manager")
+    @patch("agento.framework.publisher.get_connection")
+    def test_published_event_carries_requester(self, mock_get_conn, mock_get_em, sample_config):
+        mock_conn, _mock_cursor = _mock_connection(rowcount=1)
+        mock_get_conn.return_value = mock_conn
+        em = MagicMock()
+        mock_get_em.return_value = em
+
+        requester = JobRequester(key="jira:x", trust=RequesterTrust.ACCOUNT)
+        publish(
+            sample_config, AgentType.TODO, "jira", "key:e",
+            reference_id="AI-5", requester=requester,
+        )
+
+        em.dispatch.assert_called_once()
+        name, event = em.dispatch.call_args[0]
+        assert name == "job_publish_after"
+        assert event.requester is requester

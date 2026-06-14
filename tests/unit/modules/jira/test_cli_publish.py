@@ -13,12 +13,22 @@ def _make_args(kind: str, issue_key: str | None = None) -> argparse.Namespace:
     return argparse.Namespace(kind=kind, issue_key=issue_key)
 
 
-def _make_task(issue_key: str, updated: str | None) -> TaskAction:
+def _make_task(
+    issue_key: str,
+    updated: str | None,
+    *,
+    reporter: str | None = None,
+    reporter_account_id: str | None = None,
+    reporter_email: str | None = None,
+) -> TaskAction:
     issue = JiraIssue(
         key=issue_key,
         summary="Test task",
         status="To Do",
         updated=updated,
+        reporter=reporter,
+        reporter_account_id=reporter_account_id,
+        reporter_email=reporter_email,
     )
     return TaskAction(
         source=TaskSource.TODO_ASSIGNED,
@@ -70,6 +80,7 @@ class TestCmdPublishTodoDispatch:
 
         task = _make_task("AI-6", updated="2026-02-24T16:45:00.000+0000")
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = [task]
         mock_builder_cls.return_value = builder
 
@@ -101,6 +112,7 @@ class TestCmdPublishTodoDispatch:
 
         task = _make_task("AI-6", updated="2026-02-24T16:45:00.000+0000")
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = [task]
         mock_builder_cls.return_value = builder
 
@@ -129,6 +141,7 @@ class TestCmdPublishTodoDispatch:
         mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
 
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = []
         mock_builder_cls.return_value = builder
 
@@ -182,6 +195,7 @@ class TestCmdPublishTodoDispatch:
 
         task = _make_task("AI-42", updated="2026-04-24T10:00:00.000+0000")
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.side_effect = [
             ToolboxAPIError(500, "Jira API not configured"),
             [task],
@@ -222,6 +236,7 @@ class TestCmdPublishTodoDispatch:
 
         task = _make_task("AI-99", updated="2026-05-14T10:00:00.000+0000")
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = [task]
         mock_builder_cls.return_value = builder
 
@@ -257,6 +272,7 @@ class TestCmdPublishTodoDispatch:
             _make_task("AI-107", updated="2026-05-26T07:13:00.000+0000"),
         ]
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = tasks
         mock_builder_cls.return_value = builder
         mock_publisher.publish_todo.return_value = True
@@ -293,6 +309,7 @@ class TestCmdPublishTodoDispatch:
             _make_task("AI-107", updated="2026-05-26T07:13:00.000+0000"),
         ]
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = tasks
         mock_builder_cls.return_value = builder
         mock_publisher.publish_todo.side_effect = [True, False, True]
@@ -310,6 +327,83 @@ class TestCmdPublishTodoDispatch:
         ]
         assert len(summary_calls) == 1
         assert summary_calls[0].args[1:] == (2, 3, 1)
+
+    @patch("agento.modules.jira.src.commands.publish._publisher")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
+    @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
+    def test_forwards_reporter_fallback_requester(
+        self, mock_priority, mock_scoped_config, mock_get_avs,
+        mock_bootstrap, mock_logger, mock_toolbox_cls, mock_builder_cls, mock_publisher,
+    ):
+        from agento.framework.job_models import RequesterTrust
+
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        mock_get_avs.return_value = [_make_agent_view()]
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
+
+        task = _make_task(
+            "AI-6", updated="2026-02-24T16:45:00.000+0000",
+            reporter="Reporter", reporter_account_id="rep-1", reporter_email="rep@example.com",
+        )
+        builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)  # no transition -> reporter fallback
+        builder.get_todo_tasks.return_value = [task]
+        mock_builder_cls.return_value = builder
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        requester = mock_publisher.publish_todo.call_args.kwargs["requester"]
+        assert requester is not None
+        assert requester.key == "jira:rep-1"
+        assert requester.trust is RequesterTrust.ACCOUNT
+        assert requester.meta["basis"] == "reporter"
+        assert requester.meta["fallback_reason"] == "no_status_transition"
+
+    @patch("agento.modules.jira.src.commands.publish._publisher")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.config_resolver.ScopedConfigService")
+    @patch("agento.framework.agent_view_runtime.resolve_publish_priority", return_value=50)
+    def test_forwards_status_change_actor_requester(
+        self, mock_priority, mock_scoped_config, mock_get_avs,
+        mock_bootstrap, mock_logger, mock_toolbox_cls, mock_builder_cls, mock_publisher,
+    ):
+        from agento.framework.job_models import RequesterTrust
+
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        mock_get_avs.return_value = [_make_agent_view()]
+        mock_scoped_config.return_value.get_module.return_value = _make_jira_config()
+
+        task = _make_task("AI-6", updated="2026-02-24T16:45:00.000+0000")
+        change = {
+            "id": "77", "created": "2026-02-24T16:00:00.000+0000",
+            "author": {"accountId": "mover-9", "emailAddress": "mover@example.com", "displayName": "Mover"},
+        }
+        builder = MagicMock()
+        builder.get_status_change.return_value = (change, True)
+        builder.get_todo_tasks.return_value = [task]
+        mock_builder_cls.return_value = builder
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        requester = mock_publisher.publish_todo.call_args.kwargs["requester"]
+        assert requester is not None
+        assert requester.key == "jira:mover-9"
+        assert requester.trust is RequesterTrust.ACCOUNT
+        assert requester.meta["basis"] == "status_change"
+        assert requester.meta["changelog_id"] == "77"
 
 
 class TestCmdPublishTodoGlobalFallback:
@@ -338,6 +432,7 @@ class TestCmdPublishTodoGlobalFallback:
             _make_task("AI-107", updated="2026-05-26T07:13:00.000+0000"),
         ]
         builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
         builder.get_todo_tasks.return_value = tasks
         mock_builder_cls.return_value = builder
         mock_channel_publish.return_value = True
@@ -352,3 +447,44 @@ class TestCmdPublishTodoGlobalFallback:
             assert call.kwargs.get("updated") == "2026-05-26T07:13:00.000+0000"
             assert isinstance(call.kwargs.get("payload"), dict)
             assert call.kwargs["payload"]["key"] == call.kwargs["issue_key"]
+
+    @patch("agento.modules.jira.src.channel.publish_todo")
+    @patch("agento.modules.jira.src.commands.publish.TaskListBuilder")
+    @patch("agento.modules.jira.src.commands.publish.ToolboxClient")
+    @patch("agento.modules.jira.src.commands.publish.get_logger")
+    @patch("agento.modules.jira.src.commands.publish._get_connection_and_bootstrap")
+    @patch("agento.framework.workspace.get_active_agent_views")
+    @patch("agento.framework.bootstrap.get_module_config")
+    def test_global_strips_reporter_email_from_routing_payload(
+        self, mock_get_module_cfg, mock_get_avs, mock_bootstrap,
+        mock_logger, mock_toolbox_cls, mock_builder_cls, mock_channel_publish,
+    ):
+        """6d PII guard: reporter_email must never reach RoutingContext.payload / routing events."""
+        conn = MagicMock()
+        mock_bootstrap.return_value = (DatabaseConfig(), conn)
+        mock_get_avs.return_value = []
+        mock_get_module_cfg.return_value = _make_jira_config()
+
+        task = _make_task(
+            "AI-72", updated="2026-05-26T07:13:00.000+0000",
+            reporter="Reporter", reporter_account_id="rep-1", reporter_email="rep@example.com",
+        )
+        builder = MagicMock()
+        builder.get_status_change.return_value = (None, True)
+        builder.get_todo_tasks.return_value = [task]
+        mock_builder_cls.return_value = builder
+        mock_channel_publish.return_value = True
+
+        from agento.modules.jira.src.commands.publish import PublishCommand
+        PublishCommand().execute(_make_args("jira-todo"))
+
+        payload = mock_channel_publish.call_args.kwargs["payload"]
+        assert "reporter_email" not in payload
+        # other (already-serialized) fields are preserved
+        assert payload["summary"] == "Test task"
+        assert payload["reporter"] == "Reporter"
+        assert payload["reporter_account_id"] == "rep-1"
+        # the email still rides on the requester (audit metadata), just not the routing payload
+        requester = mock_channel_publish.call_args.kwargs["requester"]
+        assert requester is not None
+        assert requester.email == "rep@example.com"

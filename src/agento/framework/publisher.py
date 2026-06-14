@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from .db import get_connection
 from .event_manager import get_event_manager
 from .events import JobPublishedEvent
-from .job_models import AgentType
+from .job_models import AgentType, JobRequester
 
 
 def publish(
@@ -19,6 +20,7 @@ def publish(
     agent_view_id: int | None = None,
     priority: int = 50,
     skip_if_active: bool = False,
+    requester: JobRequester | None = None,
 ) -> bool:
     """Insert a job into the queue. Returns True if inserted, False if duplicate.
 
@@ -52,16 +54,27 @@ def publish(
                         )
                     return False
 
+            # requester is pure metadata - never part of idempotency_key or skip_if_active dedupe
+            requester_key = requester.key if requester else None
+            requester_email = requester.email if requester else None
+            requester_trust = requester.trust.value if requester else "claimed"
+            requester_meta = (
+                json.dumps(requester.meta, allow_nan=False)  # fail loud on NaN/Inf before MySQL JSON rejects it
+                if requester and requester.meta is not None    # preserve explicit {}, only None -> NULL
+                else None
+            )
             cur.execute(
                 """
                 INSERT IGNORE INTO job
                     (type, source, agent_view_id, priority, reference_id,
-                     idempotency_key, status, attempt, max_attempts)
+                     idempotency_key, status, attempt, max_attempts,
+                     requester_key, requester_email, requester_trust, requester_meta)
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, 'TODO', 0, %s)
+                    (%s, %s, %s, %s, %s, %s, 'TODO', 0, %s, %s, %s, %s, %s)
                 """,
                 (agent_type.value, source, agent_view_id, priority,
-                 reference_id, idempotency_key, max_attempts),
+                 reference_id, idempotency_key, max_attempts,
+                 requester_key, requester_email, requester_trust, requester_meta),
             )
             conn.commit()
             inserted = cur.rowcount > 0
@@ -86,6 +99,7 @@ def publish(
                     idempotency_key=idempotency_key,
                     agent_view_id=agent_view_id,
                     priority=priority,
+                    requester=requester,
                 ),
             )
 

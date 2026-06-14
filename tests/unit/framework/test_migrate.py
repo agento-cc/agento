@@ -192,6 +192,25 @@ class TestApplyMigration:
         assert "toolbox_mcp_connected BOOLEAN DEFAULT NULL" in sql
         assert "('025_job_toolbox_mcp_connected')" in sql
 
+    def test_fresh_init_includes_requester_columns(self):
+        sql = Path("src/agento/framework/sql/init/000_init.sql").read_text()
+        assert "requester_key   VARCHAR(255) NULL" in sql
+        assert "requester_email VARCHAR(320) NULL" in sql
+        assert "requester_trust VARCHAR(32) NOT NULL DEFAULT 'claimed'" in sql
+        assert "requester_meta  JSON NULL" in sql
+        assert "KEY idx_job_requester_key (requester_key)" in sql
+        assert "KEY idx_job_requester_email (requester_email)" in sql
+        assert "('026_job_requester')" in sql
+
+    def test_migration_026_adds_requester_columns(self):
+        sql = Path("src/agento/framework/sql/026_job_requester.sql").read_text()
+        assert "ADD COLUMN requester_key" in sql
+        assert "ADD COLUMN requester_email" in sql
+        assert "ADD COLUMN requester_trust VARCHAR(32) NOT NULL DEFAULT 'claimed'" in sql
+        assert "ADD COLUMN requester_meta  JSON NULL" in sql
+        assert "CREATE INDEX idx_job_requester_key" in sql
+        assert "CREATE INDEX idx_job_requester_email" in sql
+
 
 class TestMigrate:
     @patch("agento.framework.migrate.apply_migration")

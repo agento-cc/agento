@@ -98,6 +98,13 @@ The core module ships an `IdentityRouter` (order=100) that looks up the `ingress
 - Returns `None` for unknown or inactive identities
 - Confidence is always 1.0 (deterministic binding)
 
+> **`ingress_identity` vs `requester_*` — distinct concerns.** `ingress_identity` is routing
+> input: it maps an inbound identity to an `agent_view_id`. The `requester_*` columns on the
+> `job` row (`requester_key`/`requester_email`/`requester_trust`/`requester_meta`) are a
+> separate, channel-agnostic snapshot of *who triggered the job* — **audit / future-policy
+> metadata only**. They never participate in dedupe (`idempotency_key`/`skip_if_active`), auth,
+> or routing, and are never fed into `RoutingContext.payload` or the routing events.
+
 ### CLI Commands
 
 ```bash

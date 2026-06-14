@@ -77,7 +77,7 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 
 | Event | Data Class | Fields | When |
 |-------|-----------|--------|------|
-| `job_publish_after` | `JobPublishedEvent` | `type, source, reference_id, idempotency_key` | After job inserted into queue |
+| `job_publish_after` | `JobPublishedEvent` | `type, source, reference_id, idempotency_key, agent_view_id, priority, requester` | After job inserted into queue |
 | `job_claim_after` | `JobClaimedEvent` | `job` | After job dequeued (status → RUNNING) |
 | `job_succeed_after` | `JobSucceededEvent` | `job, summary, agent_type, model, elapsed_ms` | After SUCCESS commit |
 | `job_fail_after` | `JobFailedEvent` | `job, error, elapsed_ms` | On any failure (fires before retry/dead) |

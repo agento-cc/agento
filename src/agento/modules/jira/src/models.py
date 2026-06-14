@@ -23,6 +23,7 @@ class JiraIssue:
     assignee_account_id: str | None = None
     reporter: str | None = None
     reporter_account_id: str | None = None
+    reporter_email: str | None = None
     priority: str | None = None
     created: str | None = None
     updated: str | None = None

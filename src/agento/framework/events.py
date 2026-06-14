@@ -7,7 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from .job_models import Job
+from .job_models import Job, JobRequester
 
 # --- Consumer lifecycle events ---
 
@@ -160,6 +160,7 @@ class JobPublishedEvent:
     idempotency_key: str = ""
     agent_view_id: int | None = None
     priority: int = 50
+    requester: JobRequester | None = None
 
 
 # --- Worker pool lifecycle events (Phase 9.5) ---

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import patch
 
-from agento.framework.job_models import AgentType
+from agento.framework.job_models import AgentType, JobRequester, RequesterTrust
 from agento.modules.jira.src.channel import build_idempotency_key, publish_cron, publish_todo
 
 
@@ -162,3 +162,20 @@ class TestPublishTodo:
         publish_todo(sample_config, "AI-64", updated="2026-02-24T16:45:00.000+0000")
 
         assert mock_publish.call_args.kwargs.get("skip_if_active") is True
+
+    @patch("agento.modules.jira.src.channel.publish")
+    def test_publish_todo_forwards_requester(self, mock_publish, sample_config):
+        mock_publish.return_value = True
+        requester = JobRequester(key="jira:x", trust=RequesterTrust.ACCOUNT)
+
+        publish_todo(sample_config, "AI-1", requester=requester)
+
+        assert mock_publish.call_args.kwargs.get("requester") is requester
+
+    @patch("agento.modules.jira.src.channel.publish")
+    def test_publish_todo_default_requester_is_none(self, mock_publish, sample_config):
+        mock_publish.return_value = True
+
+        publish_todo(sample_config, "AI-1")
+
+        assert mock_publish.call_args.kwargs.get("requester") is None

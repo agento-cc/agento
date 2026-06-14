@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
+
+
+def normalize_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip().lower()
+    return cleaned or None
 
 
 class AgentType(Enum):
@@ -10,6 +19,30 @@ class AgentType(Enum):
     TODO = "todo"
     FOLLOWUP = "followup"
     BLANK = "blank"
+
+
+class RequesterTrust(Enum):
+    CLAIMED = "claimed"
+    DOMAIN = "domain"
+    ACCOUNT = "account"
+
+
+@dataclass(frozen=True)
+class JobRequester:
+    key: str
+    email: str | None = None
+    trust: RequesterTrust = RequesterTrust.CLAIMED
+    meta: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key.strip():
+            raise ValueError("JobRequester.key must be a non-empty string")
+        if not isinstance(self.trust, RequesterTrust):
+            raise ValueError(f"JobRequester.trust must be a RequesterTrust, got {self.trust!r}")
+        object.__setattr__(self, "key", self.key.strip())
+        object.__setattr__(self, "email", normalize_email(self.email))
+        if self.meta is not None:
+            object.__setattr__(self, "meta", dict(self.meta))  # shallow copy: honor the frozen value object
 
 
 class JobStatus(Enum):
@@ -51,6 +84,10 @@ class Job:
     session_id: str | None
     created_at: datetime
     updated_at: datetime
+    requester_key: str | None = None
+    requester_email: str | None = None
+    requester_trust: RequesterTrust = RequesterTrust.CLAIMED
+    requester_meta: dict[str, Any] | None = None
 
     @classmethod
     def stub(
@@ -79,6 +116,15 @@ class Job:
 
     @classmethod
     def from_row(cls, row: dict) -> Job:
+        requester_meta = row.get("requester_meta")
+        if isinstance(requester_meta, str):
+            requester_meta = json.loads(requester_meta)
+        # JSON columns can hold arrays/scalars; the contract is dict|None. Coerce any
+        # non-dict (only reachable via manual DB tampering/legacy rows - the sole writer,
+        # publisher.py, always json.dumps a dict) to None rather than raise: from_row runs
+        # in the consumer claim hot path and must not crash on anomalous audit metadata.
+        if requester_meta is not None and not isinstance(requester_meta, dict):
+            requester_meta = None
         return cls(
             id=row["id"],
             schedule_id=row["schedule_id"],
@@ -108,4 +154,8 @@ class Job:
             session_id=row.get("session_id"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            requester_key=row.get("requester_key"),
+            requester_email=row.get("requester_email"),
+            requester_trust=RequesterTrust(row.get("requester_trust") or "claimed"),
+            requester_meta=requester_meta,
         )

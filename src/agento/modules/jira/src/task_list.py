@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from .models import JiraIssue, TaskAction, TaskPriority, TaskSource
 from .toolbox_client import ToolboxClient
@@ -13,6 +14,8 @@ class TaskListBuilder:
     """
 
     TERMINAL_STATUSES = ("Done", "Closed", "Resolved", "Cykliczne")
+    _CHANGELOG_PAGE = 100
+    _CHANGELOG_MAX_PAGES = 20            # safety bound; 2000 entries
 
     def __init__(
         self,
@@ -100,7 +103,48 @@ class TaskListBuilder:
             assignee_account_id=assignee.get("accountId"),
             reporter=reporter.get("displayName"),
             reporter_account_id=reporter.get("accountId"),
+            reporter_email=reporter.get("emailAddress"),
             priority=(f.get("priority") or {}).get("name"),
             created=f.get("created"),
             updated=f.get("updated"),
         )
+
+    def get_status_change(self, issue_key: str, status: str) -> tuple[dict | None, bool]:
+        """(changelog entry of the most recent transition INTO `status`, scan_complete).
+
+        scan_complete is False when the changelog could not be fully read (fetch error
+        or page cap). An incomplete scan must NOT yield a status_change actor: a later
+        unfetched page (oldest-to-newest order) could hold a newer transition, so a
+        partial match is not authoritative. The caller uses scan_complete to record an
+        honest fallback_reason on the reporter fallback.
+        """
+        matched = None
+        start_at = 0
+        key = quote(issue_key, safe="")                  # encode as path segment (proxy forwards path verbatim)
+        for _page in range(self._CHANGELOG_MAX_PAGES):
+            try:
+                data = self.toolbox.jira_request(
+                    "GET",
+                    f"/rest/api/3/issue/{key}/changelog"
+                    f"?startAt={start_at}&maxResults={self._CHANGELOG_PAGE}",
+                    agent_view_id=self.agent_view_id,
+                )
+            except Exception:
+                self.logger.exception("changelog fetch failed for %s; using reporter fallback", issue_key)
+                return None, False                       # incomplete -> reporter fallback
+            values = data.get("values", [])              # oldest-to-newest
+            for entry in values:
+                for item in entry.get("items", []):
+                    if item.get("field") == "status" and item.get("toString") == status:
+                        matched = entry                  # keep latest match
+            next_at = data.get("startAt", start_at) + len(values)
+            total = data.get("total")
+            is_last = data.get("isLast")
+            if is_last is None:                          # defensive: Atlassian normally returns isLast
+                is_last = (not values) or (total is not None and next_at >= total)
+            if is_last:
+                return matched, True                     # authoritative: full scan completed
+            start_at = next_at
+        self.logger.warning("changelog pagination capped (%d pages) for %s; using reporter fallback",
+                            self._CHANGELOG_MAX_PAGES, issue_key)
+        return None, False                               # cap hit -> incomplete -> reporter fallback

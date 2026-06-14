@@ -38,7 +38,7 @@ from ..events import (
     TokenRegisteredEvent,
 )
 from ..ingress_identity import IngressIdentity
-from ..job_models import AgentType, Job, JobStatus
+from ..job_models import AgentType, Job, JobRequester, JobStatus, RequesterTrust
 from ..router import Router, RoutingCandidate, RoutingContext, RoutingDecision, RoutingResult
 from ..runner import Runner, RunResult
 from ..workflows.base import JobContext, Workflow
@@ -64,6 +64,7 @@ __all__ = [
     "JobDeadEvent",
     "JobFailedEvent",
     "JobPublishedEvent",
+    "JobRequester",
     "JobRetryingEvent",
     "JobStatus",
     "JobSucceededEvent",
@@ -77,6 +78,7 @@ __all__ = [
     "ObserverEntry",
     "PromptFragments",
     "Publisher",
+    "RequesterTrust",
     "Router",
     "RoutingAmbiguousEvent",
     "RoutingCandidate",
