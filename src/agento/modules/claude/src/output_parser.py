@@ -10,7 +10,7 @@ AUTH_ERROR_PHRASES = (
     "authentication_error",
     "OAuth token has expired",
     "Not logged in",
-    "401",
+    "401 Invalid authentication credentials",
 )
 
 

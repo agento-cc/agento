@@ -522,6 +522,7 @@ class Consumer:
                         _conn = get_connection(self._db_config)
                         try:
                             capture(home_dir, token, _conn)
+                            _conn.commit()
                         finally:
                             _conn.close()
                 except Exception:

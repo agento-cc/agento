@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -586,3 +587,161 @@ class TestCredentialEnv:
         token = self._typed_token("anthropic_api_key", {})
         with pytest.raises(ValueError, match="anthropic_api_key"):
             writer.credential_env(token)
+
+
+class TestCaptureRefreshedCredentials:
+    """ClaudeConfigWriter persists CLI-rotated .claude/.credentials.json back to the DB."""
+
+    def _oauth_token(self, refresh="rt-OLD", access="acc-OLD"):
+        raw_creds = {
+            "claudeAiOauth": {
+                "accessToken": access,
+                "refreshToken": refresh,
+                "expiresAt": 1776946615316,
+                "subscriptionType": "team",
+            }
+        }
+        creds = {
+            "subscription_key": access,
+            "refresh_token": refresh,
+            "expires_at": 1776946615316,
+            "subscription_type": "team",
+            "raw_auth": {"credentials": raw_creds, "claude_json": {"oauthAccount": {"emailAddress": "user@example.test"}}},
+        }
+        return _make_token(creds, type_="oauth")
+
+    def _write_creds_file(self, work_dir, payload):
+        claude_dir = work_dir / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / ".credentials.json").write_text(json.dumps(payload))
+
+    def test_noop_when_no_credentials_file(self, writer, work_dir):
+        token = self._oauth_token()
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_noop_when_refresh_token_unchanged(self, writer, work_dir):
+        self._write_creds_file(work_dir, {
+            "claudeAiOauth": {"accessToken": "acc-OLD", "refreshToken": "rt-OLD"}
+        })
+        token = self._oauth_token(refresh="rt-OLD")
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_noop_for_anthropic_api_key_type(self, writer, work_dir):
+        self._write_creds_file(work_dir, {
+            "claudeAiOauth": {"accessToken": "acc-NEW", "refreshToken": "rt-NEW"}
+        })
+        token = _make_token({"api_key": "sk-ant-xyz"}, type_="anthropic_api_key")
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_noop_when_file_is_malformed_json(self, writer, work_dir):
+        claude_dir = work_dir / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / ".credentials.json").write_text("{ not json")
+        token = self._oauth_token()
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_noop_when_claude_oauth_block_missing(self, writer, work_dir):
+        self._write_creds_file(work_dir, {"somethingElse": {}})
+        token = self._oauth_token()
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_noop_when_refresh_token_missing_in_file(self, writer, work_dir):
+        # claudeAiOauth block present but no refreshToken (partial/garbled CLI
+        # rewrite): the guard must short-circuit, never persisting refresh_token=None.
+        self._write_creds_file(work_dir, {"claudeAiOauth": {"accessToken": "acc-NEW"}})
+        token = self._oauth_token()
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
+    def test_persists_rotated_credentials(self, writer, work_dir):
+        refreshed = {
+            "claudeAiOauth": {
+                "accessToken": "acc-NEW",
+                "refreshToken": "rt-NEW",
+                "expiresAt": 1799999999999,
+                "subscriptionType": "team",
+                "scopes": ["user:inference"],
+            }
+        }
+        self._write_creds_file(work_dir, refreshed)
+        token = self._oauth_token(refresh="rt-OLD", access="acc-OLD")
+        mock_conn = MagicMock()
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, mock_conn)
+
+        mock_reg.assert_called_once()
+        args, _kwargs = mock_reg.call_args
+        # Signature: update_refreshed_credentials(conn, token_id, new_creds, logger=...)
+        assert args[0] is mock_conn
+        assert args[1] == token.id   # targeted by id (==1 from _make_token)
+        saved = args[2]
+        # Full refreshed file is stored verbatim under raw_auth.credentials...
+        assert saved["raw_auth"]["credentials"] == refreshed
+        # ...and the untouched claude_json identity block is preserved.
+        assert saved["raw_auth"]["claude_json"] == {"oauthAccount": {"emailAddress": "user@example.test"}}
+        assert saved["refresh_token"] == "rt-NEW"
+        assert saved["subscription_key"] == "acc-NEW"
+        # expires_at is forced None so update_refreshed_credentials writes a NULL DB expiry — see DECISIONS.md.
+        assert saved["expires_at"] is None
+
+    def test_forces_db_expires_at_null_even_for_seconds_expiry(self, writer, work_dir):
+        # A legacy/manual token whose top-level expires_at is in *seconds* (or ISO)
+        # would otherwise coerce to a real DB expiry and be filtered out by
+        # select_token after an idle gap. Capture must force it None regardless.
+        self._write_creds_file(work_dir, {
+            "claudeAiOauth": {"accessToken": "acc-NEW", "refreshToken": "rt-NEW"}
+        })
+        token = _make_token(
+            {"subscription_key": "acc-OLD", "refresh_token": "rt-OLD",
+             "expires_at": 1799999999},  # parseable seconds → would become a hard DB expiry
+            type_="oauth",
+        )
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_called_once()
+        saved = mock_reg.call_args.args[2]
+        assert saved["expires_at"] is None
+
+    def test_persists_when_legacy_token_has_no_raw_auth(self, writer, work_dir):
+        # Token registered before raw_auth capture: only top-level refresh_token.
+        # A genuine rotation must still be detected against that fallback.
+        self._write_creds_file(work_dir, {
+            "claudeAiOauth": {"accessToken": "acc-NEW", "refreshToken": "rt-NEW"}
+        })
+        token = _make_token(
+            {"subscription_key": "acc-OLD", "refresh_token": "rt-OLD"},
+            type_="oauth",
+        )
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_called_once()
+        saved = mock_reg.call_args.args[2]
+        assert saved["refresh_token"] == "rt-NEW"
+        # Legacy path seeds a fresh raw_auth from the refreshed file (old_raw_auth was {}).
+        assert saved["raw_auth"]["credentials"] == {
+            "claudeAiOauth": {"accessToken": "acc-NEW", "refreshToken": "rt-NEW"}
+        }
+
+    def test_noop_when_legacy_token_refresh_unchanged(self, writer, work_dir):
+        # Legacy token, CLI did NOT rotate — must not write spuriously every run.
+        self._write_creds_file(work_dir, {
+            "claudeAiOauth": {"accessToken": "acc-OLD", "refreshToken": "rt-OLD"}
+        })
+        token = _make_token(
+            {"subscription_key": "acc-OLD", "refresh_token": "rt-OLD"},
+            type_="oauth",
+        )
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()

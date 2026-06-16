@@ -25,11 +25,20 @@ Health state lives on each row:
 
 | Column       | Meaning                                                                 |
 |--------------|-------------------------------------------------------------------------|
-| `status`     | `ok` or `error`. Flipped to `error` when the runner sees a 401/expired. |
+| `status`     | `ok` or `error`. Flipped to `error` when the runner classifies an authentication failure (e.g. invalid credentials or expired OAuth) — not every transient `401`. |
 | `error_msg`  | Operator-visible reason for the latest failure.                         |
-| `expires_at` | Credential expiry (from the stored payload). Expired rows are skipped.  |
+| `expires_at` | Credential expiry (from the stored payload). Expired rows are skipped. **Claude OAuth leaves this NULL on purpose** — see the note below. |
 | `used_at`    | Last time a worker claimed the row — drives LRU ordering within a priority tier. |
 | `priority`   | Pool selection weight. Lower value wins; 0 = default.                   |
+
+> **Claude OAuth tokens** intentionally leave the row `expires_at` **NULL**.
+> Claude's `expiresAt` is the short-lived (~8h) *access*-token expiry in epoch
+> milliseconds; the long-lived refresh token is rotated by the CLI *during* a
+> job run and written back to `credentials` afterwards
+> (`ClaudeConfigWriter.capture_refreshed_credentials`). Storing the access-token
+> expiry as the row `expires_at` would make `select_token` skip the token after
+> an idle gap even though it can still self-heal — so it is deliberately not set.
+> A Claude token showing `expires_at = NULL` is correct, not a bug.
 
 ## Token Lifecycle
 
@@ -138,6 +147,8 @@ agento token:refresh 1    # Re-authenticate token ID 1 (interactive OAuth)
 Refresh overwrites the stored `credentials`, re-parses `expires_at` from the new payload, and resets `status='ok'` / `error_msg=NULL`. The `id`, `label`, and `type` are preserved so downstream references stay valid.
 
 Note: `token:refresh` only supports the interactive OAuth flow. To update an API key or access token, re-register with the appropriate flag (same label will upsert the existing row).
+
+Distinct from interactive refresh, **automatic post-run capture** (the agent CLI rotating its own OAuth token during a job, written back afterwards) updates the stored `credentials` (and refreshes `expires_at` from the payload) but does **not** touch operator/health state — it does **not** re-enable a disabled token or clear an `error` status. An operator who disables or quarantines a token while a job is running keeps that decision; the rotated credentials are still saved so the token is healthy if it is later re-enabled.
 
 ## Manual Error Control
 

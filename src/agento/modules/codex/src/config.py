@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agento.framework.agent_manager.errors import AuthenticationError
-from agento.framework.agent_manager.token_store import register_token
+from agento.framework.agent_manager.token_store import update_refreshed_credentials
 
 if TYPE_CHECKING:
     import pymysql
@@ -388,5 +388,7 @@ class CodexConfigWriter:
         if "access_token" in tokens:
             new_creds["subscription_key"] = tokens["access_token"]
 
-        register_token(conn, token.agent_type, token.label, new_creds,
-                       token_limit=token.token_limit, logger=logger)
+        # Capture-specific persistence: preserves operator/health state (does NOT
+        # re-enable a token an operator disabled mid-run). Now that the consumer
+        # hook commits the capture, register_token would silently resurrect it.
+        update_refreshed_credentials(conn, token.id, new_creds, logger=logger)

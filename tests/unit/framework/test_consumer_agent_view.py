@@ -496,3 +496,52 @@ class TestPostRunCredentialCapture:
             consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
             # Should not raise
             consumer._run_job(_make_job(agent_view_id=2))
+
+    @patch("agento.framework.run_preparation.copy_build_to_artifacts_dir")
+    @patch("agento.framework.run_preparation.get_current_build_dir", return_value=Path("/workspace/acme/developer/current"))
+    @patch("agento.framework.consumer.get_workflow_class")
+    @patch("agento.framework.consumer.get_channel")
+    @patch("agento.framework.consumer.create_runner")
+    @patch("agento.framework.consumer.get_connection")
+    @patch("agento.framework.run_preparation.prepare_artifacts_dir")
+    @patch("agento.framework.run_preparation.build_artifacts_dir", return_value="/workspace/acme/developer/runs/42")
+    @patch("agento.framework.consumer.resolve_agent_view_runtime")
+    def test_commits_after_successful_capture(
+        self, mock_resolve, mock_build, mock_prepare, mock_conn,
+        MockRunner, mock_get_ch, mock_get_wf, mock_get_current_build, mock_copy_build,
+        sample_db_config, sample_consumer_config,
+    ):
+        runtime = _make_runtime_with_agent_view(provider="claude")
+        mock_resolve.return_value = runtime
+
+        # Distinct connection per get_connection() call, so we can assert the
+        # exact connection handed to capture() is the one committed and closed.
+        conns = []
+        def _new_conn(*a, **k):
+            c = MagicMock()
+            conns.append(c)
+            return c
+        mock_conn.side_effect = _new_conn
+
+        mock_writer = MagicMock(
+            spec=["prepare_workspace", "owned_paths", "write_credentials",
+                  "capture_refreshed_credentials"],
+        )
+
+        with patch(
+            "agento.framework.config_writer._CONFIG_WRITERS",
+            {AgentProvider.CLAUDE: mock_writer},
+        ):
+            mock_result = _make_claude_result()
+            mock_workflow = MagicMock()
+            mock_workflow.execute_job.return_value = mock_result
+            mock_get_wf.return_value.return_value = mock_workflow
+            mock_get_ch.return_value = MagicMock(name="jira")
+
+            consumer = Consumer(sample_db_config, sample_consumer_config, logging.getLogger("test"))
+            consumer._run_job(_make_job(agent_view_id=2))
+
+        mock_writer.capture_refreshed_credentials.assert_called_once()
+        captured_conn = mock_writer.capture_refreshed_credentials.call_args.args[2]
+        captured_conn.commit.assert_called_once()
+        captured_conn.close.assert_called_once()

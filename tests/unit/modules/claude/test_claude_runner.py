@@ -109,6 +109,25 @@ def test_parse_stream_json_auth_error():
         parse_claude_output(raw)
 
 
+def test_credential_401_raises_authentication_error():
+    raw = (
+        '{"type": "result", "is_error": true, '
+        '"result": "Failed to authenticate. API Error: 401 Invalid authentication credentials"}\n'
+    )
+    with pytest.raises(AuthenticationError, match="401 Invalid authentication credentials"):
+        parse_claude_output(raw)
+
+
+def test_transient_401_does_not_raise_authentication_error():
+    raw = (
+        '{"type": "result", "is_error": true, '
+        '"result": "API Error: 401 upstream gateway hiccup"}\n'
+    )
+    with pytest.raises(RuntimeError) as exc:
+        parse_claude_output(raw)
+    assert not isinstance(exc.value, AuthenticationError)
+
+
 def test_parse_stream_json_partial_output_with_session():
     """Partial output from timeout -- only init event, no result."""
     raw = '{"type": "init", "session_id": "sess-partial"}\n'

@@ -16,6 +16,7 @@ from agento.framework.agent_manager.token_store import (
     register_token,
     select_token,
     set_token_priority,
+    update_refreshed_credentials,
 )
 
 
@@ -479,3 +480,37 @@ class _RotatingTokenCursor:
 
     def fetchone(self):
         return self._result
+
+
+class TestUpdateRefreshedCredentials:
+    def test_targeted_update_by_id_preserves_operator_state(self):
+        conn, cursor = _mock_conn()
+        update_refreshed_credentials(
+            conn, 7, {"subscription_key": "sk-new", "expires_at": None}
+        )
+        sql, params = cursor.execute.call_args[0]
+        assert "UPDATE oauth_token" in sql
+        assert "WHERE id = %s" in sql
+        # Must never touch operator/health/identity columns (only credentials,
+        # expires_at, updated_at). "oauth_token" contains none of these as substrings.
+        for col in ("enabled", "status", "error_msg", "priority", "label", "type", "token_limit"):
+            assert col not in sql
+        assert params[-1] == 7                 # bound id (last param)
+        assert params[0].startswith("aes256:")  # credentials encrypted, not plaintext
+
+    def test_refreshes_expires_at_from_seconds_payload(self):
+        conn, cursor = _mock_conn()
+        update_refreshed_credentials(conn, 7, {"expires_at": 1799999999})
+        _sql, params = cursor.execute.call_args[0]
+        assert isinstance(params[1], datetime)   # parity with register_token
+
+    def test_none_expires_at_writes_null(self):
+        conn, cursor = _mock_conn()
+        update_refreshed_credentials(conn, 7, {"expires_at": None})
+        _sql, params = cursor.execute.call_args[0]
+        assert params[1] is None
+
+    def test_does_not_commit_caller_owns_transaction(self):
+        conn, _ = _mock_conn()
+        update_refreshed_credentials(conn, 7, {"x": 1})
+        conn.commit.assert_not_called()

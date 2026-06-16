@@ -359,7 +359,7 @@ class TestCaptureRefreshedCredentials:
         from unittest.mock import MagicMock, patch
         token = self._make_token()
         mock_conn = MagicMock()
-        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+        with patch("agento.modules.codex.src.config.update_refreshed_credentials") as mock_reg:
             writer.capture_refreshed_credentials(work_dir, token, mock_conn)
         mock_reg.assert_not_called()
 
@@ -372,15 +372,13 @@ class TestCaptureRefreshedCredentials:
         (codex_dir / "auth.json").write_text(json.dumps(raw))
 
         token = self._make_token(refresh_token="tok-A")
-        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+        with patch("agento.modules.codex.src.config.update_refreshed_credentials") as mock_reg:
             writer.capture_refreshed_credentials(work_dir, token, MagicMock())
         mock_reg.assert_not_called()
 
     def test_upserts_db_when_refresh_token_changed(self, writer, work_dir):
         import json
         from unittest.mock import MagicMock, patch
-
-        from agento.framework.agent_manager.models import AgentProvider
 
         codex_dir = work_dir / ".codex"
         codex_dir.mkdir(parents=True)
@@ -390,15 +388,15 @@ class TestCaptureRefreshedCredentials:
         token = self._make_token(refresh_token="tok-A")
         mock_conn = MagicMock()
 
-        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+        with patch("agento.modules.codex.src.config.update_refreshed_credentials") as mock_reg:
             writer.capture_refreshed_credentials(work_dir, token, mock_conn)
 
         mock_reg.assert_called_once()
         call_args = mock_reg.call_args
+        # Signature: update_refreshed_credentials(conn, token_id, new_creds, logger=...)
         assert call_args[0][0] is mock_conn
-        assert call_args[0][1] == AgentProvider.CODEX
-        assert call_args[0][2] == "my-codex"
-        saved_creds = call_args[0][3]
+        assert call_args[0][1] == token.id   # targeted by id (no agent_type/label/token_limit)
+        saved_creds = call_args[0][2]
         assert saved_creds["raw_auth"] == refreshed
         assert saved_creds["refresh_token"] == "tok-B"
         assert saved_creds["subscription_key"] == "acc-B"
@@ -413,7 +411,7 @@ class TestCaptureRefreshedCredentials:
 
         token = self._make_typed_token("codex_access_token", {
             "access_token": "eyJ.x.sig", "expires_at": 9999999999})
-        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+        with patch("agento.modules.codex.src.config.update_refreshed_credentials") as mock_reg:
             writer.capture_refreshed_credentials(work_dir, token, MagicMock())
         mock_reg.assert_not_called()
 
@@ -421,7 +419,7 @@ class TestCaptureRefreshedCredentials:
         """API-key rows have no rotated auth.json; capture must skip."""
         from unittest.mock import MagicMock, patch
         token = self._make_typed_token("openai_api_key", {"api_key": "sk-X"})
-        with patch("agento.modules.codex.src.config.register_token") as mock_reg:
+        with patch("agento.modules.codex.src.config.update_refreshed_credentials") as mock_reg:
             writer.capture_refreshed_credentials(work_dir, token, MagicMock())
         mock_reg.assert_not_called()
 

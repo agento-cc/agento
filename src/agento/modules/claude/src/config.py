@@ -7,7 +7,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agento.framework.agent_manager.token_store import update_refreshed_credentials
+
 if TYPE_CHECKING:
+    import pymysql
+
     from agento.framework.agent_manager.models import Token
 
 logger = logging.getLogger(__name__)
@@ -245,6 +249,80 @@ class ClaudeConfigWriter:
                 sep = "&" if "?" in url else "?"
                 server_cfg["url"] = f"{url}{sep}job_id={job_id}"
         mcp_path.write_text(json.dumps(data, indent=2))
+
+    def capture_refreshed_credentials(
+        self,
+        home_dir: Path,
+        token: Token,
+        conn: pymysql.Connection,
+    ) -> None:
+        """Persist the Claude CLI's on-disk token rotation back to ``oauth_token``.
+
+        On a real ``refreshToken`` rotation, write the refreshed
+        ``.claude/.credentials.json`` back so the token self-heals instead of
+        replaying a now-invalidated single-use token → ``401``. Parity with
+        ``CodexConfigWriter.capture_refreshed_credentials``; full rationale
+        (incl. why ``expires_at`` is forced NULL) in DECISIONS.md.
+        """
+        # Only OAuth subscription tokens carry a refresh_token the CLI rotates.
+        # anthropic_api_key rows never produce a credentials diff worth persisting.
+        if token.type != "oauth":
+            return
+
+        creds_path = home_dir / ".claude" / ".credentials.json"
+        if not creds_path.is_file():
+            return
+        try:
+            refreshed = json.loads(creds_path.read_text())
+        except Exception:
+            logger.warning(
+                "Failed to read refreshed .credentials.json at %s", creds_path, exc_info=True
+            )
+            return
+
+        new_oauth = refreshed.get("claudeAiOauth") if isinstance(refreshed, dict) else None
+        if not isinstance(new_oauth, dict):
+            return
+        new_refresh = new_oauth.get("refreshToken")
+        if not new_refresh:
+            return
+
+        # Old refresh token: prefer the captured raw_auth shape; fall back to the
+        # legacy top-level field for tokens registered before raw_auth capture,
+        # so an un-rotated legacy token does not trigger a spurious write.
+        credentials = token.credentials or {}
+        old_raw_auth = credentials.get("raw_auth")
+        old_raw_auth = old_raw_auth if isinstance(old_raw_auth, dict) else {}
+        old_creds = old_raw_auth.get("credentials")
+        old_refresh = None
+        if isinstance(old_creds, dict):
+            old_oauth = old_creds.get("claudeAiOauth")
+            if isinstance(old_oauth, dict):
+                old_refresh = old_oauth.get("refreshToken")
+        if old_refresh is None:
+            old_refresh = credentials.get("refresh_token")
+
+        if new_refresh == old_refresh:
+            return
+
+        new_creds = dict(credentials)
+        raw_auth = dict(old_raw_auth)
+        raw_auth["credentials"] = refreshed  # full file verbatim; preserves claude_json
+        new_creds["raw_auth"] = raw_auth
+        new_creds["refresh_token"] = new_refresh
+        if new_oauth.get("accessToken"):
+            new_creds["subscription_key"] = new_oauth["accessToken"]
+        # Force the DB row's expires_at NULL: select_token treats it as a hard
+        # "unusable after" filter and nothing refreshes outside a job run, so a
+        # stored expiry would retire a still-refreshable token after an idle gap
+        # and re-break this self-heal. Explicit (not relying on ms→None coercion);
+        # the CLI still reads the real expiresAt from the file in raw_auth.
+        new_creds["expires_at"] = None
+
+        # Capture-specific persistence: updates credentials by id and preserves
+        # operator/health state — NOT register_token (which would re-enable a
+        # token an operator disabled mid-run). See DECISIONS.md.
+        update_refreshed_credentials(conn, token.id, new_creds, logger=logger)
 
     @staticmethod
     def _write_claude_json(working_dir: Path, agent_config: dict[str, str]) -> None:

@@ -4,6 +4,17 @@ Architectural and technical decisions — *why*, not *what*. For implementation 
 
 ---
 
+## 2026-06-15 — Claude OAuth credential write-back + non-clobbering capture persistence
+
+- **The bug.** Claude OAuth subscription tokens silently rotted. The CLI rotates `.claude/.credentials.json` in place during a run, but each job uses an ephemeral HOME re-seeded from the DB; without a write-back the rotated (single-use) refresh token was discarded and the next run replayed an invalidated token → daily `401 Invalid authentication credentials`. `ClaudeConfigWriter` had no `capture_refreshed_credentials`, so the consumer's provider-agnostic post-run hook resolved to `None` for Claude.
+- **Parity fix.** Added `ClaudeConfigWriter.capture_refreshed_credentials` (mirrors the Codex writer): on a real `refreshToken` rotation it persists the refreshed credentials. The writer is registered via `di.json`, so no framework wiring was needed to dispatch it.
+- **The hook never committed.** `get_connection` sets `autocommit=False`, and the shared capture hook closed its connection without committing — so the write-back (Claude's *and* Codex's, which was thus a silent no-op too) was rolled back. Fixed with one agent-agnostic `_conn.commit()` after a successful capture, matching the in-file `_handle_auth_failure` convention.
+- **Capture must not resurrect operator state.** `register_token`'s upsert forces `enabled=TRUE`, `status='ok'`, `error_msg=NULL` — right for interactive (re)registration, wrong for *automatic* capture: once the hook commits, it would silently re-enable a token an operator disabled/quarantined mid-run. Added `update_refreshed_credentials(conn, token_id, credentials)` — a targeted `UPDATE` of only `credentials`/`expires_at` by id that preserves operator/health columns. **Both** the Claude and Codex writers use it (making the hook durable turned Codex's pre-existing `register_token` call into an *active* clobber, so Codex switched in the same change).
+- **Why `expires_at` is left NULL for Claude.** `claudeAiOauth.expiresAt` is the ~8h *access*-token expiry in epoch **ms**. `select_token` treats `expires_at` as a hard "unusable after" filter and nothing proactively refreshes outside a job run, so populating it would retire a still-refreshable token after an idle gap — re-breaking the self-heal. Capture **explicitly** sets `expires_at = None` rather than relying on `_coerce_expires_at` dropping the ms value (that accident wouldn't protect a legacy/manual seconds- or ISO-valued `expires_at`). Proactive refresh is a separate daemon, out of scope.
+- **Auth-error phrase tightened.** `AUTH_ERROR_PHRASES` now matches the specific `401 Invalid authentication credentials` rather than a bare `401`, so transient non-credential 401s no longer poison the token (a bare `401` flipped `status='error'` and quarantined an otherwise-healthy token).
+
+---
+
 ## 2026-06-04 — Tools and skills are opt-in (disabled by default), resolved through the one config service
 
 - **The problem.** Registered tools and synced skills were available to every agent_view by default: the gate (`isToolEnabled`, `get_enabled_skills`) treated "no `is_enabled` row" as enabled. Enabling was therefore opt-out — you could only ever *remove* access. For a fleet whose tools carry credentials (BI warehouse, Magento prod, NAV ERP, WMS), dropping in a module silently granted the whole fleet access.

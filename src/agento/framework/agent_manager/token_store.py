@@ -60,6 +60,37 @@ def register_token(
     return Token.from_row(row)
 
 
+def update_refreshed_credentials(
+    conn: pymysql.Connection,
+    token_id: int,
+    credentials: dict,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Persist CLI-rotated credentials for an existing token *by id* WITHOUT
+    resurrecting operator-controlled state. Unlike ``register_token`` this does
+    NOT set ``enabled=TRUE``, reset ``status``, or clear ``error_msg``/``priority``
+    — an operator who disabled or quarantined the token mid-run keeps that
+    decision. ``expires_at`` is refreshed from the payload exactly as
+    ``register_token`` does. Used by the per-provider
+    ``capture_refreshed_credentials`` writers. Caller owns the transaction
+    (the consumer hook commits)."""
+    encrypted = encrypt_credentials(credentials)
+    expires_at = _coerce_expires_at(credentials.get("expires_at"))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE oauth_token
+               SET credentials = %s,
+                   expires_at  = %s,
+                   updated_at  = NOW()
+             WHERE id = %s
+            """,
+            (encrypted, expires_at, token_id),
+        )
+    if logger:
+        logger.info("Captured rotated credentials for token id=%s", token_id)
+
+
 def _coerce_expires_at(value) -> datetime | None:
     """Convert credentials' ``expires_at`` (epoch seconds or ISO-8601) to a
     naive-UTC datetime; returns None on anything unparseable."""
