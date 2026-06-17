@@ -3,8 +3,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agento.framework.channels.base import PromptFragments
+from agento.framework.workflows.followup import FollowupWorkflow
 from agento.modules.jira.src.channel import JiraChannel
-from agento.modules.jira.src.workflows.followup import FollowupWorkflow
 
 
 def _mock_channel(name="test", **overrides):

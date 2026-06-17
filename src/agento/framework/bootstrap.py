@@ -44,6 +44,8 @@ from .workflows import clear as clear_workflows
 from .workflows import register_workflow
 from .workflows.base import Workflow
 from .workflows.blank import BlankWorkflow
+from .workflows.followup import FollowupWorkflow
+from .workflows.todo import TodoWorkflow
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,12 @@ def bootstrap(
 
     em = get_event_manager()
 
+    # Generic, channel-agnostic workflows registered as framework DEFAULTS *before* modules load,
+    # so a module that declares the same workflow type in di.json overrides them (last-writer-wins).
+    register_workflow(AgentType.BLANK, BlankWorkflow)
+    register_workflow(AgentType.TODO, TodoWorkflow)
+    register_workflow(AgentType.FOLLOWUP, FollowupWorkflow)
+
     for m in manifests:
         # Load observers first so they're registered before events fire
         _load_observers(m)
@@ -172,9 +180,6 @@ def bootstrap(
 
         # Dispatch module_loaded (capabilities registered)
         em.dispatch("module_load_after", ModuleLoadedEvent(name=m.name, path=m.path))
-
-    # BlankWorkflow is always available (core, not tied to any integration)
-    register_workflow(AgentType.BLANK, BlankWorkflow)
 
     # Store manifests for shutdown and introspection
     _MANIFESTS.extend(manifests)

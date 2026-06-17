@@ -8,8 +8,8 @@ from agento.framework.channels.base import PromptFragments, WorkItem
 from agento.framework.job_models import AgentType, Job
 from agento.framework.runner import RunResult
 from agento.framework.workflows.base import JobContext
+from agento.framework.workflows.todo import TodoWorkflow
 from agento.modules.jira.src.channel import JiraChannel
-from agento.modules.jira.src.workflows.todo import TodoWorkflow
 
 
 def _mock_channel(name="test", **overrides):

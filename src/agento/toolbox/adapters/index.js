@@ -8,6 +8,11 @@ const ADAPTERS = {
   opensearch: registerOpensearchTools,
 };
 
+// Tool types that are NOT config-driven DB adapters but declarative, self-registering JS tools — a
+// module's toolbox/*.js calls server.tool() itself (e.g. type "mcp" for the outlook tools). These have
+// no adapter here by design, so they must not trigger the "No adapter for tool type" warning.
+const DECLARATIVE_TYPES = new Set(['mcp']);
+
 /**
  * Register config-driven adapter tools (mysql, mssql, opensearch) from module.json declarations.
  * @param {object} moduleConfigs - Resolved module-level configs (for sql_timeout_seconds etc.)
@@ -25,9 +30,9 @@ export function registerAdapterTools(server, allTools, moduleToolTypes, moduleCo
     healthchecks.push(healthcheck);
   }
 
-  // Warn about unknown tool types
+  // Warn about unknown tool types (declarative self-registering types are expected, not unknown)
   for (const type of moduleToolTypes) {
-    if (!ADAPTERS[type]) {
+    if (!ADAPTERS[type] && !DECLARATIVE_TYPES.has(type)) {
       console.error(
         `[tools] No adapter for tool type "${type}". Registered adapters: ${Object.keys(ADAPTERS).join(', ')}`
       );

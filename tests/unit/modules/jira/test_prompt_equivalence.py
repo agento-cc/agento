@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from agento.framework.workflows.followup import FollowupWorkflow
+from agento.framework.workflows.todo import TodoWorkflow
 from agento.modules.jira.src.channel import JiraChannel
-from agento.modules.jira.src.workflows.followup import FollowupWorkflow
-from agento.modules.jira.src.workflows.todo import TodoWorkflow
 from agento.modules.jira_periodic_tasks.src.workflows.cron import CronWorkflow
 
 JIRA = JiraChannel()

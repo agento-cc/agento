@@ -1,0 +1,10 @@
+{
+  "config_class": "src.config.OutlookConfig",
+  "channels": [
+    {"name": "outlook", "class": "src.channel.OutlookChannel"}
+  ],
+  "commands": [
+    {"name": "outlook:publish", "class": "src.commands.publish.OutlookPublishCommand"}
+  ],
+  "onboarding": "src.onboarding.OutlookOnboarding"
+}

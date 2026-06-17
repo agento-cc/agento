@@ -3,10 +3,6 @@
   "channels": [
     {"name": "jira", "class": "src.channel.JiraChannel"}
   ],
-  "workflows": [
-    {"type": "todo", "class": "src.workflows.todo.TodoWorkflow"},
-    {"type": "followup", "class": "src.workflows.followup.FollowupWorkflow"}
-  ],
   "commands": [
     {"name": "exec:todo", "class": "src.commands.exec_todo.ExecTodoCommand"},
     {"name": "publish", "class": "src.commands.publish.PublishCommand"}

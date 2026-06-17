@@ -1,0 +1,15 @@
+{
+  "name": "outlook",
+  "version": "1.0.0",
+  "description": "Outlook / Microsoft 365 email channel — poll unread mail, read/reply/mark-read",
+  "sequence": [],
+  "order": 110,
+  "tools": [
+    {"type": "mcp", "name": "outlook_get_message", "description": "Read a full email by message ID", "toolset": "outlook"},
+    {"type": "mcp", "name": "outlook_reply", "description": "Reply to an email (threaded)", "toolset": "outlook"},
+    {"type": "mcp", "name": "outlook_mark_processed", "description": "Mark an email as read/processed", "toolset": "outlook"},
+    {"type": "mcp", "name": "outlook_search_messages", "description": "Search emails by filters", "toolset": "outlook"},
+    {"type": "mcp", "name": "outlook_get_new_messages", "description": "List unread inbox messages", "toolset": "outlook"},
+    {"type": "mcp", "name": "outlook_send_mail", "description": "Send a new email (whitelist-gated)", "toolset": "outlook"}
+  ]
+}

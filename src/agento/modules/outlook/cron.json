@@ -1,0 +1,5 @@
+{
+  "jobs": [
+    {"name": "outlook_publish_mail", "schedule": "* * * * *", "command": "outlook:publish"}
+  ]
+}

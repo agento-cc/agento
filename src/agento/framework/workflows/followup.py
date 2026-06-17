@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from agento.framework.channels.base import Channel
-from agento.framework.job_models import Job
-from agento.framework.runner import RunResult
-from agento.framework.workflows.base import JobContext, Workflow
+from ..channels.base import Channel
+from ..job_models import Job
+from ..runner import RunResult
+from .base import JobContext, Workflow
 
 
 class FollowupWorkflow(Workflow):
