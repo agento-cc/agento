@@ -29,14 +29,26 @@ describe('graph-auth (support both cert and secret)', () => {
     expect(d.makeCertCredential).not.toHaveBeenCalled();
   });
 
-  it('uses the certificate credential when a cert is configured (cert wins over secret)', async () => {
+  it('uses the certificate credential when a cert PEM is configured (cert wins over secret)', async () => {
     const getToken = vi.fn().mockResolvedValue({ token: 'BBB', expiresOnTimestamp: Date.now() + 3600_000 });
     const d = deps(getToken);
-    const a = createGraphAuth({ ...base, outlook_cert_path: '/certs/app.pem', outlook_client_secret: 'sec' }, d);
+    const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----';
+    const a = createGraphAuth({ ...base, outlook_cert_pem: pem, outlook_client_secret: 'sec' }, d);
     expect(a.isConfigured()).toBe(true);
     expect(await a.getToken()).toBe('BBB');
     expect(d.makeCertCredential).toHaveBeenCalledTimes(1);
+    // PEM CONTENTS are passed through (no file path), with passphrase undefined when not set.
+    expect(d.makeCertCredential).toHaveBeenCalledWith('tid', 'cid', pem, null);
     expect(d.makeSecretCredential).not.toHaveBeenCalled();
+  });
+
+  it('passes the cert passphrase through when configured', async () => {
+    const getToken = vi.fn().mockResolvedValue({ token: 'CCC', expiresOnTimestamp: Date.now() + 3600_000 });
+    const d = deps(getToken);
+    const pem = '-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n-----BEGIN ENCRYPTED PRIVATE KEY-----\ny\n-----END ENCRYPTED PRIVATE KEY-----';
+    const a = createGraphAuth({ ...base, outlook_cert_pem: pem, outlook_cert_password: 'p4ss' }, d);
+    expect(await a.getToken()).toBe('CCC');
+    expect(d.makeCertCredential).toHaveBeenCalledWith('tid', 'cid', pem, 'p4ss');
   });
 
   it('caches the token (no second credential.getToken call before expiry)', async () => {

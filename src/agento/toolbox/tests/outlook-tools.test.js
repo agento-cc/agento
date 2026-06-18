@@ -25,7 +25,7 @@ const cfg = {
 function ctx(overrides = {}) {
   return {
     log: vi.fn(),
-    moduleConfigs: { outlook: cfg, core: { email_whitelist: 'sklep@kazarstudio.com, *@kazar.com' } },
+    moduleConfigs: { outlook: cfg, core: { email_whitelist: 'sklep@mycompanystudio.com, *@mycompany.com' } },
     isToolEnabled: () => true,
     graphAuthFactory,
     ...overrides,
@@ -87,7 +87,7 @@ describe('outlook_reply recipient whitelist', () => {
 
   it('ALLOWS a reply when the original sender is whitelisted (reply POST issued)', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ from: { emailAddress: { address: 'sklep@kazarstudio.com' } } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ from: { emailAddress: { address: 'sklep@mycompanystudio.com' } } }) })
       .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('') });
     vi.stubGlobal('fetch', fetchMock);
     const s = makeServer();

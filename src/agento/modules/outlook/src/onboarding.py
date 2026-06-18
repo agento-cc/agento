@@ -5,7 +5,7 @@ import logging
 import pymysql
 
 # Always-required identity/mailbox keys. Auth is satisfied by EITHER a client secret OR a
-# certificate path (D-A: support both, selected by config) — checked separately.
+# certificate PEM (its contents, stored encrypted) — support both, selected by config — checked separately.
 _BASE_KEYS = (
     "outlook/outlook_tenant_id",
     "outlook/outlook_client_id",
@@ -13,8 +13,38 @@ _BASE_KEYS = (
 )
 _AUTH_KEYS = (
     "outlook/outlook_client_secret",
-    "outlook/outlook_cert_path",
+    "outlook/outlook_cert_pem",
 )
+
+_PEM_END_SENTINEL = "END"
+
+
+def _read_pem_block(prompt: str) -> str:
+    """Read a multi-line pasted PEM from stdin until a lone ``END`` line (or EOF).
+
+    Module-level so it is unit-testable by mocking ``input``.
+    """
+    print(prompt)
+    lines: list[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line.strip() == _PEM_END_SENTINEL:
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _pem_has_cert_and_key(pem: str) -> bool:
+    """A usable Azure app PEM must contain BOTH a certificate block AND a private-key block.
+
+    Azure's ``ClientCertificatePEMCertificate`` requires both; a cert-only paste otherwise fails
+    opaquely at Graph token acquisition. ``PRIVATE KEY-----`` covers PRIVATE KEY / RSA PRIVATE KEY /
+    ENCRYPTED PRIVATE KEY.
+    """
+    return "-----BEGIN CERTIFICATE-----" in pem and "PRIVATE KEY-----" in pem
 
 
 class OutlookOnboarding:
@@ -43,7 +73,11 @@ class OutlookOnboarding:
         import getpass
 
         from agento.framework.cli import terminal
-        from agento.framework.core_config import config_set, config_set_auto_encrypt
+        from agento.framework.core_config import (
+            config_delete,
+            config_set,
+            config_set_auto_encrypt,
+        )
 
         print("\n=== Outlook / Microsoft 365 onboarding ===")
         tenant = input("Azure tenant ID: ").strip()
@@ -52,17 +86,50 @@ class OutlookOnboarding:
 
         auth_choice = terminal.select(
             "Graph authentication method",
-            ["Client secret (stored encrypted)", "Certificate (PEM file path)"],
+            ["Client secret (stored encrypted)", "Certificate (paste PEM contents)"],
         )
         config_set(conn, "outlook/outlook_tenant_id", tenant)
         config_set(conn, "outlook/outlook_client_id", client_id)
         config_set(conn, "outlook/outlook_mailbox_user_id", mailbox)
+        # All credential writes AND the stale-branch deletes below run in the SAME transaction as the
+        # single conn.commit() at the end — never after it. The Graph verification reads config via the
+        # toolbox's own DB connection (committed rows only); deleting after the commit would let stale
+        # cert material survive (graph-auth gives the certificate precedence when both are present).
         if auth_choice == 0:
             secret = getpass.getpass("Azure app client secret: ").strip()
             config_set_auto_encrypt(conn, "outlook/outlook_client_secret", secret)
+            # Switched to secret auth: drop any stale certificate material (+ legacy path).
+            config_delete(conn, "outlook/outlook_cert_pem")
+            config_delete(conn, "outlook/outlook_cert_password")
+            config_delete(conn, "outlook/outlook_cert_path")
         else:
-            cert_path = input("Path to certificate PEM (mounted into the toolbox): ").strip()
-            config_set(conn, "outlook/outlook_cert_path", cert_path)
+            pem = ""
+            while True:
+                pem = _read_pem_block(
+                    "Paste the certificate PEM (cert + private key), then a line with just END:"
+                )
+                if not pem:
+                    print("  Aborted: no PEM provided (nothing saved).")
+                    return
+                if _pem_has_cert_and_key(pem):
+                    break
+                print(
+                    "  Error: the PEM must contain BOTH a certificate block and a private-key block. "
+                    "Paste the full PEM (cert + key) again."
+                )
+            # NOTE: do NOT .strip() the passphrase — surrounding whitespace can be significant. Only an
+            # exactly-empty string means "no passphrase".
+            cert_password = getpass.getpass(
+                "Certificate PEM passphrase (leave empty if unencrypted): "
+            )
+            config_set_auto_encrypt(conn, "outlook/outlook_cert_pem", pem)
+            if cert_password != "":
+                config_set_auto_encrypt(conn, "outlook/outlook_cert_password", cert_password)
+            else:
+                config_delete(conn, "outlook/outlook_cert_password")
+            # Switched to certificate auth: drop any stale client secret (+ legacy path).
+            config_delete(conn, "outlook/outlook_client_secret")
+            config_delete(conn, "outlook/outlook_cert_path")
         conn.commit()
 
         # Verify Graph auth + mailbox access NOW (the toolbox reads the just-committed config per

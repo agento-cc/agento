@@ -4,7 +4,7 @@ import pytest
 
 from agento.modules.outlook.src.commands.publish import publish_mail
 
-WHITELIST = ["sklep@kazarstudio.com"]
+WHITELIST = ["sklep@mycompanystudio.com"]
 
 
 @patch("agento.modules.outlook.src.commands.publish.OutlookPublisher")
@@ -21,7 +21,7 @@ def test_publishes_each_unread(MockClient, MockPub):
 
     count = publish_mail(
         db_config=object(), toolbox_url="http://tb:3001", top=10,
-        allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+        allowed_senders=WHITELIST, logger=logger,
     )
 
     assert count == 2
@@ -34,21 +34,20 @@ def test_publishes_each_unread(MockClient, MockPub):
 def test_threads_sender_dmarc_and_gate_config(MockClient, MockPub):
     client = MockClient.return_value
     client.list_unread.return_value = [
-        {"id": "m1", "from": {"address": "Sklep@Kazarstudio.com"}, "dmarc": "pass"},
+        {"id": "m1", "from": {"address": "Sklep@Mycompanystudio.com"}, "dmarc": "pass"},
     ]
     pub = MockPub.return_value
     pub.publish_mail.return_value = True
 
     publish_mail(
         db_config=object(), toolbox_url="http://tb:3001", top=5,
-        allowed_senders=WHITELIST, require_dmarc=True, logger=MagicMock(),
+        allowed_senders=WHITELIST, logger=MagicMock(),
     )
 
     _, kwargs = pub.publish_mail.call_args
-    assert kwargs["sender_email"] == "Sklep@Kazarstudio.com"
+    assert kwargs["sender_email"] == "Sklep@Mycompanystudio.com"
     assert kwargs["dmarc"] == "pass"
     assert kwargs["allowed_senders"] == WHITELIST
-    assert kwargs["require_dmarc"] is True
 
 
 @patch("agento.modules.outlook.src.commands.publish.OutlookPublisher")
@@ -62,7 +61,7 @@ def test_error_on_one_message_does_not_stop_loop(MockClient, MockPub):
 
     count = publish_mail(
         db_config=object(), toolbox_url="http://tb:3001", top=10,
-        allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+        allowed_senders=WHITELIST, logger=logger,
     )
 
     assert count == 2
@@ -81,7 +80,7 @@ def test_skips_messages_without_id(MockClient, MockPub):
 
     count = publish_mail(
         db_config=object(), toolbox_url="http://tb:3001", top=10,
-        allowed_senders=WHITELIST, require_dmarc=True, logger=MagicMock(),
+        allowed_senders=WHITELIST, logger=MagicMock(),
     )
 
     assert count == 1
@@ -98,7 +97,7 @@ def test_client_closed_even_when_list_unread_raises(MockClient, MockPub):
     with pytest.raises(RuntimeError):
         publish_mail(
             db_config=object(), toolbox_url="http://tb:3001", top=10,
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            allowed_senders=WHITELIST, logger=logger,
         )
 
     client.close.assert_called_once()

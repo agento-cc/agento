@@ -16,7 +16,7 @@ def _matches_allowed(sender: str, allowed_senders: list[str] | None) -> bool:
     """Reproduce core's ``matchesWhitelist`` semantics (email.js).
 
     Each pattern is anchored (``^...$``), case-insensitive (caller passes a lowered sender),
-    and ``*`` expands to ``[^@]*`` so ``*@kazar.com`` matches any local part but never crosses
+    and ``*`` expands to ``[^@]*`` so ``*@mycompany.com`` matches any local part but never crosses
     the ``@``. An empty/None allow-list matches nothing (fail-closed).
     """
     if not allowed_senders:
@@ -109,7 +109,7 @@ class OutlookPublisher:
     def publish_mail(
         self, db_config: object, message_id: str, sender_email: str | None = None,
         dmarc: str | None = None, allowed_senders: list[str] | None = None,
-        require_dmarc: bool = True, logger: logging.Logger | None = None,
+        logger: logging.Logger | None = None,
     ) -> bool:
         # 1. Normalize the claimed From address.
         sender = (sender_email or "").strip().lower()
@@ -126,10 +126,11 @@ class OutlookPublisher:
                 )
             return False
 
-        # 3. DMARC GATE. A whitelisted identity that fails (or lacks a confirmed) DMARC pass is a
-        #    probable SPOOF — log a SECURITY BREACH (greppable marker + structured fields) and do
-        #    NOT publish. Capturing the full claimed From is justified for a flagged spoof.
-        if require_dmarc and (dmarc or "").lower() != "pass":
+        # 3. DMARC GATE (unconditional — DMARC pass is always required for an external channel).
+        #    A whitelisted identity that fails (or lacks a confirmed) DMARC pass is a probable SPOOF —
+        #    log a SECURITY BREACH (greppable marker + structured fields) and do NOT publish.
+        #    Capturing the full claimed From is justified for a flagged spoof.
+        if (dmarc or "").lower() != "pass":
             if logger:
                 logger.error(
                     "SECURITY_BREACH: whitelisted outlook sender failed DMARC (probable spoof)",
@@ -182,7 +183,6 @@ class OutlookPublisher:
             sender_email=kwargs.get("sender_email"),
             dmarc=kwargs.get("dmarc"),
             allowed_senders=kwargs.get("allowed_senders"),
-            require_dmarc=kwargs.get("require_dmarc", True),
             logger=kwargs.get("logger"),
         )
 

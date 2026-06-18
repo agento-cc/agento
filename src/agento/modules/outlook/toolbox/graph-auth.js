@@ -12,19 +12,24 @@ export function createGraphAuth(cfg = {}, deps = {}) {
   const tenantId = cfg.outlook_tenant_id || null;
   const clientId = cfg.outlook_client_id || null;
   const clientSecret = cfg.outlook_client_secret || null;
-  const certPath = cfg.outlook_cert_path || null;
+  // The PEM is stored as an `obscure` config value (encrypted at rest, decrypted by config-loader),
+  // so `certPem` arrives as the literal PEM contents — passed straight to @azure/identity, no file path.
+  const certPem = cfg.outlook_cert_pem || null;
+  const certPassword = cfg.outlook_cert_password || null;
   const mailboxUserId = cfg.outlook_mailbox_user_id || null;
 
   const makeSecretCredential = deps.makeSecretCredential || ((t, c, s) => new ClientSecretCredential(t, c, s));
   const makeCertCredential =
-    deps.makeCertCredential || ((t, c, p) => new ClientCertificateCredential(t, c, { certificatePath: p }));
+    deps.makeCertCredential ||
+    ((t, c, pem, pass) =>
+      new ClientCertificateCredential(t, c, { certificate: pem, certificatePassword: pass || undefined }));
 
   let credential = null; // lazily constructed
   let cached = null; // { token, expiresAt (ms epoch) }
 
   // Certificate takes precedence when both are present (stronger credential).
   function hasCredential() {
-    return !!(certPath || clientSecret);
+    return !!(certPem || clientSecret);
   }
 
   function isConfigured() {
@@ -33,8 +38,8 @@ export function createGraphAuth(cfg = {}, deps = {}) {
 
   function getCredential() {
     if (credential) return credential;
-    credential = certPath
-      ? makeCertCredential(tenantId, clientId, certPath)
+    credential = certPem
+      ? makeCertCredential(tenantId, clientId, certPem, certPassword)
       : makeSecretCredential(tenantId, clientId, clientSecret);
     return credential;
   }
@@ -42,7 +47,7 @@ export function createGraphAuth(cfg = {}, deps = {}) {
   async function getToken() {
     if (!isConfigured()) {
       throw new Error(
-        'Graph not configured: set outlook_tenant_id, outlook_client_id, outlook_mailbox_user_id and EITHER outlook_cert_path OR outlook_client_secret'
+        'Graph not configured: set outlook_tenant_id, outlook_client_id, outlook_mailbox_user_id and EITHER outlook_cert_pem OR outlook_client_secret'
       );
     }
     const now = Date.now();

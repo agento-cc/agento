@@ -8,7 +8,7 @@ class OutlookConfig:
     """Python-side Outlook config — NO Graph secrets.
 
     The Graph credentials (``outlook_tenant_id``, ``outlook_client_id``, ``outlook_client_secret``,
-    ``outlook_cert_path``) and the mailbox UPN (``outlook_mailbox_user_id``) live in ``system.json``
+    ``outlook_cert_pem``/``outlook_cert_password``) and the mailbox UPN (``outlook_mailbox_user_id``) live in ``system.json``
     and are resolved by the TOOLBOX (the zero-trust boundary — "toolbox = only container with
     secrets"). They are deliberately NOT fields here, exactly as ``JiraConfig`` omits ``jira_token``
     despite the ``obscure`` schema. Bootstrap stores this dataclass in ``_MODULE_CONFIGS``, so keeping
@@ -18,7 +18,6 @@ class OutlookConfig:
     enabled: bool = False
     poll_top: int = 10
     allowed_senders: str = ""
-    require_dmarc: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> OutlookConfig:
@@ -26,8 +25,6 @@ class OutlookConfig:
         # Mirror JiraConfig.from_dict's truthiness set.
         enabled_raw = data.get("enabled", False)
         enabled = enabled_raw not in (False, 0, "0", "false", "False")
-        require_dmarc_raw = data.get("require_dmarc", True)
-        require_dmarc = require_dmarc_raw not in (False, 0, "0", "false", "False")
         # poll_top arrives as str/int/garbage — parse defensively and clamp to Graph's 1..50 contract.
         # A missing/None value falls back to 10; an explicit 0 (or negative) clamps to 1.
         poll_top_raw = data.get("poll_top", 10)
@@ -45,7 +42,6 @@ class OutlookConfig:
             enabled=enabled,
             poll_top=poll_top,
             allowed_senders=allowed_senders,
-            require_dmarc=require_dmarc,
         )
 
     @property

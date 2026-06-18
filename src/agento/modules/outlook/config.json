@@ -1,6 +1,5 @@
 {
   "enabled": false,
   "allowed_senders": "",
-  "require_dmarc": true,
   "poll_top": 10
 }

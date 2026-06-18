@@ -11,7 +11,7 @@ from agento.modules.outlook.src.toolbox_client import OutlookToolboxClient
 
 def publish_mail(
     db_config, toolbox_url: str, top: int,
-    allowed_senders: list[str], require_dmarc: bool,
+    allowed_senders: list[str],
     logger: logging.Logger,
 ) -> int:
     """Fetch unread messages and publish each as a TODO job. Returns count published.
@@ -33,7 +33,7 @@ def publish_mail(
             try:
                 if publisher.publish_mail(
                     db_config, message_id, sender_email=sender, dmarc=dmarc,
-                    allowed_senders=allowed_senders, require_dmarc=require_dmarc, logger=logger,
+                    allowed_senders=allowed_senders, logger=logger,
                 ):
                     published += 1
             except Exception:
@@ -84,6 +84,6 @@ class OutlookPublishCommand:
 
         count = publish_mail(
             db_config, toolbox_url, top,
-            outlook_cfg.allowed_senders_list, outlook_cfg.require_dmarc, logger,
+            outlook_cfg.allowed_senders_list, logger,
         )
         logger.info(f"Published {count} outlook-mail jobs")

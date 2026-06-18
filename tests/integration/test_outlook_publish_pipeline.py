@@ -19,7 +19,7 @@ from agento.modules.outlook.src.commands.publish import publish_mail as command_
 
 from .conftest import _test_connection, fetch_all_jobs
 
-ALLOWED = ["sklep@kazarstudio.com", "mklauza@kazar.com"]
+ALLOWED = ["sklep@mycompanystudio.com", "mklauza@mycompany.com"]
 
 
 @pytest.fixture
@@ -61,8 +61,8 @@ def test_acc1_whitelisted_dmarc_pass_publishes_with_requester_email(int_db_confi
     logger = logging.getLogger("it-outlook")
     ok = OutlookPublisher().publish_mail(
         int_db_config, "AAMkAG-real-1",
-        sender_email="sklep@kazarstudio.com", dmarc="pass",
-        allowed_senders=ALLOWED, require_dmarc=True, logger=logger,
+        sender_email="sklep@mycompanystudio.com", dmarc="pass",
+        allowed_senders=ALLOWED, logger=logger,
     )
     assert ok is True
     jobs = fetch_all_jobs()
@@ -70,22 +70,22 @@ def test_acc1_whitelisted_dmarc_pass_publishes_with_requester_email(int_db_confi
     row = jobs[0]
     assert row["source"] == "outlook"
     assert row["reference_id"] == "AAMkAG-real-1"
-    assert row["requester_email"] == "sklep@kazarstudio.com"
+    assert row["requester_email"] == "sklep@mycompanystudio.com"
     assert row["requester_trust"] == "domain"
     assert row["agent_view_id"] == outlook_route   # routed to the bound agent_view
 
 
 def test_acc1_operator_self_test_sender_also_publishes(int_db_config, outlook_route):
-    """ACC1: the operator's own address (mklauza@kazar.com) — case-insensitive — also publishes."""
+    """ACC1: the operator's own address (mklauza@mycompany.com) — case-insensitive — also publishes."""
     ok = OutlookPublisher().publish_mail(
         int_db_config, "AAMkAG-real-2",
-        sender_email="MKlauza@Kazar.com", dmarc="pass",
-        allowed_senders=ALLOWED, require_dmarc=True, logger=logging.getLogger("it-outlook"),
+        sender_email="MKlauza@Mycompany.com", dmarc="pass",
+        allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
     )
     assert ok is True
     rows = fetch_all_jobs()
     assert len(rows) == 1
-    assert rows[0]["requester_email"] == "mklauza@kazar.com"  # JobRequester normalises
+    assert rows[0]["requester_email"] == "mklauza@mycompany.com"  # JobRequester normalises
 
 
 def test_acc2_non_whitelisted_sender_publishes_nothing(int_db_config, outlook_route, caplog):
@@ -93,8 +93,8 @@ def test_acc2_non_whitelisted_sender_publishes_nothing(int_db_config, outlook_ro
     with caplog.at_level(logging.INFO):
         ok = OutlookPublisher().publish_mail(
             int_db_config, "AAMkAG-real-3",
-            sender_email="test@kazarstudio.com", dmarc="pass",
-            allowed_senders=ALLOWED, require_dmarc=True, logger=logging.getLogger("it-outlook"),
+            sender_email="test@mycompanystudio.com", dmarc="pass",
+            allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
         )
     assert ok is False
     assert len(fetch_all_jobs()) == 0
@@ -106,8 +106,8 @@ def test_acc3_whitelisted_dmarc_fail_logs_breach_publishes_nothing(int_db_config
     with caplog.at_level(logging.ERROR):
         ok = OutlookPublisher().publish_mail(
             int_db_config, "AAMkAG-spoofed",
-            sender_email="sklep@kazarstudio.com", dmarc="fail",
-            allowed_senders=ALLOWED, require_dmarc=True, logger=logging.getLogger("it-outlook"),
+            sender_email="sklep@mycompanystudio.com", dmarc="fail",
+            allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
         )
     assert ok is False
     assert len(fetch_all_jobs()) == 0
@@ -128,19 +128,19 @@ def test_full_pipeline_via_command_publishes_only_authorized_dmarc_pass(int_db_c
     toolbox_url = "http://toolbox:3001"
     respx.post(f"{toolbox_url}/api/outlook/unread").mock(
         return_value=Response(200, json={"messages": [
-            {"id": "m-pass", "subject": "ok", "from": {"address": "sklep@kazarstudio.com"}, "dmarc": "pass"},
-            {"id": "m-stranger", "subject": "nope", "from": {"address": "test@kazarstudio.com"}, "dmarc": "pass"},
-            {"id": "m-spoof", "subject": "spoof", "from": {"address": "sklep@kazarstudio.com"}, "dmarc": "fail"},
+            {"id": "m-pass", "subject": "ok", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"},
+            {"id": "m-stranger", "subject": "nope", "from": {"address": "test@mycompanystudio.com"}, "dmarc": "pass"},
+            {"id": "m-spoof", "subject": "spoof", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "fail"},
         ]})
     )
     with caplog.at_level(logging.ERROR):
         count = command_publish_mail(
             int_db_config, toolbox_url, top=10,
-            allowed_senders=ALLOWED, require_dmarc=True, logger=logging.getLogger("it-outlook"),
+            allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
         )
     assert count == 1
     jobs = fetch_all_jobs()
     assert len(jobs) == 1
     assert jobs[0]["reference_id"] == "m-pass"
-    assert jobs[0]["requester_email"] == "sklep@kazarstudio.com"
+    assert jobs[0]["requester_email"] == "sklep@mycompanystudio.com"
     assert any("SECURITY_BREACH" in r.getMessage() for r in caplog.records)  # the spoof

@@ -5,7 +5,7 @@ import { createUnreadHandler, parseDmarcVerdict } from '../../modules/outlook/to
 // Inject a fake auth so token acquisition needs no real @azure/identity; the only global fetch the
 // handler makes is the Graph messages call. isConfigured mirrors graph-auth's real rule.
 const fakeAuthFactory = (cfg) => ({
-  isConfigured: () => !!(cfg.outlook_tenant_id && cfg.outlook_client_id && cfg.outlook_mailbox_user_id && (cfg.outlook_cert_path || cfg.outlook_client_secret)),
+  isConfigured: () => !!(cfg.outlook_tenant_id && cfg.outlook_client_id && cfg.outlook_mailbox_user_id && (cfg.outlook_cert_pem || cfg.outlook_client_secret)),
   getToken: async () => 'AAA',
   getMailboxUserId: () => cfg.outlook_mailbox_user_id,
 });
@@ -27,7 +27,7 @@ const cfg = {
 describe('parseDmarcVerdict (first Authentication-Results header wins — anti-spoof)', () => {
   it('returns "pass" for a passing first header', () => {
     expect(parseDmarcVerdict([
-      { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass action=none header.from=kazarstudio.com' },
+      { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass action=none header.from=mycompanystudio.com' },
     ])).toBe('pass');
   });
 

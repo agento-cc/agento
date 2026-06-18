@@ -5,7 +5,7 @@ from agento.framework.channels.base import Channel, PromptFragments
 from agento.framework.job_models import RequesterTrust
 from agento.modules.outlook.src.channel import OutlookChannel, OutlookPublisher
 
-WHITELIST = ["sklep@kazarstudio.com", "mklauza@kazar.com", "*@partner.com"]
+WHITELIST = ["sklep@mycompanystudio.com", "mklauza@mycompany.com", "*@partner.com"]
 
 
 def test_channel_protocol_and_name():
@@ -55,8 +55,8 @@ def test_acc1_whitelisted_sender_dmarc_pass_publishes_with_domain_trust(monkeypa
     with patch("agento.modules.outlook.src.channel.publish", return_value=True) as mock_publish:
         result = p.publish_mail(
             object(), "m1",
-            sender_email="sklep@kazarstudio.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=MagicMock(),
+            sender_email="sklep@mycompanystudio.com", dmarc="pass",
+            allowed_senders=WHITELIST, logger=MagicMock(),
         )
     assert result is True
     mock_publish.assert_called_once()
@@ -65,7 +65,7 @@ def test_acc1_whitelisted_sender_dmarc_pass_publishes_with_domain_trust(monkeypa
     assert kwargs["priority"] == 60
     assert kwargs["skip_if_active"] is True
     requester = kwargs["requester"]
-    assert requester.email == "sklep@kazarstudio.com"
+    assert requester.email == "sklep@mycompanystudio.com"
     assert requester.trust == RequesterTrust.DOMAIN
     assert requester.key.startswith("outlook:email:")
     assert requester.meta == {"basis": "email_from", "dmarc": "pass"}
@@ -77,8 +77,8 @@ def test_acc1_second_whitelisted_sender_also_publishes(monkeypatch):
     with patch("agento.modules.outlook.src.channel.publish", return_value=True) as mock_publish:
         result = p.publish_mail(
             object(), "m2",
-            sender_email="MKlauza@Kazar.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=MagicMock(),
+            sender_email="MKlauza@Mycompany.com", dmarc="pass",
+            allowed_senders=WHITELIST, logger=MagicMock(),
         )
     assert result is True
     mock_publish.assert_called_once()
@@ -91,7 +91,7 @@ def test_acc1_wildcard_pattern_matches(monkeypatch):
         result = p.publish_mail(
             object(), "m3",
             sender_email="anyone@partner.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=MagicMock(),
+            allowed_senders=WHITELIST, logger=MagicMock(),
         )
     assert result is True
     mock_publish.assert_called_once()
@@ -106,7 +106,7 @@ def test_wildcard_does_not_cross_at_sign(monkeypatch):
         result = p.publish_mail(
             object(), "m4",
             sender_email="evil@sub.partner.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            allowed_senders=WHITELIST, logger=logger,
         )
     assert result is False
     mock_publish.assert_not_called()
@@ -121,8 +121,8 @@ def test_acc2_non_whitelisted_sender_skipped_no_breach(monkeypatch):
     with patch("agento.modules.outlook.src.channel.publish") as mock_publish:
         result = p.publish_mail(
             object(), "m5",
-            sender_email="test@kazarstudio.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            sender_email="test@mycompanystudio.com", dmarc="pass",
+            allowed_senders=WHITELIST, logger=logger,
         )
     assert result is False
     mock_publish.assert_not_called()
@@ -139,8 +139,8 @@ def test_acc2_does_not_leak_full_address_only_domain(monkeypatch):
     with patch("agento.modules.outlook.src.channel.publish"):
         p.publish_mail(
             object(), "m5b",
-            sender_email="secret-user@kazarstudio.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            sender_email="secret-user@mycompanystudio.com", dmarc="pass",
+            allowed_senders=WHITELIST, logger=logger,
         )
     # info log must carry the domain but never the local part of a non-authorized address.
     blob = " ".join(str(c) for c in logger.info.call_args_list)
@@ -156,8 +156,8 @@ def test_acc3_whitelisted_sender_dmarc_fail_logs_breach_no_publish(monkeypatch):
     with patch("agento.modules.outlook.src.channel.publish") as mock_publish:
         result = p.publish_mail(
             object(), "AAMkAG-spoofed-message-id",
-            sender_email="sklep@kazarstudio.com", dmarc="fail",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            sender_email="sklep@mycompanystudio.com", dmarc="fail",
+            allowed_senders=WHITELIST, logger=logger,
         )
     assert result is False
     mock_publish.assert_not_called()
@@ -167,7 +167,7 @@ def test_acc3_whitelisted_sender_dmarc_fail_logs_breach_no_publish(monkeypatch):
     extra = kwargs["extra"]
     assert extra["event"] == "security_breach"
     assert extra["reason"] == "dmarc_not_pass"
-    assert extra["sender"] == "sklep@kazarstudio.com"
+    assert extra["sender"] == "sklep@mycompanystudio.com"
     assert extra["dmarc"] == "fail"
     assert "message_id" in extra
 
@@ -179,29 +179,12 @@ def test_acc3_whitelisted_sender_dmarc_none_logs_breach(monkeypatch):
     with patch("agento.modules.outlook.src.channel.publish") as mock_publish:
         result = p.publish_mail(
             object(), "m6",
-            sender_email="sklep@kazarstudio.com", dmarc=None,
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            sender_email="sklep@mycompanystudio.com", dmarc=None,
+            allowed_senders=WHITELIST, logger=logger,
         )
     assert result is False
     mock_publish.assert_not_called()
     logger.error.assert_called_once()
-
-
-def test_require_dmarc_false_skips_dmarc_gate(monkeypatch):
-    # Narrow local-testing escape hatch: require_dmarc=False lets a whitelisted sender through
-    # even without a pass (no breach), publishing with the documented basis.
-    p = OutlookPublisher()
-    monkeypatch.setattr(p, "_resolve_routing", _routed())
-    logger = MagicMock()
-    with patch("agento.modules.outlook.src.channel.publish", return_value=True) as mock_publish:
-        result = p.publish_mail(
-            object(), "m7",
-            sender_email="sklep@kazarstudio.com", dmarc="fail",
-            allowed_senders=WHITELIST, require_dmarc=False, logger=logger,
-        )
-    assert result is True
-    mock_publish.assert_called_once()
-    logger.error.assert_not_called()
 
 
 # ---- fail-closed: empty allowed_senders blocks everyone ----
@@ -214,8 +197,8 @@ def test_empty_allowed_senders_blocks_everyone(monkeypatch):
         with patch("agento.modules.outlook.src.channel.publish") as mock_publish:
             result = p.publish_mail(
                 object(), "m8",
-                sender_email="sklep@kazarstudio.com", dmarc="pass",
-                allowed_senders=allowed, require_dmarc=True, logger=logger,
+                sender_email="sklep@mycompanystudio.com", dmarc="pass",
+                allowed_senders=allowed, logger=logger,
             )
         assert result is False
         mock_publish.assert_not_called()
@@ -233,8 +216,8 @@ def test_authorized_dmarc_pass_but_unrouted_skips(monkeypatch):
     with patch("agento.modules.outlook.src.channel.publish") as mock_publish:
         result = p.publish_mail(
             object(), "m9",
-            sender_email="sklep@kazarstudio.com", dmarc="pass",
-            allowed_senders=WHITELIST, require_dmarc=True, logger=logger,
+            sender_email="sklep@mycompanystudio.com", dmarc="pass",
+            allowed_senders=WHITELIST, logger=logger,
         )
     assert result is False
     mock_publish.assert_not_called()
@@ -255,13 +238,12 @@ def test_publish_todo_shim_threads_gate_kwargs(monkeypatch):
     monkeypatch.setattr(p, "publish_mail", _spy)
     result = p.publish_todo(
         object(), reference_id="m10",
-        sender_email="sklep@kazarstudio.com", dmarc="pass",
-        allowed_senders=WHITELIST, require_dmarc=True,
+        sender_email="sklep@mycompanystudio.com", dmarc="pass",
+        allowed_senders=WHITELIST,
         logger=logging.getLogger("t"),
     )
     assert result is True
     assert captured["message_id"] == "m10"
-    assert captured["sender_email"] == "sklep@kazarstudio.com"
+    assert captured["sender_email"] == "sklep@mycompanystudio.com"
     assert captured["dmarc"] == "pass"
     assert captured["allowed_senders"] == WHITELIST
-    assert captured["require_dmarc"] is True
