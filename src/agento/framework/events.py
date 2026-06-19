@@ -333,6 +333,22 @@ class RoutingFailedEvent:
     context: Any  # RoutingContext
 
 
+# --- Security events ---
+
+
+@dataclass
+class SecurityBreachEvent:
+    """Dispatched when an inbound channel rejects a message as a probable security breach
+    (e.g. an allow-listed sender failing DMARC = spoof). Observers (e.g. app_monitor's
+    ``SecurityBreachAlertObserver``) may alert ops; dispatch is fail-closed regardless."""
+
+    channel: str
+    reason: str
+    sender: str | None = None
+    reference_id: str | None = None
+    detail: str | None = None
+
+
 # --- Workspace build events ---
 
 

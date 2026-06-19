@@ -519,3 +519,49 @@ class TestAlertEmailObserver:
         obs.AlertEmailObserver().execute(
             _DeadEvent(job=_Job(), error=RuntimeError("x")),
         )
+
+
+@dataclass
+class _BreachEvent:
+    channel: str = "outlook"
+    reason: str = "dmarc_not_pass"
+    sender: str | None = "sklep@example.com"
+    reference_id: str | None = "AAMkAG-1"
+    detail: str | None = "dmarc=fail"
+
+
+class TestSecurityBreachAlertObserver:
+    def test_noop_when_no_email_to(self, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_ALERT_EMAIL_TO: "", CFG_ALERT_SMTP_HOST: "smtp.example.com"})
+        sender = MagicMock()
+        monkeypatch.setattr(obs, "send_alert", sender)
+        obs.SecurityBreachAlertObserver().execute(_BreachEvent())
+        sender.assert_not_called()
+
+    def test_noop_when_no_smtp_host(self, monkeypatch):
+        _patch_config(monkeypatch, **{CFG_ALERT_EMAIL_TO: "ops@example.com", CFG_ALERT_SMTP_HOST: ""})
+        sender = MagicMock()
+        monkeypatch.setattr(obs, "send_alert", sender)
+        obs.SecurityBreachAlertObserver().execute(_BreachEvent())
+        sender.assert_not_called()
+
+    def test_sends_with_channel_reason_and_sender_when_configured(self, monkeypatch):
+        _patch_config(monkeypatch, **_SMTP)
+        sender = MagicMock()
+        monkeypatch.setattr(obs, "send_alert", sender)
+        obs.SecurityBreachAlertObserver().execute(_BreachEvent())
+        sender.assert_called_once()
+        _smtp_cfg, to, subject, body = sender.call_args.args
+        assert to == "ops@example.com"
+        assert "outlook" in subject
+        assert "dmarc_not_pass" in subject
+        assert "sklep@example.com" in body
+        assert "AAMkAG-1" in body
+
+    def test_smtp_failure_is_swallowed(self, monkeypatch):
+        _patch_config(monkeypatch, **_SMTP)
+
+        def _boom(*_a, **_kw):
+            raise OSError("network down")
+        monkeypatch.setattr(obs, "send_alert", _boom)
+        obs.SecurityBreachAlertObserver().execute(_BreachEvent())  # must not raise

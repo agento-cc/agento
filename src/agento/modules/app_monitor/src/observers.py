@@ -17,6 +17,10 @@
   on DEAD transitions when both ``alerts/email_to`` and ``alerts/smtp_host``
   are configured. Silent no-op if either is empty; SMTP failures are logged
   but never propagated.
+- ``SecurityBreachAlertObserver`` (``security_breach_after``) — send a
+  plain-text SMTP alert when an inbound channel reports a probable security
+  breach (e.g. a spoofed sender). Same fail-quiet contract as
+  ``AlertEmailObserver``.
 """
 from __future__ import annotations
 
@@ -316,4 +320,37 @@ class AlertEmailObserver:
                 "AlertEmailObserver: SMTP send failed (job_id=%s)",
                 getattr(event.job, "id", "?"),
                 exc_info=True,
+            )
+
+
+class SecurityBreachAlertObserver:
+    """Send a plain-text alert when an inbound channel reports a probable security breach.
+
+    Same fail-quiet contract as ``AlertEmailObserver``: silent no-op unless both
+    ``alerts/email_to`` and ``alerts/smtp_host`` are configured; SMTP failures are logged but
+    never propagated (the dispatcher also swallows observer errors).
+    """
+
+    def execute(self, event) -> None:
+        cfg = _config()
+        to = (cfg.get(CFG_ALERT_EMAIL_TO) or "").strip()
+        smtp = _smtp_config()
+        if not to or smtp is None:
+            return  # not configured — silent no-op
+        channel = getattr(event, "channel", "?")
+        reason = getattr(event, "reason", "?")
+        subject = f"[agento] Security breach attempt — {channel} ({reason})"
+        body = "\n".join([
+            f"Channel:      {channel}",
+            f"Reason:       {reason}",
+            f"Sender:       {getattr(event, 'sender', '?')}",
+            f"Reference id: {getattr(event, 'reference_id', '?')}",
+            f"Detail:       {getattr(event, 'detail', '') or ''}",
+        ])
+        try:
+            send_alert(smtp, to, subject, body)
+        except Exception:
+            logger.warning(
+                "SecurityBreachAlertObserver: SMTP send failed (channel=%s)",
+                channel, exc_info=True,
             )

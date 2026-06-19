@@ -1,146 +1,135 @@
-"""Integration: the Outlook inbound security gate end-to-end against real MySQL + real routing.
+"""Integration: the Outlook per-agent_view publisher loop against real MySQL + real config resolution.
 
-The unit tests (tests/unit/modules/outlook/test_channel.py) mock `_resolve_routing` and `publish`, so
-they never exercise the real `resolve_agent_view` ("email" ingress binding) nor the real DB write of
-`requester_email`. This test closes that gap — it proves the three controlling ACC against a real
-`agent_view` + `ingress_identity` + `job` table, which is the closest automated mirror of the live
-mailbox→Graph→job behaviour (only the real Graph/DMARC fetch is stubbed).
+Unit tests mock the framework helpers; this proves the loop fans each mailbox's messages to the
+correct agent_view, honours per-view allowed_senders/DMARC, and dedupes a shared mailbox — against
+real agent_view + core_config_data + job rows (only the toolbox Graph fetch is stubbed via respx).
 """
 from __future__ import annotations
 
+import json
 import logging
 
 import pytest
 import respx
 from httpx import Response
 
-from agento.modules.outlook.src.channel import OutlookPublisher
-from agento.modules.outlook.src.commands.publish import publish_mail as command_publish_mail
+from agento.framework.scoped_config import Scope, scoped_config_set
+from agento.modules.outlook.src.commands.publish import publish_all_views
 
 from .conftest import _test_connection, fetch_all_jobs
 
-ALLOWED = ["sklep@mycompanystudio.com", "mklauza@mycompany.com"]
+ALLOWED = "sklep@mycompanystudio.com, mklauza@mycompany.com"
+TOOLBOX_URL = "http://toolbox:3001"
 
 
 @pytest.fixture
-def outlook_route():
-    """Create a workspace + agent_view and bind the two allowed senders to it (email ingress).
-
-    workspace/agent_view/ingress_identity are NOT in the autouse truncation set, so this fixture
-    cleans up after itself (deleting the workspace cascades to agent_view + ingress_identity).
-    """
+def two_views():
+    """Create one workspace + two active agent_views, each with scoped outlook config (enabled +
+    allowed_senders). Returns (dev_id, ops_id). Cleans up workspace (cascades to agent_view) and the
+    agent_view-scoped core_config_data rows it wrote — none are in the autouse truncation set."""
     conn = _test_connection(autocommit=True)
+    av_ids = []
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO workspace (code, label) VALUES ('ws-outlook-it', 'outlook IT')")
+            cur.execute("INSERT INTO workspace (code, label) VALUES ('ws-outlook-pv', 'outlook pv')")
             ws_id = cur.lastrowid
-            cur.execute(
-                "INSERT INTO agent_view (workspace_id, code, label) VALUES (%s, 'av-outlook-it', 'outlook IT')",
-                (ws_id,),
-            )
-            av_id = cur.lastrowid
-            for addr in ALLOWED:
+            for code in ("av-outlook-dev", "av-outlook-ops"):
                 cur.execute(
-                    "INSERT INTO ingress_identity (identity_type, identity_value, agent_view_id) "
-                    "VALUES ('email', %s, %s)",
-                    (addr, av_id),
+                    "INSERT INTO agent_view (workspace_id, code, label) VALUES (%s, %s, %s)",
+                    (ws_id, code, code),
                 )
-        yield av_id
+                av_ids.append(cur.lastrowid)
+        for av_id in av_ids:
+            scoped_config_set(conn, "outlook/enabled", "1", scope=Scope.AGENT_VIEW, scope_id=av_id)
+            scoped_config_set(conn, "outlook/allowed_senders", ALLOWED, scope=Scope.AGENT_VIEW, scope_id=av_id)
+        conn.commit()
+        yield av_ids[0], av_ids[1]
     finally:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM workspace WHERE code = 'ws-outlook-it'")
+            for av_id in av_ids:
+                cur.execute(
+                    "DELETE FROM core_config_data WHERE scope = 'agent_view' AND scope_id = %s",
+                    (av_id,),
+                )
+            cur.execute("DELETE FROM workspace WHERE code = 'ws-outlook-pv'")
         conn.close()
 
 
-# --------------------------------------------------------------------------- #
-# Publisher gate against real DB + real routing
-# --------------------------------------------------------------------------- #
+def _unread_stub(by_view):
+    """Return a respx side_effect that maps the posted agent_view_id -> {mailbox, messages}."""
+    def _handler(request):
+        agent_view_id = json.loads(request.content)["agent_view_id"]
+        return Response(200, json=by_view[agent_view_id])
+    return _handler
 
-def test_acc1_whitelisted_dmarc_pass_publishes_with_requester_email(int_db_config, outlook_route):
-    """ACC1: allow-listed sender + DMARC pass → a job row with the From in requester_email, trust=domain."""
-    logger = logging.getLogger("it-outlook")
-    ok = OutlookPublisher().publish_mail(
-        int_db_config, "AAMkAG-real-1",
-        sender_email="sklep@mycompanystudio.com", dmarc="pass",
-        allowed_senders=ALLOWED, logger=logger,
-    )
-    assert ok is True
-    jobs = fetch_all_jobs()
-    assert len(jobs) == 1
-    row = jobs[0]
-    assert row["source"] == "outlook"
-    assert row["reference_id"] == "AAMkAG-real-1"
-    assert row["requester_email"] == "sklep@mycompanystudio.com"
-    assert row["requester_trust"] == "domain"
-    assert row["agent_view_id"] == outlook_route   # routed to the bound agent_view
-
-
-def test_acc1_operator_self_test_sender_also_publishes(int_db_config, outlook_route):
-    """ACC1: the operator's own address (mklauza@mycompany.com) — case-insensitive — also publishes."""
-    ok = OutlookPublisher().publish_mail(
-        int_db_config, "AAMkAG-real-2",
-        sender_email="MKlauza@Mycompany.com", dmarc="pass",
-        allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
-    )
-    assert ok is True
-    rows = fetch_all_jobs()
-    assert len(rows) == 1
-    assert rows[0]["requester_email"] == "mklauza@mycompany.com"  # JobRequester normalises
-
-
-def test_acc2_non_whitelisted_sender_publishes_nothing(int_db_config, outlook_route, caplog):
-    """ACC2: a sender not on allowed_senders creates no job and logs NO security breach."""
-    with caplog.at_level(logging.INFO):
-        ok = OutlookPublisher().publish_mail(
-            int_db_config, "AAMkAG-real-3",
-            sender_email="test@mycompanystudio.com", dmarc="pass",
-            allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
-        )
-    assert ok is False
-    assert len(fetch_all_jobs()) == 0
-    assert "SECURITY_BREACH" not in caplog.text
-
-
-def test_acc3_whitelisted_dmarc_fail_logs_breach_publishes_nothing(int_db_config, outlook_route, caplog):
-    """ACC3: an allow-listed From that fails DMARC is a probable spoof → breach logged, no job."""
-    with caplog.at_level(logging.ERROR):
-        ok = OutlookPublisher().publish_mail(
-            int_db_config, "AAMkAG-spoofed",
-            sender_email="sklep@mycompanystudio.com", dmarc="fail",
-            allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
-        )
-    assert ok is False
-    assert len(fetch_all_jobs()) == 0
-    assert any(r.levelno == logging.ERROR and "SECURITY_BREACH" in r.getMessage() for r in caplog.records)
-
-
-# --------------------------------------------------------------------------- #
-# Full pipeline through the outlook:publish command (toolbox HTTP stubbed via respx)
-# --------------------------------------------------------------------------- #
 
 @respx.mock
-def test_full_pipeline_via_command_publishes_only_authorized_dmarc_pass(int_db_config, outlook_route, caplog):
-    """outlook:publish → toolbox /api/outlook/unread (stubbed) → client → publisher → real DB.
+def test_multi_view_fans_each_mailbox_to_correct_view(int_db_config, two_views):
+    dev_id, ops_id = two_views
+    by_view = {
+        dev_id: {"mailbox": "dev@example.com", "messages": [
+            {"id": "m-dev", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"}]},
+        ops_id: {"mailbox": "ops@example.com", "messages": [
+            {"id": "m-ops", "from": {"address": "mklauza@mycompany.com"}, "dmarc": "pass"}]},
+    }
+    respx.post(f"{TOOLBOX_URL}/api/outlook/unread").mock(side_effect=_unread_stub(by_view))
 
-    Proves the message-shape contract (from.address + dmarc) flows end-to-end and only the
-    allow-listed, DMARC-passing message becomes a job; the spoof logs a breach; the stranger is skipped.
-    """
-    toolbox_url = "http://toolbox:3001"
-    respx.post(f"{toolbox_url}/api/outlook/unread").mock(
-        return_value=Response(200, json={"messages": [
-            {"id": "m-pass", "subject": "ok", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"},
-            {"id": "m-stranger", "subject": "nope", "from": {"address": "test@mycompanystudio.com"}, "dmarc": "pass"},
-            {"id": "m-spoof", "subject": "spoof", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "fail"},
-        ]})
+    conn = _test_connection(autocommit=False)
+    try:
+        count = publish_all_views(int_db_config, conn, TOOLBOX_URL, logging.getLogger("it-outlook"))
+    finally:
+        conn.close()
+
+    assert count == 2
+    jobs = {j["reference_id"]: j for j in fetch_all_jobs()}
+    assert jobs["m-dev"]["agent_view_id"] == dev_id
+    assert jobs["m-dev"]["requester_email"] == "sklep@mycompanystudio.com"
+    assert jobs["m-dev"]["requester_trust"] == "domain"
+    assert jobs["m-ops"]["agent_view_id"] == ops_id
+
+
+@respx.mock
+def test_spoof_and_stranger_blocked_per_view(int_db_config, two_views, caplog):
+    dev_id, ops_id = two_views
+    by_view = {
+        dev_id: {"mailbox": "dev@example.com", "messages": [
+            {"id": "m-pass", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"},
+            {"id": "m-stranger", "from": {"address": "stranger@elsewhere.com"}, "dmarc": "pass"},
+            {"id": "m-spoof", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "fail"},
+        ]},
+        ops_id: {"mailbox": "ops@example.com", "messages": []},
+    }
+    respx.post(f"{TOOLBOX_URL}/api/outlook/unread").mock(side_effect=_unread_stub(by_view))
+
+    conn = _test_connection(autocommit=False)
+    try:
+        with caplog.at_level(logging.ERROR):
+            count = publish_all_views(int_db_config, conn, TOOLBOX_URL, logging.getLogger("it-outlook"))
+    finally:
+        conn.close()
+
+    assert count == 1
+    jobs = fetch_all_jobs()
+    assert [j["reference_id"] for j in jobs] == ["m-pass"]
+    assert any("SECURITY_BREACH" in r.getMessage() for r in caplog.records)
+
+
+@respx.mock
+def test_shared_mailbox_deduped_lowest_id_wins(int_db_config, two_views):
+    dev_id, ops_id = two_views  # dev_id < ops_id (insertion order)
+    shared = {"mailbox": "shared@example.com", "messages": [
+        {"id": "m-shared", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"}]}
+    respx.post(f"{TOOLBOX_URL}/api/outlook/unread").mock(
+        side_effect=_unread_stub({dev_id: shared, ops_id: shared})
     )
-    with caplog.at_level(logging.ERROR):
-        count = command_publish_mail(
-            int_db_config, toolbox_url, top=10,
-            allowed_senders=ALLOWED, logger=logging.getLogger("it-outlook"),
-        )
+
+    conn = _test_connection(autocommit=False)
+    try:
+        count = publish_all_views(int_db_config, conn, TOOLBOX_URL, logging.getLogger("it-outlook"))
+    finally:
+        conn.close()
+
     assert count == 1
     jobs = fetch_all_jobs()
     assert len(jobs) == 1
-    assert jobs[0]["reference_id"] == "m-pass"
-    assert jobs[0]["requester_email"] == "sklep@mycompanystudio.com"
-    assert any("SECURITY_BREACH" in r.getMessage() for r in caplog.records)  # the spoof
+    assert jobs[0]["agent_view_id"] == dev_id  # lowest id wins

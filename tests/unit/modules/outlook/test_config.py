@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from agento.modules.outlook.src.config import OutlookConfig
 
 
@@ -51,3 +53,21 @@ def test_allowed_senders_list_normalizes_and_splits():
 def test_allowed_senders_list_empty_for_blank():
     assert OutlookConfig.from_dict({"allowed_senders": "   "}).allowed_senders_list == []
     assert OutlookConfig.from_dict({}).allowed_senders_list == []
+
+
+def test_toolbox_url_reads_core_config_when_dict():
+    with patch("agento.framework.bootstrap.get_module_config", return_value={"toolbox/url": "http://tb:3001"}):
+        assert OutlookConfig.from_dict({}).toolbox_url == "http://tb:3001"
+
+
+def test_toolbox_url_empty_when_core_missing_or_not_dict():
+    # core unset -> "" (no crash)
+    with patch("agento.framework.bootstrap.get_module_config", return_value=None):
+        assert OutlookConfig.from_dict({}).toolbox_url == ""
+
+    # core resolved to a dataclass (not a plain dict) -> "" rather than AttributeError
+    class _CoreCfg:
+        pass
+
+    with patch("agento.framework.bootstrap.get_module_config", return_value=_CoreCfg()):
+        assert OutlookConfig.from_dict({}).toolbox_url == ""

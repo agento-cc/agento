@@ -1,5 +1,6 @@
 {
   "enabled": false,
   "allowed_senders": "",
-  "poll_top": 10
+  "poll_top": 10,
+  "restrict_read_to_allowed_senders": true
 }

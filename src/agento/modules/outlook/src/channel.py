@@ -4,12 +4,11 @@ import hashlib
 import logging
 import re
 
-from agento.framework.agent_view_runtime import resolve_publish_priority
 from agento.framework.channels.base import PromptFragments
-from agento.framework.db import get_connection
+from agento.framework.event_manager import get_event_manager
+from agento.framework.events import SecurityBreachEvent
 from agento.framework.job_models import AgentType, JobRequester, RequesterTrust
 from agento.framework.publisher import publish
-from agento.framework.router import RoutingContext, resolve_agent_view
 
 
 def _matches_allowed(sender: str, allowed_senders: list[str] | None) -> bool:
@@ -22,8 +21,11 @@ def _matches_allowed(sender: str, allowed_senders: list[str] | None) -> bool:
     if not allowed_senders:
         return False
     for pattern in allowed_senders:
-        escaped = re.sub(r"[.+^${}()|[\]\\]", r"\\\g<0>", pattern.lower())
-        regex = "^" + escaped.replace("*", "[^@]*") + "$"
+        # Escape EVERY regex metachar in the literal segments (split on the glob ``*``) so a pattern
+        # like ``a?b@x.com`` matches literally — never as a regex quantifier, which would WIDEN the
+        # allow-list (the fail-OPEN direction). ``*`` expands to ``[^@]*`` (matches a local part but
+        # never crosses the ``@``). Kept in lockstep with the JS ``matchesWhitelist`` (outlook.js).
+        regex = "^" + "[^@]*".join(re.escape(seg) for seg in pattern.lower().split("*")) + "$"
         if re.match(regex, sender):
             return True
     return False
@@ -70,7 +72,7 @@ class OutlookPromptChannel:
 
 
 class OutlookPublisher:
-    """Publisher concern: enforce the inbound security gate, route by sender, publish one job/email."""
+    """Publisher concern: enforce the inbound security gate, publish one job/email to the mailbox's agent_view."""
 
     @property
     def name(self) -> str:
@@ -79,35 +81,9 @@ class OutlookPublisher:
     def build_idempotency_key(self, message_id: str) -> str:
         return f"outlook:mail:{message_id}"
 
-    def _resolve_routing(
-        self, db_config: object, sender_email: str | None,
-        logger: logging.Logger | None = None,
-    ) -> tuple[int | None, int]:
-        try:
-            conn = get_connection(db_config)
-        except Exception:
-            return None, 50
-        try:
-            ctx = RoutingContext(
-                channel="outlook",
-                workflow_type="todo",
-                identity_type="email",
-                identity_value=(sender_email or "").strip().lower(),
-                payload={},
-            )
-            decision = resolve_agent_view(conn, ctx)
-            if decision is None:
-                return None, 50
-            return decision.agent_view_id, resolve_publish_priority(conn, decision.agent_view_id)
-        except Exception:
-            if logger:
-                logger.warning("Routing lookup failed; treating as unrouted (email left unread)", exc_info=True)
-            return None, 50
-        finally:
-            conn.close()
-
     def publish_mail(
-        self, db_config: object, message_id: str, sender_email: str | None = None,
+        self, db_config: object, message_id: str, *, agent_view_id: int,
+        priority: int = 50, sender_email: str | None = None,
         dmarc: str | None = None, allowed_senders: list[str] | None = None,
         logger: logging.Logger | None = None,
     ) -> bool:
@@ -126,40 +102,43 @@ class OutlookPublisher:
                 )
             return False
 
-        # 3. DMARC GATE (unconditional — DMARC pass is always required for an external channel).
-        #    A whitelisted identity that fails (or lacks a confirmed) DMARC pass is a probable SPOOF —
-        #    log a SECURITY BREACH (greppable marker + structured fields) and do NOT publish.
-        #    Capturing the full claimed From is justified for a flagged spoof.
-        if (dmarc or "").lower() != "pass":
-            if logger:
-                logger.error(
-                    "SECURITY_BREACH: whitelisted outlook sender failed DMARC (probable spoof)",
-                    extra={
-                        "event": "security_breach",
-                        "reason": "dmarc_not_pass",
-                        "sender": sender,
-                        "dmarc": dmarc,
-                        "message_id": message_id[:40],
-                    },
+        # 3. DMARC GATE (unconditional — a hard DMARC pass is always required to publish). Two distinct
+        #    non-pass cases, both fail-closed (never published):
+        #      * EXPLICIT failure (fail/quarantine/reject) on a domain that publishes a DMARC policy is a
+        #        probable SPOOF -> SECURITY_BREACH log (greppable marker + full claimed From, justified
+        #        for a flagged spoof) AND an ops alert via the framework security_breach event.
+        #      * Any other non-pass (none / bestguesspass / temperror / missing verdict) just means the
+        #        sender's domain has no usable DMARC policy — NOT a spoof. Log info (domain only, no
+        #        breach, no alert): EOP emits dmarc=bestguesspass for recordless domains on every poll,
+        #        and flagging that as a breach would flood the log and dilute the marker.
+        verdict = (dmarc or "").lower()
+        if verdict != "pass":
+            if verdict in ("fail", "quarantine", "reject"):
+                if logger:
+                    logger.error(
+                        "SECURITY_BREACH: whitelisted outlook sender failed DMARC (probable spoof)",
+                        extra={
+                            "event": "security_breach",
+                            "reason": "dmarc_not_pass",
+                            "sender": sender,
+                            "dmarc": dmarc,
+                            "message_id": message_id[:40],
+                        },
+                    )
+                self._alert_security_breach(message_id, sender, verdict, logger)
+            elif logger:
+                sender_domain = sender.split("@")[-1] if "@" in sender else "?"
+                logger.info(
+                    "Outlook sender has no confirmed DMARC pass; leaving unread (not a spoof)",
+                    extra={"message_id": message_id[:40], "dmarc": verdict or "none",
+                           "sender_domain": sender_domain},
                 )
             return False
 
-        # 4. ROUTE. Authorized + DMARC-passed, but routing is still required (fail-closed): an
-        #    unrouted external job would execute at global scope and the stable idempotency key
-        #    would permanently block a later re-route. Leave unread for re-evaluation.
-        agent_view_id, priority = self._resolve_routing(db_config, sender, logger)
-        if agent_view_id is None:
-            if logger:
-                logger.warning(
-                    "Authorized outlook sender has no agent_view route; leaving unread "
-                    "(operator must ingress:bind email <sender> <agent_view>)",
-                    extra={"message_id": message_id[:40]},
-                )
-            return False
-
-        # 5. PUBLISH. DMARC pass cryptographically aligns the From domain -> trust=DOMAIN.
-        normalized = sender
-        digest = hashlib.sha256(normalized.encode()).hexdigest()
+        # 4. PUBLISH to the mailbox's agent_view (the mailbox identifies the view — the publisher
+        #    loop supplies agent_view_id + priority). DMARC pass cryptographically aligns the From
+        #    domain -> trust=DOMAIN.
+        digest = hashlib.sha256(sender.encode()).hexdigest()
         requester = JobRequester(
             key=f"outlook:email:{digest}",  # 14 + 64 = 78 chars, always < 255
             email=sender_email,  # JobRequester normalizes (strip+lower)
@@ -174,12 +153,38 @@ class OutlookPublisher:
             skip_if_active=True, requester=requester,
         )
 
+    def _alert_security_breach(
+        self, message_id: str, sender: str, dmarc: str, logger: logging.Logger | None,
+    ) -> None:
+        """Notify ops of a probable spoof via the framework ``security_breach_after`` event.
+
+        Decoupled from any alert transport: app_monitor (when enabled) observes the event and emails
+        ops. ``EventManager.dispatch`` swallows observer errors, so a failing alert never blocks the
+        poll loop; the surrounding try/except only guards the dispatch call itself.
+        """
+        try:
+            get_event_manager().dispatch(
+                "security_breach_after",
+                SecurityBreachEvent(
+                    channel="outlook",
+                    reason="dmarc_not_pass",
+                    sender=sender,
+                    reference_id=message_id,
+                    detail=f"dmarc={dmarc}",
+                ),
+            )
+        except Exception:
+            if logger:
+                logger.warning("Failed to dispatch security_breach event", exc_info=True)
+
     # Publisher protocol shims (the framework Publisher protocol expects these names).
     def publish_todo(self, config: object, reference_id: str | None = None, **kwargs) -> bool:
         if not reference_id:
             raise ValueError("outlook publish_todo requires a reference_id (message_id)")
         return self.publish_mail(
             config, reference_id,
+            agent_view_id=kwargs["agent_view_id"],
+            priority=kwargs.get("priority", 50),
             sender_email=kwargs.get("sender_email"),
             dmarc=kwargs.get("dmarc"),
             allowed_senders=kwargs.get("allowed_senders"),

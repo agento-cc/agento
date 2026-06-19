@@ -54,17 +54,19 @@ describe('parseDmarcVerdict (first Authentication-Results header wins — anti-s
   });
 });
 
+const ok = (c) => async () => ({ cfg: c, resolved: true });
+
 describe('POST /api/outlook/unread handler', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
   it('returns 500 when not configured', async () => {
-    const handler = createUnreadHandler(async () => ({}), vi.fn(), fakeAuthFactory);
+    const handler = createUnreadHandler(ok({}), vi.fn(), fakeAuthFactory);
     const res = mockRes();
     await handler({ body: {} }, res);
     expect(res.statusCode).toBe(500);
   });
 
-  it('maps Graph messages to {id,subject,from,receivedDateTime,conversationId,dmarc}', async () => {
+  it('returns { mailbox, messages } with the resolved UPN and maps Graph fields', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ value: [
@@ -73,19 +75,60 @@ describe('POST /api/outlook/unread handler', () => {
           internetMessageHeaders: [{ name: 'Authentication-Results', value: 'dmarc=pass' }] },
       ] }),
     }));
-    const handler = createUnreadHandler(async () => cfg, vi.fn(), fakeAuthFactory);
+    const handler = createUnreadHandler(ok(cfg), vi.fn(), fakeAuthFactory);
     const res = mockRes();
     await handler({ body: { top: 10 } }, res);
     expect(res.statusCode).toBe(200);
+    expect(res.body.mailbox).toBe('agent@example.com');
     expect(res.body.messages).toHaveLength(1);
     expect(res.body.messages[0]).toMatchObject({ id: 'm1', subject: 'A', dmarc: 'pass' });
     expect(res.body.messages[0].from.address).toBe('x@y.com');
   });
 
+  it('forwards agent_view_id from the body to the config resolver', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value: [] }) }));
+    const resolver = vi.fn(async () => ({ cfg, resolved: true }));
+    const handler = createUnreadHandler(resolver, vi.fn(), fakeAuthFactory);
+    await handler({ body: { top: 5, agent_view_id: 42 } }, mockRes());
+    expect(resolver).toHaveBeenCalledWith(42);
+  });
+
+  it('passes null to the resolver when agent_view_id is absent (global scope)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value: [] }) }));
+    const resolver = vi.fn(async () => ({ cfg, resolved: true }));
+    const handler = createUnreadHandler(resolver, vi.fn(), fakeAuthFactory);
+    await handler({ body: { top: 5 } }, mockRes());
+    expect(resolver).toHaveBeenCalledWith(null);
+  });
+
+  it('FAIL-CLOSED: rejects a non-positive-integer agent_view_id with 400 (no resolver/Graph call)', async () => {
+    const resolver = vi.fn(ok(cfg));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const handler = createUnreadHandler(resolver, vi.fn(), fakeAuthFactory);
+    for (const bad of ['7', 0, -1, 1.5]) {
+      const res = mockRes();
+      await handler({ body: { agent_view_id: bad } }, res);
+      expect(res.statusCode).toBe(400);
+    }
+    expect(resolver).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('FAIL-CLOSED: returns 404 (no global fallback) when a supplied id does not resolve', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const handler = createUnreadHandler(async () => ({ cfg, resolved: false }), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { agent_view_id: 999 } }, res);
+    expect(res.statusCode).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('requests internetMessageHeaders and clamps a bogus top (>50) to 1..50', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value: [] }) });
     vi.stubGlobal('fetch', fetchMock);
-    const handler = createUnreadHandler(async () => cfg, vi.fn(), fakeAuthFactory);
+    const handler = createUnreadHandler(ok(cfg), vi.fn(), fakeAuthFactory);
     await handler({ body: { top: 999 } }, mockRes());
     const url = fetchMock.mock.calls[0][0];
     expect(url).toContain('internetMessageHeaders');

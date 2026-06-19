@@ -1,6 +1,11 @@
 # Routing — Ingress Identity Resolution
 
-Maps inbound traffic (Outlook, Teams, API) to the right `agent_view` using a deterministic, module-extensible router chain.
+Maps inbound traffic (Teams, API, and other ingress-routed channels) to the right `agent_view` using a deterministic, module-extensible router chain.
+
+> **The Outlook channel does not use this.** Outlook routes by **mailbox → agent_view** (the mailbox
+> identifies the view — one mailbox per agent_view); `outlook/allowed_senders` + DMARC are its inbound
+> security gate, not routing. See [docs/modules/outlook.md](../modules/outlook.md). `ingress:bind email`
+> is inert for Outlook (harmless; removable with `ingress:unbind`).
 
 ## How It Works
 
@@ -17,10 +22,10 @@ The channel/module that triggers routing populates the context:
 from agento.framework.contracts import RoutingContext
 
 ctx = RoutingContext(
-    channel="outlook",
+    channel="teams",
     workflow_type="followup",
-    identity_type="email",
-    identity_value="user@example.com",
+    identity_type="teams",
+    identity_value="29:1a2b3c…",
     payload={"subject": "Re: Project update", "thread_id": "abc123"},
 )
 ```

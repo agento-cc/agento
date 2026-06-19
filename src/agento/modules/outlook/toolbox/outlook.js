@@ -4,15 +4,23 @@ import { createGraphAuth } from './graph-auth.js';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 // Replicate core's matchesWhitelist semantics locally (src/agento/modules/core/toolbox/email.js) rather
-// than importing it (avoids an inter-module dependency). Anchored, regex-escaped, `*` -> `[^@]*`,
-// case-insensitive. An EMPTY whitelist matches nothing -> blocks all (fail-closed).
-function matchesWhitelist(email, whitelist) {
+// than importing it (avoids an inter-module dependency). Anchored, case-insensitive; the glob `*` ->
+// `[^@]*` (matches a local part but never crosses `@`); every OTHER regex metachar in the literal
+// segments is escaped (so `a?b@x.com` matches literally, never as a `?` quantifier — escaping the
+// fail-OPEN direction). An EMPTY whitelist matches nothing -> blocks all (fail-closed). Kept in lockstep
+// with channel.py `_matches_allowed`. Exported for direct unit testing.
+export function matchesWhitelist(email, whitelist) {
   const addr = (email || '').toLowerCase();
   return whitelist.some((pattern) => {
-    const regex = new RegExp(
-      '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^@]*') + '$'
-    );
-    return regex.test(addr);
+    const re =
+      '^' +
+      pattern
+        .toLowerCase()
+        .split('*')
+        .map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[^@]*') +
+      '$';
+    return new RegExp(re).test(addr);
   });
 }
 
@@ -21,6 +29,32 @@ function loadWhitelist(moduleConfigs) {
     .split(',')
     .map((p) => p.trim().toLowerCase())
     .filter(Boolean);
+}
+
+// Inbound allow-list (outlook/allowed_senders) — same comma-separated glob format used by the publisher
+// gate (channel.py). Drives the read-tool restriction below.
+function loadAllowedSenders(cfg) {
+  return (cfg?.allowed_senders || '')
+    .split(',')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+// Config booleans arrive as a real bool (config.json) or a string (DB/ENV). Missing/empty -> default.
+function parseBool(value, dflt) {
+  if (value === undefined || value === null || value === '') return dflt;
+  if (typeof value === 'boolean') return value;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+// On a non-ok Graph response, drain+discard the body (it can carry mailbox/tenant identifiers we must
+// NOT surface to the agent — same policy as api-handlers.js) and throw a STATUS-ONLY error. The tool
+// catch blocks log this server-side and return it to the agent already sanitized.
+async function ensureOk(res) {
+  if (!res.ok) {
+    await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}`);
+  }
 }
 
 // Accept only strict ISO-8601 datetimes before interpolating into an OData $filter (never raw-interpolate
@@ -35,6 +69,15 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
   const cfg = moduleConfigs?.outlook || {};
   const auth = (graphAuthFactory || createGraphAuth)(cfg);
   const whitelist = loadWhitelist(moduleConfigs);
+
+  // S3 READ RESTRICTION: when `restrict_read_to_allowed_senders` is on (DEFAULT true), the read tools
+  // (get_message / search / get_new) only surface mail whose sender is on outlook/allowed_senders —
+  // mirroring the inbound publisher gate so an enabled read tool can't expose mail the channel would
+  // never have created a job for (incl. spoofed / DMARC-failed mail sharing the mailbox). Empty
+  // allowed_senders = block all (fail-closed). Disabling this is a documented security risk.
+  const allowedSenders = loadAllowedSenders(cfg);
+  const restrictRead = parseBool(cfg.restrict_read_to_allowed_senders, true);
+  const senderAllowed = (addr) => !restrictRead || matchesWhitelist(addr || '', allowedSenders);
 
   // Per-tool opt-in gate. At startup (registerModuleRestApis) isToolEnabled is undefined and the server
   // is a no-op stub, so registering is harmless; at session time a disabled tool is skipped entirely.
@@ -73,10 +116,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}` +
               '?$select=subject,body,from,toRecipients,ccRecipients,receivedDateTime,conversationId,hasAttachments'
           );
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
+          await ensureOk(res);
           const msg = await res.json();
           const result = {
             subject: msg.subject,
@@ -89,6 +129,13 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             conversationId: msg.conversationId,
             hasAttachments: msg.hasAttachments,
           };
+          if (!senderAllowed(result.from.address)) {
+            log('outlook_get_message', 'BLOCKED', `mailbox=${mailbox} sender not in allowed_senders (read restricted)`);
+            return {
+              content: [{ type: 'text', text: 'Error: message sender is not in allowed_senders; reading is restricted (set outlook/restrict_read_to_allowed_senders=false to allow — security risk).' }],
+              isError: true,
+            };
+          }
           log('outlook_get_message', 'OK', `mailbox=${mailbox} subject="${msg.subject}" from=${result.from.address}`);
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         } catch (err) {
@@ -121,10 +168,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
           const fromRes = await graphFetch(
             `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}?$select=from`
           );
-          if (!fromRes.ok) {
-            const text = await fromRes.text();
-            throw new Error(`HTTP ${fromRes.status}: ${text}`);
-          }
+          await ensureOk(fromRes);
           const senderAddr = (await fromRes.json())?.from?.emailAddress?.address || '';
           if (!matchesWhitelist(senderAddr, whitelist)) {
             log('outlook_reply', 'BLOCKED', `mailbox=${mailbox} recipient="${senderAddr}" not in whitelist`);
@@ -137,10 +181,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}/reply`,
             { method: 'POST', body: JSON.stringify({ comment: body }) }
           );
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
+          await ensureOk(res);
           log('outlook_reply', 'OK', `mailbox=${mailbox} to=${senderAddr} message_id=${message_id.slice(0, 20)}...`);
           return { content: [{ type: 'text', text: 'Reply sent successfully.' }] };
         } catch (err) {
@@ -204,19 +245,18 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
               `&$top=${top}` +
               filterParam
           );
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
+          await ensureOk(res);
           const data = await res.json();
-          const messages = (data.value || []).map((m) => ({
-            message_id: m.id,
-            subject: m.subject,
-            from: m.from?.emailAddress?.address,
-            to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
-            receivedDateTime: m.receivedDateTime,
-            isRead: m.isRead,
-          }));
+          const messages = (data.value || [])
+            .map((m) => ({
+              message_id: m.id,
+              subject: m.subject,
+              from: m.from?.emailAddress?.address,
+              to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
+              receivedDateTime: m.receivedDateTime,
+              isRead: m.isRead,
+            }))
+            .filter((m) => senderAllowed(m.from)); // S3: hide non-allow-listed senders (from is the address string — stable contract)
           log('outlook_search_messages', 'OK', `mailbox=${mailbox} folder=${folder} ${messages.length} results`);
           return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
         } catch (err) {
@@ -248,19 +288,18 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
               `&$orderby=receivedDateTime asc` +
               `&$top=${top}`
           );
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
+          await ensureOk(res);
           const data = await res.json();
-          const messages = (data.value || []).map((m) => ({
-            message_id: m.id,
-            subject: m.subject,
-            from: m.from?.emailAddress?.address,
-            to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
-            receivedDateTime: m.receivedDateTime,
-            isRead: m.isRead,
-          }));
+          const messages = (data.value || [])
+            .map((m) => ({
+              message_id: m.id,
+              subject: m.subject,
+              from: m.from?.emailAddress?.address,
+              to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
+              receivedDateTime: m.receivedDateTime,
+              isRead: m.isRead,
+            }))
+            .filter((m) => senderAllowed(m.from)); // S3: hide non-allow-listed senders (from is the address string — stable contract)
           log('outlook_get_new_messages', 'OK', `mailbox=${mailbox} ${messages.length} unread`);
           return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
         } catch (err) {
@@ -308,10 +347,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
               },
             }),
           });
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
+          await ensureOk(res);
           log('outlook_send_mail', 'OK', `mailbox=${mailbox} to=${to.join(',')} subject="${subject}"`);
           return { content: [{ type: 'text', text: 'Email sent successfully.' }] };
         } catch (err) {
@@ -336,10 +372,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}`,
             { method: 'PATCH', body: JSON.stringify({ isRead: true }) }
           );
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`HTTP ${res.status}: ${text}`);
-          }
+          await ensureOk(res);
           log('outlook_mark_processed', 'OK', `mailbox=${mailbox} message_id=${message_id.slice(0, 20)}...`);
           return { content: [{ type: 'text', text: 'Message marked as read.' }] };
         } catch (err) {

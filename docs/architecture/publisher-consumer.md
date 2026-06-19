@@ -65,7 +65,7 @@ The consumer runs a bounded thread pool (`AGENTO_CONSUMER_MAX_WORKERS`). Each jo
 
 Jobs are dequeued by priority: `ORDER BY priority DESC, created_at ASC`. Priority is stamped at publish time from scoped config path `agent_view/scheduling/priority` (0-100, default 50).
 
-Each job carries `agent_view_id` (resolved via ingress routing at publish time). The consumer resolves the agent_view's runtime profile (provider, model, scoped config) and generates per-run config files before CLI execution.
+Each job carries `agent_view_id` (resolved via ingress routing at publish time for ingress-routed channels, or set directly by a channel's own per-agent_view publisher — e.g. the Outlook mailbox→agent_view loop). The consumer resolves the agent_view's runtime profile (provider, model, scoped config) and generates per-run config files before CLI execution.
 
 ## Consumer Configuration
 

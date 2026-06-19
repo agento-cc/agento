@@ -47,6 +47,12 @@ Discovered by convention from `<module>/toolbox/*.js` files. Each file exports a
 |------|-------------|
 | `jira_search`, `jira_get_issue`, `jira_add_comment`, etc. | Jira Cloud integration |
 
+**Outlook module** (`src/agento/modules/outlook/toolbox/`):
+
+| Tool | Description |
+|------|-------------|
+| `outlook_get_message`, `outlook_search_messages`, `outlook_get_new_messages`, `outlook_reply`, `outlook_send_mail`, `outlook_mark_processed` | Microsoft 365 / Graph email channel (opt-in; sender/recipient allow-listed). See [outlook.md](../modules/outlook.md). |
+
 **User modules** (`app/code/<name>/toolbox/`):
 
 Custom JS tools for your deployment — same convention.

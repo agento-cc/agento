@@ -4,5 +4,8 @@
   ],
   "job_dead_after": [
     {"name": "alert_email", "class": "src.observers.AlertEmailObserver", "order": 100}
+  ],
+  "security_breach_after": [
+    {"name": "security_breach_alert", "class": "src.observers.SecurityBreachAlertObserver", "order": 100}
   ]
 }

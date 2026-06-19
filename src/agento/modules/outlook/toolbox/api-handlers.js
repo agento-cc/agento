@@ -24,21 +24,35 @@ export function parseDmarcVerdict(headers) {
   return m ? m[1].toLowerCase() : null;
 }
 
-// configResolver: async () => resolved outlook config object. `authFactory` is injectable for tests.
+// configResolver: async (agentViewId) => { cfg, resolved }. `resolved` is false only when a non-null
+// id did not match an existing agent_view. `authFactory` is injectable for tests.
 export function createUnreadHandler(configResolver, log, authFactory = createGraphAuth) {
   return async (req, res) => {
+    const body = req.body || {};
     // Clamp to a safe integer 1..50 — never let NaN / negative values reach the Graph $top query param.
-    const rawTop = parseInt((req.body || {}).top, 10);
+    const rawTop = parseInt(body.top, 10);
     const top = Math.min(Math.max(Number.isFinite(rawTop) ? rawTop : 10, 1), 50);
-    const cfg = await configResolver();
+    const agentViewId = body.agent_view_id ?? null;
+    // FAIL-CLOSED: a supplied agent_view_id must be a positive integer (absent/null = global scope).
+    if (agentViewId !== null && !(Number.isInteger(agentViewId) && agentViewId > 0)) {
+      log('api/outlook/unread', 'ERROR', `invalid agent_view_id=${JSON.stringify(agentViewId)}`);
+      return res.status(400).json({ error: 'agent_view_id must be a positive integer' });
+    }
+    const { cfg, resolved } = await configResolver(agentViewId);
+    // FAIL-CLOSED: a supplied id that does not resolve must NOT fall back to the global mailbox
+    // (would expose a default mailbox / enable cross-view probing on a bad id).
+    if (agentViewId !== null && !resolved) {
+      log('api/outlook/unread', 'ERROR', `agent_view_id=${agentViewId} not found`);
+      return res.status(404).json({ error: 'agent_view not found' });
+    }
     const auth = authFactory(cfg);
     if (!auth.isConfigured()) {
-      log('api/outlook/unread', 'ERROR', 'not configured');
+      log('api/outlook/unread', 'ERROR', `agent_view_id=${agentViewId ?? '?'} not configured`);
       return res.status(500).json({ error: 'Graph API not configured' });
     }
+    const mailbox = auth.getMailboxUserId(); // resolved, NON-SECRET UPN — returned for the publisher's seen_mailboxes dedupe
     try {
       const token = await auth.getToken();
-      const mailbox = auth.getMailboxUserId();
       const url =
         `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/mailFolders/Inbox/messages` +
         `?$filter=isRead eq false` +
@@ -50,7 +64,7 @@ export function createUnreadHandler(configResolver, log, authFactory = createGra
         // Sanitize: do NOT return/log the raw Graph body (may carry provider internals / mailbox
         // identifiers), especially since this REST route is reachable by any agento-net container.
         await r.text().catch(() => ''); // drain, discard
-        log('api/outlook/unread', 'ERROR', `Graph unread request failed (HTTP ${r.status})`);
+        log('api/outlook/unread', 'ERROR', `agent_view_id=${agentViewId ?? '?'} Graph unread request failed (HTTP ${r.status})`);
         return res.status(r.status).json({ error: `Graph unread request failed (HTTP ${r.status})` });
       }
       const data = await r.json();
@@ -62,8 +76,8 @@ export function createUnreadHandler(configResolver, log, authFactory = createGra
         conversationId: m.conversationId,
         dmarc: parseDmarcVerdict(m.internetMessageHeaders),
       }));
-      log('api/outlook/unread', 'OK', `${messages.length} unread`);
-      return res.json({ messages });
+      log('api/outlook/unread', 'OK', `agent_view_id=${agentViewId ?? '?'} ${messages.length} unread`);
+      return res.json({ mailbox, messages });
     } catch (err) {
       log('api/outlook/unread', 'ERROR', err.message); // server-side cron log only
       return res.status(500).json({ error: 'Internal error fetching unread mail' }); // sanitized to caller

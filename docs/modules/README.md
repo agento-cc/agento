@@ -60,3 +60,7 @@ bin/agento config:set my_system/tools/mysql_my_prod/pass
 - [module.json format](module-json.md)
 - [config.json format](config-json.md)
 - [Creating a module step-by-step](creating-a-module.md)
+
+### Bundled channel modules
+
+- [Outlook / Microsoft 365 email channel](outlook.md) — DMARC-gated, allow-listed inbound email channel

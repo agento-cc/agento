@@ -4,17 +4,19 @@ import logging
 
 import pymysql
 
-# Always-required identity/mailbox keys. Auth is satisfied by EITHER a client secret OR a
-# certificate PEM (its contents, stored encrypted) — support both, selected by config — checked separately.
-_BASE_KEYS = (
+# Identity + auth live at the DEFAULT scope (the global Azure app). Auth is satisfied by EITHER a
+# client secret OR a certificate PEM (its contents, stored encrypted) — checked separately. The
+# mailbox UPN may live at the default scope (single-view) OR an agent_view scope (multi-view), so it
+# is checked at ANY scope, not just default.
+_IDENTITY_KEYS = (
     "outlook/outlook_tenant_id",
     "outlook/outlook_client_id",
-    "outlook/outlook_mailbox_user_id",
 )
 _AUTH_KEYS = (
     "outlook/outlook_client_secret",
     "outlook/outlook_cert_pem",
 )
+_MAILBOX_KEY = "outlook/outlook_mailbox_user_id"
 
 _PEM_END_SENTINEL = "END"
 
@@ -47,27 +49,50 @@ def _pem_has_cert_and_key(pem: str) -> bool:
     return "-----BEGIN CERTIFICATE-----" in pem and "PRIVATE KEY-----" in pem
 
 
+def _print_next_steps() -> None:
+    """Print the operator's post-onboarding checklist (tools opt-in; allow-list; polling opt-in).
+
+    Printed on EVERY onboarding run — including when Graph verification is skipped (no toolbox URL) —
+    so the operator always sees the enable steps. Module-level for unit-testability.
+    """
+    print(
+        "\n  Next steps (Outlook tools are opt-in; senders are allow-listed; polling is opt-in):\n"
+        "    1) Enable the channel tools (one tool_name per `tool:enable` call):\n"
+        "       for t in outlook_get_message outlook_reply outlook_mark_processed; do \\\n"
+        "         agento tool:enable \"$t\" --agent-view <code>; done\n"
+        "    2) Allow-list the authorized sender(s) (per-view: add --scope agent_view --scope-id <id>):\n"
+        "       agento config:set outlook/allowed_senders \"<sender-address>[,<more>]\"\n"
+        "    3) Enable polling for the mailbox's scope (default is off, so the publisher skips it):\n"
+        "       agento config:set outlook/enabled 1   # per-view: add --scope agent_view --scope-id <id>"
+    )
+
+
 class OutlookOnboarding:
     def describe(self) -> str:
         return "Configure Outlook / Microsoft 365 mailbox connection (Graph app credentials)"
 
     def is_complete(self, conn: pymysql.connections.Connection) -> bool:
-        # Outlook uses ONE GLOBAL mailbox (scope='default', scope_id=0). Unlike jira (per-agent_view),
-        # the creds must exist at the default scope specifically.
-        all_keys = _BASE_KEYS + _AUTH_KEYS
-        placeholders = ",".join(["%s"] * len(all_keys))
+        # Identity + auth (the global Azure app) must exist at the DEFAULT scope. The mailbox UPN may
+        # live at ANY scope: default (single-view) or agent_view (multi-view).
+        default_keys = _IDENTITY_KEYS + _AUTH_KEYS
+        placeholders = ",".join(["%s"] * len(default_keys))
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT DISTINCT path FROM core_config_data "
                 f"WHERE path IN ({placeholders}) AND scope = 'default' AND scope_id = 0 "
                 f"AND value IS NOT NULL AND value <> ''",
-                all_keys,
+                default_keys,
             )
-            rows = cur.fetchall()
-        found = {row["path"] if isinstance(row, dict) else row[0] for row in rows}
-        has_base = set(_BASE_KEYS).issubset(found)
-        has_auth = any(k in found for k in _AUTH_KEYS)
-        return has_base and has_auth
+            found = {row["path"] if isinstance(row, dict) else row[0] for row in cur.fetchall()}
+            has_identity = set(_IDENTITY_KEYS).issubset(found)
+            has_auth = any(k in found for k in _AUTH_KEYS)
+            cur.execute(
+                "SELECT 1 FROM core_config_data "
+                "WHERE path = %s AND value IS NOT NULL AND value <> '' LIMIT 1",
+                (_MAILBOX_KEY,),
+            )
+            has_mailbox = cur.fetchone() is not None
+        return has_identity and has_auth and has_mailbox
 
     def run(self, conn, config: dict, logger: logging.Logger) -> None:
         import getpass
@@ -78,6 +103,8 @@ class OutlookOnboarding:
             config_set,
             config_set_auto_encrypt,
         )
+        from agento.framework.scoped_config import Scope, scoped_config_set
+        from agento.framework.workspace import get_active_agent_views
 
         print("\n=== Outlook / Microsoft 365 onboarding ===")
         tenant = input("Azure tenant ID: ").strip()
@@ -90,7 +117,6 @@ class OutlookOnboarding:
         )
         config_set(conn, "outlook/outlook_tenant_id", tenant)
         config_set(conn, "outlook/outlook_client_id", client_id)
-        config_set(conn, "outlook/outlook_mailbox_user_id", mailbox)
         # All credential writes AND the stale-branch deletes below run in the SAME transaction as the
         # single conn.commit() at the end — never after it. The Graph verification reads config via the
         # toolbox's own DB connection (committed rows only); deleting after the commit would let stale
@@ -130,6 +156,24 @@ class OutlookOnboarding:
             # Switched to certificate auth: drop any stale client secret (+ legacy path).
             config_delete(conn, "outlook/outlook_client_secret")
             config_delete(conn, "outlook/outlook_cert_path")
+
+        # Mailbox: the mailbox identifies the agent_view. One mailbox per onboarding run.
+        verify_agent_view_id: int | None = None
+        views = get_active_agent_views(conn)
+        if len(views) > 1:
+            idx = terminal.select(
+                "Which agent_view owns this mailbox?", [av.code for av in views]
+            )
+            av = views[idx]
+            scoped_config_set(
+                conn, _MAILBOX_KEY, mailbox,
+                scope=Scope.AGENT_VIEW, scope_id=av.id, encrypted=False,
+            )
+            verify_agent_view_id = av.id
+            print(f"  Mailbox '{mailbox}' bound to agent_view '{av.code}'.")
+        else:
+            # 0 or 1 active view -> default scope (a single view resolves it via fallback).
+            config_set(conn, _MAILBOX_KEY, mailbox)
         conn.commit()
 
         # Verify Graph auth + mailbox access NOW (the toolbox reads the just-committed config per
@@ -145,10 +189,11 @@ class OutlookOnboarding:
         if not toolbox_url:
             print("  Saved, but core/toolbox/url is not set — cannot verify now. "
                   "Set it, then run `agento outlook:publish --top 1`.")
+            _print_next_steps()
             return
         client = OutlookToolboxClient(toolbox_url)
         try:
-            client.list_unread(top=1)
+            client.list_unread(top=1, agent_view_id=verify_agent_view_id)
             logger.info("Outlook Graph verification OK")
             print(f"  Verified: Graph auth + mailbox '{mailbox}' reachable.")
         except ToolboxAPIError as e:
@@ -158,15 +203,6 @@ class OutlookOnboarding:
         finally:
             client.close()
 
-        # Tools ship DISABLED (opt-in), an allow-list gate AND a route are required — tell the
-        # operator the explicit steps before Outlook acts.
-        print(
-            "\n  Next steps (Outlook tools are opt-in; senders are allow-listed AND routed):\n"
-            "    1) Enable the channel tools (one tool_name per `tool:enable` call):\n"
-            "       for t in outlook_get_message outlook_reply outlook_mark_processed; do \\\n"
-            "         agento tool:enable \"$t\" --agent-view <code>; done\n"
-            "    2) Allow-list the authorized sender(s):\n"
-            "       agento config:set outlook/allowed_senders \"<sender-address>[,<more>]\"\n"
-            "    3) Bind sender(s) to an agent_view BEFORE polling can act:\n"
-            "       agento ingress:bind email <sender-address> <agent_view_code>"
-        )
+        # Tools ship DISABLED (opt-in), an allow-list gate is required, and polling is opt-in — tell
+        # the operator the explicit steps before Outlook acts.
+        _print_next_steps()

@@ -1,14 +1,21 @@
 # Outlook Email Channel
 
-Poll a Microsoft 365 mailbox for unread email and turn each authorized message into a job; the agent
-reads, replies, and marks messages processed through MCP tools. Like every Agento channel, all
-Microsoft Graph secrets and HTTP live in the **Node.js toolbox** (the zero-trust boundary); the Python
-module provides the channel, publisher, polling command, onboarding, and manifests.
+Poll a Microsoft 365 mailbox **per agent_view** for unread email and turn each authorized message into
+a job; the agent reads, replies, and marks messages processed through MCP tools. Like every Agento
+channel, all Microsoft Graph secrets and HTTP live in the **Node.js toolbox** (the zero-trust
+boundary); the Python module provides the channel, publisher, polling command, onboarding, and
+manifests.
+
+> **Routing model:** the **mailbox identifies the agent_view** — there is one mailbox per agent_view,
+> and the publisher polls each, publishing that mailbox's jobs to its own view (mirrors the Jira
+> per-agent_view contract). This is *not* sender→view routing: `outlook/allowed_senders` + DMARC are
+> purely the inbound **security** gate, not routing. (`ingress:bind email …` is no longer used for
+> Outlook; existing bindings are inert and removable with `ingress:unbind`.)
 
 > **Security model in one line:** an inbound email creates a job **only** if its `From` is on the
 > `outlook/allowed_senders` allow-list **and** the message passes DMARC. DMARC is **always required**
-> (not configurable) — a whitelisted sender that fails DMARC is treated as a spoof: no job, and a
-> `SECURITY_BREACH` is logged.
+> (not configurable) — an allow-listed sender whose domain publishes a DMARC policy and fails it is
+> treated as a spoof: no job, a `SECURITY_BREACH` log, and an ops alert event.
 
 ## Architecture
 
@@ -18,7 +25,7 @@ module provides the channel, publisher, polling command, onboarding, and manifes
 | 6 MCP tools (read / reply / search / list / send / mark) | `toolbox/outlook.js` |
 | Unread-poll REST endpoint (`POST /api/outlook/unread`) + DMARC parse | `toolbox/api.js`, `toolbox/api-handlers.js` |
 | Channel prompt fragments + publisher security gate | `src/channel.py` |
-| Poll command (`outlook:publish`, cron every minute) | `src/commands/publish.py`, `cron.json` |
+| Poll command (`outlook:publish`, cron every minute — loops active agent_views; `--agent-view <code>` for one) | `src/commands/publish.py`, `cron.json` |
 | Typed config (no secrets) | `src/config.py` (`OutlookConfig`) |
 | Onboarding | `src/onboarding.py` |
 
@@ -28,17 +35,23 @@ Set via `agento config:set outlook/<key> <value>` (or `CONFIG__OUTLOOK__<KEY>` e
 
 | Key | Type | Notes |
 |---|---|---|
-| `outlook/enabled` | bool | Master switch for the channel (default `false`). |
-| `outlook/outlook_tenant_id` | string | Azure AD tenant ID. |
-| `outlook/outlook_client_id` | string | Azure app (client) ID. |
+| `outlook/enabled` | bool | Channel switch — resolved **per agent_view** (set at the view's scope; default `false`). The publisher skips any view whose resolved value is falsy. |
+| `outlook/outlook_tenant_id` | string | Azure AD tenant ID (normally at `default` — the global Azure app). |
+| `outlook/outlook_client_id` | string | Azure app (client) ID (normally at `default`). |
 | `outlook/outlook_client_secret` | **obscure** | Client secret (encrypted at rest). Use **either** this **or** a cert. |
 | `outlook/outlook_cert_pem` | **obscure** | Certificate PEM **contents** (cert + private key), encrypted at rest. Takes precedence over the secret when both are set. No file mount. |
 | `outlook/outlook_cert_password` | **obscure** | Optional passphrase for an encrypted PEM (leave unset if the PEM is unencrypted). |
-| `outlook/outlook_mailbox_user_id` | string | Mailbox UPN to poll, e.g. `agenty@mycompany.com`. |
-| `outlook/allowed_senders` | string | **Comma-separated allow-list** of `From` addresses. Supports **glob wildcards** (`*@mycompany.com` matches any local part at that domain; `*` never crosses the `@`) and exact addresses. **Empty = block all.** |
-| `outlook/poll_top` | int | Max unread fetched per poll, clamped 1..50 (default `10`). |
+| `outlook/outlook_mailbox_user_id` | string | Mailbox UPN to poll — **per agent_view** (the mailbox identifies the target view). Set at the view's scope for multi-view; `default` works for a single-view deployment (resolved via fallback). |
+| `outlook/allowed_senders` | string | **Comma-separated allow-list** of `From` addresses, resolved **per view**. Supports **glob wildcards** (`*@mycompany.com` matches any local part at that domain; `*` never crosses the `@`) and exact addresses. **Empty = block all.** |
+| `outlook/poll_top` | int | Max unread fetched per poll, resolved per view, clamped 1..50 (default `10`). |
+| `outlook/restrict_read_to_allowed_senders` | bool | **Default `true`.** When on, the agent read tools (`outlook_get_message` / `outlook_search_messages` / `outlook_get_new_messages`) only surface mail whose sender is on `allowed_senders` — empty `allowed_senders` ⇒ block all reads (fail-closed). Disabling it (`false`) lets the agent read **any** message in the mailbox, including spoofed / non-allow-listed mail — a documented **security risk**. |
 
 A DMARC pass is **always required** for allow-listed senders — it is not a config option (see the security gate below).
+
+All per-view keys resolve with the standard 3-tier fallback **agent_view → workspace → default**, so a
+view normally inherits the global Azure app credentials and overrides only its `outlook_mailbox_user_id`
+(and, if it differs, `enabled`/`allowed_senders`). Two views resolving to the **same** mailbox UPN are
+deduped at poll time — the **lowest agent_view id wins** and a warning is logged.
 
 The Python `OutlookConfig` carries only `enabled`, `poll_top`, `allowed_senders` — the
 Graph credentials/mailbox are resolved **toolbox-side only**, so the cron/framework registry never holds
@@ -89,14 +102,18 @@ with admin consent.
 2. **Allow-list gate** — if the sender does not match `allowed_senders` (glob: `*@mycompany.com`, exact
    `sklep@mycompanystudio.com`; empty ⇒ block all), the email is skipped and left **unread**. Ordinary
    non-routing — only the domain is logged, no breach.
-3. **DMARC gate (always on)** — for an allow-listed sender, if the verdict is not `pass`, a
-   `SECURITY_BREACH` is logged (structured `event=security_breach reason=dmarc_not_pass`) and **no job is
-   published**. This is unconditional — there is no opt-out. The DMARC verdict is parsed from the **first**
-   `Authentication-Results` header (the one Exchange Online Protection prepends — lower headers are
-   untrusted, anti-spoof).
-4. **Route** — `resolve_agent_view` maps the sender to an `agent_view` via an ingress binding; unrouted
-   senders are left unread (operator must `ingress:bind`).
-5. **Publish** — one job per message (idempotency `outlook:mail:<id>`), with the `From` stored in
+3. **DMARC gate (always on)** — for an allow-listed sender the verdict must be `pass`, or **no job is
+   published** (fail-closed, no opt-out). An **explicit failure** (`fail`/`quarantine`/`reject`) on a
+   domain that publishes a DMARC policy is a probable spoof: a `SECURITY_BREACH` is logged (structured
+   `event=security_breach reason=dmarc_not_pass`) **and** a framework `security_breach_after` event is
+   dispatched (app_monitor's `SecurityBreachAlertObserver` emails ops when `alerts/*` is configured).
+   Any other non-pass (`none`/`bestguesspass`/`temperror`/missing) just means the domain has no usable
+   DMARC policy — info log only, no breach, no alert, still no job. The verdict is parsed from the
+   **first** `Authentication-Results` header (the one Exchange Online Protection prepends — lower
+   headers are untrusted, anti-spoof).
+4. **Publish to the mailbox's agent_view** — the **mailbox identifies the agent_view**: the publisher
+   loop polls view X's mailbox and publishes those jobs directly to view X (no sender→view routing).
+   One job per message (idempotency `outlook:mail:<id>`), with the `From` stored in
    `job.requester_email` and `requester_trust = domain`.
 
 ## Tools are opt-in
@@ -115,25 +132,37 @@ agento tool:enable outlook_mark_processed --agent-view <code>
 `core/email_whitelist` (reply gates the original sender's address) — independent of the inbound
 allow-list.
 
+The **read** tools (`outlook_get_message`, `outlook_search_messages`, `outlook_get_new_messages`) are
+gated by `outlook/restrict_read_to_allowed_senders` (default **on**): they only surface mail from a
+sender on `outlook/allowed_senders`, so an enabled read tool can't expose mail the channel would never
+have turned into a job (incl. spoofed / DMARC-failed mail sharing the mailbox). Empty `allowed_senders`
+⇒ no readable mail (fail-closed). Disabling the flag is a documented security risk.
+
 ## End-to-end setup
 
 ```bash
 agento module:enable outlook
-agento config:set outlook/enabled 1
-# ...auth + mailbox config (above)...
-agento config:set outlook/allowed_senders "sklep@mycompanystudio.com,mklauza@mycompany.com,*@mycompany.com"
+# Global Azure app credentials at the default scope (one app shared across views) — see
+# "Authentication" above: tenant_id / client_id / client_secret-or-cert_pem.
 
-# Route the allowed senders to the email-handling agent_view:
-agento ingress:bind email sklep@mycompanystudio.com <agent_view_code>
-agento ingress:bind email mklauza@mycompany.com     <agent_view_code>
+# Easiest: `agento setup:upgrade` runs onboarding — it stores the creds at default and, when there is
+# more than one active agent_view, prompts you to pick which view owns the mailbox (writing it at that
+# view's scope). The manual equivalent, per agent_view (omit --scope/--scope-id for a single-view
+# deployment to use the default scope):
+agento config:set outlook/outlook_mailbox_user_id agenty@mycompany.com --scope agent_view --scope-id <id>
+agento config:set outlook/allowed_senders "sklep@mycompanystudio.com,mklauza@mycompany.com,*@mycompany.com" --scope agent_view --scope-id <id>
+agento config:set outlook/enabled 1 --scope agent_view --scope-id <id>
 
 # Enable the channel-critical tools (one per call):
 agento tool:enable outlook_get_message    --agent-view <agent_view_code>
 agento tool:enable outlook_reply          --agent-view <agent_view_code>
 agento tool:enable outlook_mark_processed --agent-view <agent_view_code>
 
-agento setup:upgrade   # installs the outlook:publish crontab (polls every minute)
+agento setup:upgrade   # installs the outlook:publish crontab (polls every active view's mailbox every minute)
 ```
+
+(No `ingress:bind email` step — the mailbox identifies the agent_view. To run the loop for one view
+manually: `agento outlook:publish --agent-view <code>`.)
 
 ### Verifying the acceptance criteria
 

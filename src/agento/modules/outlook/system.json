@@ -7,5 +7,6 @@
   "outlook_cert_password": {"type": "obscure", "label": "Passphrase for the certificate PEM (leave empty if unencrypted)"},
   "outlook_mailbox_user_id": {"type": "string", "label": "Mailbox UPN to monitor (e.g. agent@example.com)"},
   "allowed_senders": {"type": "string", "label": "Allowed senders (comma-separated; supports glob wildcards e.g. *@mycompany.com; empty blocks all)"},
-  "poll_top": {"type": "integer", "label": "Max unread messages fetched per poll (<=50)"}
+  "poll_top": {"type": "integer", "label": "Max unread messages fetched per poll (<=50)"},
+  "restrict_read_to_allowed_senders": {"type": "boolean", "label": "Prevent agent from reading messages from untrusted senders", "description": "When enabled (recommended), the read tools (outlook_get_message / outlook_search_messages / outlook_get_new_messages) only surface mail from senders on allowed_senders. Warning: disabling may lead to security risk! (the agent could read any message in the mailbox, including spoofed or non-allow-listed mail)"}
 }
