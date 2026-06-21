@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS job (
     source          VARCHAR(50) NOT NULL DEFAULT 'jira',
     agent_view_id   INT UNSIGNED NULL,
     priority        TINYINT UNSIGNED NOT NULL DEFAULT 50,
-    reference_id    VARCHAR(255) NULL,
+    reference_id    VARCHAR(512) NULL,
     agent_type      VARCHAR(20) NULL,
     model           VARCHAR(50) NULL,
     input_tokens    BIGINT UNSIGNED NULL,
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS job (
     prompt          MEDIUMTEXT NULL,
     output          MEDIUMTEXT NULL,
     context         TEXT NULL,
-    idempotency_key VARCHAR(255) NOT NULL,
+    idempotency_key VARCHAR(512) NOT NULL,
     requester_key   VARCHAR(255) NULL,
     requester_email VARCHAR(320) NULL,
     requester_trust VARCHAR(32) NOT NULL DEFAULT 'claimed',
@@ -201,4 +201,5 @@ INSERT INTO schema_migration (version) VALUES
     ('023_drop_oauth_token_model'),
     ('024_oauth_token_used_at_precision'),
     ('025_job_toolbox_mcp_connected'),
-    ('026_job_requester');
+    ('026_job_requester'),
+    ('027_widen_job_reference_keys');

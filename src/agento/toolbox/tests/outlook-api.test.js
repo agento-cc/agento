@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { createUnreadHandler, parseDmarcVerdict } from '../../modules/outlook/toolbox/api-handlers.js';
+import { createDeltaHandler, parseDmarcVerdict } from '../../modules/outlook/toolbox/api-handlers.js';
 
 // Inject a fake auth so token acquisition needs no real @azure/identity; the only global fetch the
 // handler makes is the Graph messages call. isConfigured mirrors graph-auth's real rule.
@@ -52,60 +52,234 @@ describe('parseDmarcVerdict (first Authentication-Results header wins — anti-s
       { name: 'Authentication-Results', value: 'dmarc=pass' },        // attacker-injected, lower, ignored
     ])).toBe('fail');
   });
+
+  it('ANTI-SPOOF: a "dmarc=pass" substring inside an attacker-influenced field does NOT forge a pass', () => {
+    // The real verdict is the token-anchored `dmarc=`; a literal substring elsewhere must be ignored.
+    expect(parseDmarcVerdict([{ name: 'Authentication-Results',
+      value: 'spf=fail smtp.mailfrom="dmarc=pass"@evil.com; dmarc=fail action=oreject' }])).toBe('fail');
+    expect(parseDmarcVerdict([{ name: 'Authentication-Results',
+      value: 'smtp.helo=dmarc=pass.attacker.com; spf=fail; dmarc=fail' }])).toBe('fail');
+    expect(parseDmarcVerdict([{ name: 'Authentication-Results',
+      value: 'x-dmarc=pass; dmarc=fail' }])).toBe('fail');
+  });
 });
 
 const ok = (c) => async () => ({ cfg: c, resolved: true });
 
-describe('POST /api/outlook/unread handler', () => {
+// Replay a queued list of fetch responses (one per Graph call: delta pages, 410s, hydration GETs).
+function queueFetch(responses) {
+  const calls = [];
+  const fn = vi.fn(async (url) => {
+    calls.push(url);
+    const n = responses.shift();
+    return typeof n === 'function' ? n(url) : n;
+  });
+  vi.stubGlobal('fetch', fn);
+  return { fn, calls };
+}
+const jsonRes = (body, { ok = true, status = 200 } = {}) => ({
+  ok,
+  status,
+  json: () => Promise.resolve(body),
+  text: () => Promise.resolve(''),
+});
+const hdr = (v) => [{ name: 'Authentication-Results', value: v }];
+// A valid deltaLink for a mailbox (folder resolved to an opaque id, as Graph returns).
+const linkFor = (mbox, tok) =>
+  `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mbox)}/mailFolders/AAMkFolderId/messages/delta?$deltatoken=${tok}`;
+const AGENT_DELTA = (tok) => linkFor('agent@example.com', tok);
+
+describe('POST /api/outlook/delta handler', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
   it('returns 500 when not configured', async () => {
-    const handler = createUnreadHandler(ok({}), vi.fn(), fakeAuthFactory);
+    const handler = createDeltaHandler(ok({}), vi.fn(), fakeAuthFactory);
     const res = mockRes();
     await handler({ body: {} }, res);
     expect(res.statusCode).toBe(500);
   });
 
-  it('returns { mailbox, messages } with the resolved UPN and maps Graph fields', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ value: [
-        { id: 'm1', subject: 'A', from: { emailAddress: { address: 'x@y.com', name: 'X' } },
-          receivedDateTime: '2026-01-01T00:00:00Z', conversationId: 'c1',
-          internetMessageHeaders: [{ name: 'Authentication-Results', value: 'dmarc=pass' }] },
-      ] }),
-    }));
-    const handler = createUnreadHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+  it('does a base delta (no cursor), maps messages, and returns the next deltaLink', async () => {
+    const { calls } = queueFetch([
+      jsonRes({
+        value: [{ id: 'm1', subject: 'A', from: { emailAddress: { address: 'x@y.com', name: 'X' } },
+                  receivedDateTime: '2026-01-01T00:00:00Z', conversationId: 'c1',
+                  internetMessageHeaders: hdr('dmarc=pass') }],
+        '@odata.deltaLink': AGENT_DELTA('NEW'),
+      }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
     const res = mockRes();
-    await handler({ body: { top: 10 } }, res);
+    await handler({ body: { top: 10, cursors: {} } }, res);
     expect(res.statusCode).toBe(200);
     expect(res.body.mailbox).toBe('agent@example.com');
     expect(res.body.messages).toHaveLength(1);
-    expect(res.body.messages[0]).toMatchObject({ id: 'm1', subject: 'A', dmarc: 'pass' });
-    expect(res.body.messages[0].from.address).toBe('x@y.com');
+    expect(res.body.messages[0]).toMatchObject({ id: 'm1', dmarc: 'pass' });
+    expect(res.body.deltaLink).toBe(AGENT_DELTA('NEW'));
+    expect(res.body.resynced).toBe(false);
+    expect(calls[0]).toContain('/users/agent%40example.com/mailFolders/Inbox/messages/delta'); // toolbox-built base URL
+    expect(calls[0]).toContain('$select=');
   });
 
-  it('forwards agent_view_id from the body to the config resolver', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value: [] }) }));
-    const resolver = vi.fn(async () => ({ cfg, resolved: true }));
-    const handler = createUnreadHandler(resolver, vi.fn(), fakeAuthFactory);
-    await handler({ body: { top: 5, agent_view_id: 42 } }, mockRes());
-    expect(resolver).toHaveBeenCalledWith(42);
+  it('resumes by applying a VALID stored deltaLink as-is', async () => {
+    const { calls } = queueFetch([jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D2') })]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    await handler({ body: { cursors: { 'agent@example.com': AGENT_DELTA('PREV') } } }, mockRes());
+    expect(calls[0]).toBe(AGENT_DELTA('PREV')); // applied verbatim, per Graph's contract
   });
 
-  it('passes null to the resolver when agent_view_id is absent (global scope)', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value: [] }) }));
-    const resolver = vi.fn(async () => ({ cfg, resolved: true }));
-    const handler = createUnreadHandler(resolver, vi.fn(), fakeAuthFactory);
-    await handler({ body: { top: 5 } }, mockRes());
-    expect(resolver).toHaveBeenCalledWith(null);
+  it('SSRF/cross-mailbox: discards a cursor whose user segment is NOT the resolved mailbox → full base enum', async () => {
+    const { calls } = queueFetch([jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D') })]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    // A real Graph deltaLink for ANOTHER mailbox (victim) — would read victim's mail with the app token.
+    await handler({ body: { cursors: { 'agent@example.com': linkFor('victim@example.com', 'V') } } }, res);
+    expect(calls[0]).toContain('/users/agent%40example.com/'); // resolved mailbox base URL...
+    expect(calls[0]).not.toContain('victim'); // ...NOT the foreign cursor
+    expect(calls[0]).toContain('$select='); // it's a base enumeration
+    expect(res.body.resynced).toBe(true); // signalled as a forced re-enumeration
+  });
+
+  it('SSRF: discards a non-graph-host / credentialed / non-delta cursor → full base enum (no token-bearing fetch of it)', async () => {
+    for (const bad of [
+      'https://attacker.example/v1.0/users/agent@example.com/mailFolders/x/messages/delta?$deltatoken=T',
+      'http://graph.microsoft.com/v1.0/users/agent@example.com/mailFolders/x/messages/delta?$deltatoken=T',
+      'https://user:p@graph.microsoft.com/v1.0/users/agent@example.com/mailFolders/x/messages/delta?$deltatoken=T',
+      'https://graph.microsoft.com/v1.0/users/agent@example.com/messages', // not a delta path
+      12345,
+    ]) {
+      const { calls } = queueFetch([jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D') })]);
+      const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+      await handler({ body: { cursors: { 'agent@example.com': bad } } }, mockRes());
+      expect(calls[0]).toContain('/users/agent%40example.com/mailFolders/Inbox/messages/delta'); // base URL, never the bad cursor
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('discards a same-mailbox delta URL that lacks $deltatoken (not a real cursor) → full base enum', async () => {
+    const { calls } = queueFetch([jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D') })]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    await handler({ body: { cursors: {
+      'agent@example.com': 'https://graph.microsoft.com/v1.0/users/agent@example.com/mailFolders/Inbox/messages/delta?changeType=deleted' } } }, mockRes());
+    expect(calls[0]).toContain('/users/agent%40example.com/mailFolders/Inbox/messages/delta');
+    expect(calls[0]).toContain('$select='); // base enumeration, not the token-less caller URL
+    expect(calls[0]).not.toContain('changeType');
+  });
+
+  it('does NOT crash on a cursor with malformed %-encoding — discards it → full base enum', async () => {
+    const { calls } = queueFetch([jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D') })]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {
+      'agent@example.com': 'https://graph.microsoft.com/v1.0/users/%ZZ/mailFolders/x/messages/delta?$deltatoken=T' } } }, res);
+    expect(res.statusCode).toBe(200); // no uncaught throw
+    expect(calls[0]).toContain('/users/agent%40example.com/mailFolders/Inbox/messages/delta');
+  });
+
+  it('pages @odata.nextLink to the end and concatenates messages', async () => {
+    queueFetch([
+      jsonRes({ value: [{ id: 'a', from: { emailAddress: { address: 'x@y.com' } }, internetMessageHeaders: hdr('dmarc=pass') }],
+                '@odata.nextLink': 'https://graph.microsoft.com/v1.0/page2' }),
+      jsonRes({ value: [{ id: 'b', from: { emailAddress: { address: 'x@y.com' } }, internetMessageHeaders: hdr('dmarc=pass') }],
+                '@odata.deltaLink': AGENT_DELTA('END') }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: { 'agent@example.com': AGENT_DELTA('start') } } }, res);
+    expect(res.body.messages.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(res.body.deltaLink).toBe(AGENT_DELTA('END'));
+  });
+
+  it('FAIL-CLOSED RESYNC: a 410 on a stored cursor restarts a full base-delta enumeration (resynced=true)', async () => {
+    const { calls } = queueFetch([
+      jsonRes({ error: { code: 'syncStateNotFound' } }, { ok: false, status: 410 }),
+      jsonRes({ value: [{ id: 'r1', from: { emailAddress: { address: 'x@y.com' } }, internetMessageHeaders: hdr('dmarc=pass') }],
+                '@odata.deltaLink': AGENT_DELTA('FRESH') }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: { 'agent@example.com': AGENT_DELTA('STALE') } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.resynced).toBe(true);
+    expect(res.body.messages.map((m) => m.id)).toEqual(['r1']);
+    expect(res.body.deltaLink).toBe(AGENT_DELTA('FRESH'));
+    expect(calls[0]).toBe(AGENT_DELTA('STALE')); // tried the stale cursor first
+    expect(calls[1]).toContain('/users/agent%40example.com/mailFolders/Inbox/messages/delta'); // then a fresh base enum
+  });
+
+  it('FAIL-CLOSED RESYNC: a 40x carrying error.code syncStateNotFound also restarts a full base enumeration', async () => {
+    const synErr = { ok: false, status: 400,
+      json: () => Promise.resolve({ error: { code: 'syncStateNotFound' } }),
+      text: () => Promise.resolve(JSON.stringify({ error: { code: 'syncStateNotFound' } })) };
+    const { calls } = queueFetch([
+      synErr,
+      jsonRes({ value: [{ id: 'r1', from: { emailAddress: { address: 'x@y.com' } }, internetMessageHeaders: hdr('dmarc=pass') }],
+                '@odata.deltaLink': AGENT_DELTA('FRESH') }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: { 'agent@example.com': AGENT_DELTA('STALE') } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.resynced).toBe(true);
+    expect(res.body.messages.map((m) => m.id)).toEqual(['r1']);
+    expect(calls[1]).toContain('/users/agent%40example.com/mailFolders/Inbox/messages/delta');
+  });
+
+  it('hydrates internetMessageHeaders via a per-message GET when the delta item omits them', async () => {
+    const { calls } = queueFetch([
+      jsonRes({ value: [{ id: 'm9', from: { emailAddress: { address: 'x@y.com' } }, receivedDateTime: '2026-01-01T00:00:00Z' }],
+                '@odata.deltaLink': AGENT_DELTA('D') }),
+      jsonRes({ internetMessageHeaders: hdr('dmarc=pass') }), // hydration GET
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    expect(res.body.messages[0].dmarc).toBe('pass');
+    expect(calls[1]).toContain('/messages/m9');
+    expect(calls[1]).toContain('internetMessageHeaders');
+  });
+
+  it('skips @removed (moved/deleted) delta items — no hydration fetch, 200, deltaLink still returned', async () => {
+    const { calls } = queueFetch([
+      jsonRes({ value: [
+        { id: 'rm1', '@removed': { reason: 'deleted' } },
+        { id: 'rm2', '@removed': { reason: 'changed' } },
+      ], '@odata.deltaLink': AGENT_DELTA('D') }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.messages).toEqual([]); // removed items are folder-sync events, not publishable mail
+    expect(res.body.deltaLink).toBe(AGENT_DELTA('D'));
+    expect(calls).toHaveLength(1); // ONLY the delta page — no per-message hydration GET (would 404 → 502 → pin)
+  });
+
+  it('FAIL-CLOSED: per-message header hydration failure returns 502 (publisher will hold the cursor)', async () => {
+    queueFetch([
+      jsonRes({ value: [{ id: 'm9', from: { emailAddress: { address: 'x@y.com' } } }], '@odata.deltaLink': AGENT_DELTA('D') }),
+      jsonRes({}, { ok: false, status: 500 }), // hydration GET fails
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    expect(res.statusCode).toBe(502);
+  });
+
+  it('FAIL-CLOSED: returns 502 if paging never reaches an @odata.deltaLink (no partial success)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonRes({ value: [], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/next' }))); // only ever nextLink → cap hit
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    expect(res.statusCode).toBe(502);
   });
 
   it('FAIL-CLOSED: rejects a non-positive-integer agent_view_id with 400 (no resolver/Graph call)', async () => {
     const resolver = vi.fn(ok(cfg));
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const handler = createUnreadHandler(resolver, vi.fn(), fakeAuthFactory);
+    const handler = createDeltaHandler(resolver, vi.fn(), fakeAuthFactory);
     for (const bad of ['7', 0, -1, 1.5]) {
       const res = mockRes();
       await handler({ body: { agent_view_id: bad } }, res);
@@ -118,21 +292,21 @@ describe('POST /api/outlook/unread handler', () => {
   it('FAIL-CLOSED: returns 404 (no global fallback) when a supplied id does not resolve', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const handler = createUnreadHandler(async () => ({ cfg, resolved: false }), vi.fn(), fakeAuthFactory);
+    const handler = createDeltaHandler(async () => ({ cfg, resolved: false }), vi.fn(), fakeAuthFactory);
     const res = mockRes();
     await handler({ body: { agent_view_id: 999 } }, res);
     expect(res.statusCode).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('requests internetMessageHeaders and clamps a bogus top (>50) to 1..50', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value: [] }) });
-    vi.stubGlobal('fetch', fetchMock);
-    const handler = createUnreadHandler(ok(cfg), vi.fn(), fakeAuthFactory);
-    await handler({ body: { top: 999 } }, mockRes());
-    const url = fetchMock.mock.calls[0][0];
-    expect(url).toContain('internetMessageHeaders');
-    expect(url).toContain('$top=50');
-    expect(url).not.toMatch(/\$top=(NaN|-)/);
+  it('forwards agent_view_id to the resolver and passes null when absent', async () => {
+    queueFetch([jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D') }),
+                jsonRes({ value: [], '@odata.deltaLink': AGENT_DELTA('D') })]);
+    const resolver = vi.fn(async () => ({ cfg, resolved: true }));
+    const handler = createDeltaHandler(resolver, vi.fn(), fakeAuthFactory);
+    await handler({ body: { agent_view_id: 42, cursors: {} } }, mockRes());
+    await handler({ body: { cursors: {} } }, mockRes());
+    expect(resolver).toHaveBeenNthCalledWith(1, 42);
+    expect(resolver).toHaveBeenNthCalledWith(2, null);
   });
 });

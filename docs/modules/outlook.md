@@ -1,7 +1,8 @@
 # Outlook Email Channel
 
-Poll a Microsoft 365 mailbox **per agent_view** for unread email and turn each authorized message into
-a job; the agent reads, replies, and marks messages processed through MCP tools. Like every Agento
+Poll a Microsoft 365 mailbox **per agent_view** for new email — tracked by a durable Graph **delta
+cursor**, not `isRead` — and turn each authorized message into a job; the agent reads, replies, and marks
+messages processed through MCP tools. Like every Agento
 channel, all Microsoft Graph secrets and HTTP live in the **Node.js toolbox** (the zero-trust
 boundary); the Python module provides the channel, publisher, polling command, onboarding, and
 manifests.
@@ -23,9 +24,10 @@ manifests.
 |---|---|
 | Graph auth (cert **or** client secret) | `toolbox/graph-auth.js` (`@azure/identity`) |
 | 6 MCP tools (read / reply / search / list / send / mark) | `toolbox/outlook.js` |
-| Unread-poll REST endpoint (`POST /api/outlook/unread`) + DMARC parse | `toolbox/api.js`, `toolbox/api-handlers.js` |
+| Delta-poll REST endpoint (`POST /api/outlook/delta`, validated cursor resume + paging + DMARC parse) | `toolbox/api.js`, `toolbox/api-handlers.js` |
 | Channel prompt fragments + publisher security gate | `src/channel.py` |
 | Poll command (`outlook:publish`, cron every minute — loops active agent_views; `--agent-view <code>` for one) | `src/commands/publish.py`, `cron.json` |
+| Per-mailbox delta cursor store + table | `src/cursor.py`, `sql/001_outlook_poll_cursor.sql` |
 | Typed config (no secrets) | `src/config.py` (`OutlookConfig`) |
 | Onboarding | `src/onboarding.py` |
 
@@ -43,8 +45,8 @@ Set via `agento config:set outlook/<key> <value>` (or `CONFIG__OUTLOOK__<KEY>` e
 | `outlook/outlook_cert_password` | **obscure** | Optional passphrase for an encrypted PEM (leave unset if the PEM is unencrypted). |
 | `outlook/outlook_mailbox_user_id` | string | Mailbox UPN to poll — **per agent_view** (the mailbox identifies the target view). Set at the view's scope for multi-view; `default` works for a single-view deployment (resolved via fallback). |
 | `outlook/allowed_senders` | string | **Comma-separated allow-list** of `From` addresses, resolved **per view**. Supports **glob wildcards** (`*@mycompany.com` matches any local part at that domain; `*` never crosses the `@`) and exact addresses. **Empty = block all.** |
-| `outlook/poll_top` | int | Max unread fetched per poll, resolved per view, clamped 1..50 (default `10`). |
-| `outlook/restrict_read_to_allowed_senders` | bool | **Default `true`.** When on, the agent read tools (`outlook_get_message` / `outlook_search_messages` / `outlook_get_new_messages`) only surface mail whose sender is on `allowed_senders` — empty `allowed_senders` ⇒ block all reads (fail-closed). Disabling it (`false`) lets the agent read **any** message in the mailbox, including spoofed / non-allow-listed mail — a documented **security risk**. |
+| `outlook/poll_top` | int | Delta **page size** per poll, resolved per view, clamped 1..50 (default `10`). The poll pages `@odata.nextLink` to the end, so this caps the per-page size, not the total fetched. |
+| `outlook/restrict_read_to_allowed_senders` | bool | **Default `true`.** When on, the agent read tools (`outlook_get_message` / `outlook_search_messages` / `outlook_get_new_messages`) only surface mail that passes the **same gate as the publisher** — sender on `allowed_senders` **and** a DMARC `pass` (the `From` header is forgeable; DMARC is the proof). Verdict undeterminable ⇒ not surfaced (fail-closed); empty `allowed_senders` ⇒ block all reads. Disabling it (`false`) lets the agent read **any** message in the mailbox, including spoofed / non-allow-listed / DMARC-failed mail — a documented **security risk**. |
 
 A DMARC pass is **always required** for allow-listed senders — it is not a config option (see the security gate below).
 
@@ -100,8 +102,9 @@ with admin consent.
 
 1. **Normalize** the claimed `From` (strip + lowercase).
 2. **Allow-list gate** — if the sender does not match `allowed_senders` (glob: `*@mycompany.com`, exact
-   `sklep@mycompanystudio.com`; empty ⇒ block all), the email is skipped and left **unread**. Ordinary
-   non-routing — only the domain is logged, no breach.
+   `sklep@mycompanystudio.com`; empty ⇒ block all), the email is skipped (no job) and the mailbox is
+   left **untouched** (the publisher never writes `isRead` or moves mail). Ordinary non-routing — only
+   the domain is logged, no breach.
 3. **DMARC gate (always on)** — for an allow-listed sender the verdict must be `pass`, or **no job is
    published** (fail-closed, no opt-out). An **explicit failure** (`fail`/`quarantine`/`reject`) on a
    domain that publishes a DMARC policy is a probable spoof: a `SECURITY_BREACH` is logged (structured
@@ -115,6 +118,41 @@ with admin consent.
    loop polls view X's mailbox and publishes those jobs directly to view X (no sender→view routing).
    One job per message (idempotency `outlook:mail:<id>`), with the `From` stored in
    `job.requester_email` and `requester_trust = domain`.
+
+## Polling: the delta cursor
+
+Poll progress is tracked by a durable Graph **delta cursor**, not `isRead`. This fixes the starvation
+bug where rejected/in-flight unread mail clogged a fixed `isRead eq false` window and starved valid mail
+behind it.
+
+- **State.** `outlook_poll_cursor` (one row per **normalized mailbox UPN** — the same key as the
+  `seen_mailboxes` dedupe) stores the full `@odata.deltaLink` URL Graph last returned. The publisher
+  loads all cursors once per run and passes them to the toolbox.
+- **Toolbox (`POST /api/outlook/delta`).** Resumes `mailFolders/Inbox/messages/delta` from the stored
+  cursor, **paging `@odata.nextLink` to the end** (no fixed-window truncation), and returns
+  `{mailbox, messages, deltaLink, resynced}`. With no cursor it does a full base enumeration.
+- **Security.** The cursor arrives in the request body (a route reachable by the zero-trust agent) and is
+  fetched with the Graph **app** token (which can read any mailbox), so the toolbox **validates** it
+  before use: it must be an `https://graph.microsoft.com` `…/users/{resolvedMailbox}/mailFolders/{folder}/messages/delta`
+  URL with no embedded credentials and a `$deltatoken`. A foreign/invalid cursor is **discarded** and a
+  full base enumeration runs — no SSRF, no cross-mailbox read.
+- **Persist-then-advance.** The publisher gates+publishes, then writes the cursor back **only after** a
+  clean pass — and **not** when the batch hit a genuinely transient condition (a publish exception or a
+  toolbox/Graph error). A held cursor is re-fetched and re-evaluated next poll. A non-pass DMARC verdict
+  (incl. `temperror`) is **not** transient — it is frozen in the immutable receipt-time header, so it
+  advances unpublished (holding on it would pin the cursor forever); re-evaluate only via a manual reset.
+- **Resync (fail-closed).** A stale/expired cursor (`410`, or a `40x` carrying `syncStateNotFound` /
+  `resyncRequired`) triggers a full re-enumeration, not a silent "nothing new". Replays create no
+  duplicate jobs — `idempotency_key = outlook:mail:<id>` holds. The toolbox also returns `502` (publisher
+  then holds) if it can't reach an `@odata.deltaLink` or can't verify a message's DMARC headers.
+- **Manual reset.** `DELETE FROM outlook_poll_cursor WHERE mailbox='<upn>'` forces the next poll to do a
+  fail-closed full re-enumeration (idempotent replay).
+
+> **Deployment check:** the cursor validation matches the deltaLink's `/users/{seg}/` against the
+> configured UPN. Microsoft Graph normally echoes the UPN you addressed by; if a tenant returns the user
+> **object-id** instead, every cursor is rejected → correct results but a full enumeration each poll
+> (a bounded-load regression, not a correctness/security bug). Mitigation: also accept the resolved
+> object id (a one-time `/users/{upn}?$select=id` lookup).
 
 ## Tools are opt-in
 
@@ -133,10 +171,16 @@ agento tool:enable outlook_mark_processed --agent-view <code>
 allow-list.
 
 The **read** tools (`outlook_get_message`, `outlook_search_messages`, `outlook_get_new_messages`) are
-gated by `outlook/restrict_read_to_allowed_senders` (default **on**): they only surface mail from a
-sender on `outlook/allowed_senders`, so an enabled read tool can't expose mail the channel would never
-have turned into a job (incl. spoofed / DMARC-failed mail sharing the mailbox). Empty `allowed_senders`
-⇒ no readable mail (fail-closed). Disabling the flag is a documented security risk.
+gated by `outlook/restrict_read_to_allowed_senders` (default **on**): they apply the **same gate as the
+publisher** — a message is surfaced only if its sender is on `outlook/allowed_senders` **and** it carries
+a DMARC `pass`. The `From` header is forgeable, so the allow-list alone is not enough; without the DMARC
+check a spoofed allow-listed sender on a DMARC-failing email would be readable (a prompt-injection
+vector). A Graph message **collection** does not reliably return `internetMessageHeaders`, so the list
+tools (`search` / `get_new`) **hydrate** the verdict via a per-message GET when the listing omits it —
+bounded to already-allow-listed senders, like the publisher's delta path. An undeterminable verdict ⇒
+not surfaced (fail-closed); empty `allowed_senders` ⇒ no readable mail. So an enabled read tool can't
+expose mail the channel would never have turned into a job (incl. spoofed / DMARC-failed mail sharing the
+mailbox). Disabling the flag bypasses **both** checks — a documented security risk.
 
 ## End-to-end setup
 
@@ -183,7 +227,7 @@ FROM job WHERE source='outlook' ORDER BY id DESC LIMIT 5;
 
 `agento module:disable outlook` stops the Python side: the module is skipped during bootstrap, so the
 `outlook:publish` cron no longer runs and the channel/publisher are not loaded — **no new jobs are
-created**. (The toolbox-side tools and the `/api/outlook/unread` route are not yet torn down on
+created**. (The toolbox-side tools and the `/api/outlook/delta` route are not yet torn down on
 module-disable — a pending follow-up (Task B5); until then they are not triggered by cron but remain
 registered/callable, and the tools stay opt-in / disabled by default.) Disabling is safe — no other
 module depends on Outlook.

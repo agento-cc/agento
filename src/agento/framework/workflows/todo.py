@@ -35,8 +35,9 @@ class TodoWorkflow(Workflow):
         f = channel.get_prompt_fragments(reference_id)
         step = 0
 
+        intro = f.task_intro or f"Wykonaj zadanie ({channel.name}) {reference_id}."
         lines = [
-            f"Wykonaj zadanie ({channel.name}) {reference_id}. Postępuj krok po kroku:",
+            f"{intro} Postępuj krok po kroku:",
             "",
         ]
 

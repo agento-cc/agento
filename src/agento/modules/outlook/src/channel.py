@@ -3,12 +3,54 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import unicodedata
 
 from agento.framework.channels.base import PromptFragments
 from agento.framework.event_manager import get_event_manager
 from agento.framework.events import SecurityBreachEvent
 from agento.framework.job_models import AgentType, JobRequester, RequesterTrust
 from agento.framework.publisher import publish
+
+_REFERENCE_SEP = "::"  # multi-char: base64/base64url message ids never contain two consecutive ':'
+_SLUG_MAX = 60
+_REFERENCE_ID_MAX = 512  # job.reference_id column width (see migration 027)
+
+
+def _slugify(subject: str | None, max_len: int = _SLUG_MAX) -> str:
+    """ASCII, log-safe, deterministic subject slug for the reference_id prefix.
+
+    'ł'/'Ł' are special-cased (NFKD does not decompose them); the rest of the Polish
+    diacritics fold via NFKD + ascii-ignore. Non-[a-z0-9] runs collapse to a single '-'.
+    Falls back to 'mail' when the subject yields nothing usable.
+    """
+    s = (subject or "").replace("ł", "l").replace("Ł", "L")
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    s = s[:max_len].rstrip("-")
+    return s or "mail"
+
+
+def _build_reference_id(
+    message_id: str, subject: str | None, *, max_total: int = _REFERENCE_ID_MAX, sep: str = _REFERENCE_SEP
+) -> str:
+    """Compose reference_id = '{slug}{sep}{message_id}' for log/admin readability.
+
+    The message_id is sacred — it is recovered downstream via rsplit(sep, 1)[-1] and fed to the
+    Graph tools, so it must survive intact and live at the tail. Only the slug is truncated to fit
+    ``max_total``; if there is no room (or no subject) the bare message_id is stored.
+    """
+    if not subject or not subject.strip():
+        return message_id
+    budget = max_total - len(message_id) - len(sep)
+    if budget <= 0:
+        return message_id
+    slug = _slugify(subject)[:budget].rstrip("-")
+    return f"{slug}{sep}{message_id}" if slug else message_id
+
+
+def _message_id_from_reference(reference_id: str) -> str:
+    """Recover the bare Graph message_id from a (possibly slug-prefixed) reference_id."""
+    return reference_id.rsplit(_REFERENCE_SEP, 1)[-1]
 
 
 def _matches_allowed(sender: str, allowed_senders: list[str] | None) -> bool:
@@ -39,12 +81,20 @@ class OutlookPromptChannel:
         return "outlook"
 
     def get_prompt_fragments(self, reference_id: str) -> PromptFragments:
+        message_id = _message_id_from_reference(reference_id)
         return PromptFragments(
+            # Short fixed opening — the long compound reference_id (subject-slug::message-id) is not
+            # repeated in the prompt; the bare message_id arrives via read_context below.
+            task_intro="Wykonaj zadanie z wiadomości email.",
             read_context=(
-                f"Użyj outlook_get_message aby pobrać treść emaila o message_id: {reference_id}.\n"
+                f"Użyj outlook_get_message aby pobrać treść emaila o message_id: {message_id}.\n"
                 "Zapamiętaj: temat, nadawcę, treść, datę otrzymania."
             ),
-            respond="Wynik odeślij odpowiadając na email (outlook_reply z message_id i treścią odpowiedzi).",
+            respond=(
+                "Wynik odeślij odpowiadając na email (outlook_reply z message_id i treścią odpowiedzi). "
+                "Treść odpowiedzi sformatuj jako poprawny HTML (akapity <p>, listy <ul>/<li>, "
+                "pogrubienia <b>) — NIE zwykły tekst ani markdown."
+            ),
             transition_done="Oznacz email jako przetworzony (outlook_mark_processed z message_id).",
             ask_and_handback=(
                 "Jeśli masz pytania lub wątpliwości:\n"
@@ -55,12 +105,20 @@ class OutlookPromptChannel:
         )
 
     def get_followup_fragments(self, reference_id: str, instructions: str) -> PromptFragments:
+        message_id = _message_id_from_reference(reference_id)
         return PromptFragments(
+            # Short fixed opening — the long reference_id is not repeated in the prompt; the bare
+            # message_id arrives via read_context below.
+            followup_intro="Kontynuuj zadanie z wiadomości email.",
             read_context=(
                 f"Wczytaj email (outlook_get_message) — sprawdź obecny stan i kontekst. "
-                f"Message ID: {reference_id}."
+                f"Message ID: {message_id}."
             ),
-            respond="Wynik zwróć odpowiadając na email (outlook_reply).",
+            respond=(
+                "Wynik zwróć odpowiadając na email (outlook_reply). "
+                "Treść odpowiedzi sformatuj jako poprawny HTML (akapity <p>, listy <ul>/<li>, "
+                "pogrubienia <b>) — NIE zwykły tekst ani markdown."
+            ),
             transition_done="Oznacz email jako przetworzony (outlook_mark_processed).",
             extra=(
                 "KONTEKST — instrukcje z momentu planowania:\n"
@@ -85,7 +143,7 @@ class OutlookPublisher:
         self, db_config: object, message_id: str, *, agent_view_id: int,
         priority: int = 50, sender_email: str | None = None,
         dmarc: str | None = None, allowed_senders: list[str] | None = None,
-        logger: logging.Logger | None = None,
+        subject: str | None = None, logger: logging.Logger | None = None,
     ) -> bool:
         # 1. Normalize the claimed From address.
         sender = (sender_email or "").strip().lower()
@@ -145,10 +203,13 @@ class OutlookPublisher:
             trust=RequesterTrust.DOMAIN,
             meta={"basis": "email_from", "dmarc": "pass"},
         )
+        # reference_id carries a human-readable subject slug for logs/admin; the bare message_id
+        # lives at the tail (recovered via _message_id_from_reference for the agent's Graph tools).
+        # The idempotency_key stays bare so dedup keys only on the immutable message_id.
         return publish(
             db_config, AgentType.TODO, self.name,
             self.build_idempotency_key(message_id),
-            reference_id=message_id, logger=logger,
+            reference_id=_build_reference_id(message_id, subject), logger=logger,
             agent_view_id=agent_view_id, priority=priority,
             skip_if_active=True, requester=requester,
         )
@@ -188,6 +249,7 @@ class OutlookPublisher:
             sender_email=kwargs.get("sender_email"),
             dmarc=kwargs.get("dmarc"),
             allowed_senders=kwargs.get("allowed_senders"),
+            subject=kwargs.get("subject"),
             logger=kwargs.get("logger"),
         )
 

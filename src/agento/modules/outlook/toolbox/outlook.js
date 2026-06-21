@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createGraphAuth } from './graph-auth.js';
+import { parseDmarcVerdict } from './api-handlers.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -71,13 +72,19 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
   const whitelist = loadWhitelist(moduleConfigs);
 
   // S3 READ RESTRICTION: when `restrict_read_to_allowed_senders` is on (DEFAULT true), the read tools
-  // (get_message / search / get_new) only surface mail whose sender is on outlook/allowed_senders —
-  // mirroring the inbound publisher gate so an enabled read tool can't expose mail the channel would
-  // never have created a job for (incl. spoofed / DMARC-failed mail sharing the mailbox). Empty
-  // allowed_senders = block all (fail-closed). Disabling this is a documented security risk.
+  // (get_message / search / get_new) surface a message only if it passes the SAME gate as the inbound
+  // publisher (channel.py): sender on outlook/allowed_senders AND a DMARC `pass`. The From header is
+  // forgeable, so an allow-listed sender alone is NOT enough — DMARC is the cryptographic proof; without
+  // it a spoofed allow-listed From on a DMARC-failing mail would be readable (a prompt-injection vector).
+  // The verdict is the immutable receipt-time Authentication-Results header (parseDmarcVerdict), checked
+  // FAIL-CLOSED: no verifiable `pass` ⇒ not surfaced. Empty allowed_senders = block all. Disabling
+  // restrict_read_to_allowed_senders bypasses BOTH checks (lets the agent read any mail) — a documented
+  // security risk. `surfaceAllowed` is the sync gate for a SINGLE-message GET (which reliably returns the
+  // selected internetMessageHeaders); list tools use the async `readGatePass` below (collections don't).
   const allowedSenders = loadAllowedSenders(cfg);
   const restrictRead = parseBool(cfg.restrict_read_to_allowed_senders, true);
-  const senderAllowed = (addr) => !restrictRead || matchesWhitelist(addr || '', allowedSenders);
+  const surfaceAllowed = (addr, headers) =>
+    !restrictRead || (matchesWhitelist(addr || '', allowedSenders) && parseDmarcVerdict(headers) === 'pass');
 
   // Per-tool opt-in gate. At startup (registerModuleRestApis) isToolEnabled is undefined and the server
   // is a no-op stub, so registering is harmless; at session time a disabled tool is skipped entirely.
@@ -89,6 +96,33 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       ...options,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...options.headers },
     });
+  }
+
+  // Async read gate for LIST results: a Graph message COLLECTION does not reliably return
+  // internetMessageHeaders even when $select-ed (unlike a single-message GET), so when a listed item
+  // omits them we hydrate the verdict via a per-message GET — bounded to an already-allow-listed sender
+  // (so junk is never hydrated) and FAIL-CLOSED (any hydration failure / unverifiable verdict ⇒ dropped).
+  // Mirrors the publisher's delta-handler hydration. Returns true iff the message is surfaceable.
+  async function readGatePass(m) {
+    if (!restrictRead) return true;
+    const addr = m.from?.emailAddress?.address;
+    if (!matchesWhitelist(addr || '', allowedSenders)) return false;
+    let headers = m.internetMessageHeaders;
+    if (!Array.isArray(headers)) {
+      try {
+        const hr = await graphFetch(
+          `/users/${encodeURIComponent(auth.getMailboxUserId())}/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders`
+        );
+        if (!hr.ok) {
+          await hr.text().catch(() => ''); // drain+discard (never surface a Graph body)
+          return false;
+        }
+        headers = (await hr.json()).internetMessageHeaders;
+      } catch {
+        return false;
+      }
+    }
+    return parseDmarcVerdict(headers) === 'pass';
   }
 
   function notConfigured(toolName) {
@@ -114,7 +148,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
         try {
           const res = await graphFetch(
             `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}` +
-              '?$select=subject,body,from,toRecipients,ccRecipients,receivedDateTime,conversationId,hasAttachments'
+              '?$select=subject,body,from,toRecipients,ccRecipients,receivedDateTime,conversationId,hasAttachments,internetMessageHeaders'
           );
           await ensureOk(res);
           const msg = await res.json();
@@ -129,10 +163,10 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             conversationId: msg.conversationId,
             hasAttachments: msg.hasAttachments,
           };
-          if (!senderAllowed(result.from.address)) {
-            log('outlook_get_message', 'BLOCKED', `mailbox=${mailbox} sender not in allowed_senders (read restricted)`);
+          if (!surfaceAllowed(result.from.address, msg.internetMessageHeaders)) {
+            log('outlook_get_message', 'BLOCKED', `mailbox=${mailbox} sender not allow-listed or DMARC not pass (read restricted)`);
             return {
-              content: [{ type: 'text', text: 'Error: message sender is not in allowed_senders; reading is restricted (set outlook/restrict_read_to_allowed_senders=false to allow — security risk).' }],
+              content: [{ type: 'text', text: 'Error: message sender is not in allowed_senders or did not pass DMARC; reading is restricted (set outlook/restrict_read_to_allowed_senders=false to allow — security risk).' }],
               isError: true,
             };
           }
@@ -153,10 +187,11 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       [
         'Reply to an email message. Creates a proper threaded reply (Re: subject, correct headers).',
         'The reply goes to the original sender, who must be in the email whitelist (core/email_whitelist).',
+        'The body must be valid HTML (e.g. <p>, <ul>/<li>, <b>) — it is sent as an HTML message body.',
       ].join('\n'),
       {
         message_id: z.string().describe('Graph message ID to reply to'),
-        body: z.string().describe('Reply body (plain text)'),
+        body: z.string().describe('Reply body as HTML markup (use <p>, <ul>/<li>, <b>; not plain text or markdown)'),
       },
       async ({ message_id, body }) => {
         if (!auth.isConfigured()) return notConfigured('outlook_reply');
@@ -177,9 +212,13 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
               isError: true,
             };
           }
+          // Send an HTML reply via the /reply action's `message.body` (ItemBody, contentType HTML) —
+          // NOT the `comment` parameter, which Graph treats as plain text only. The two are mutually
+          // exclusive: supplying both returns HTTP 400. The /reply action still threads the reply
+          // (Re: subject, In-Reply-To/References, conversationId); the agent supplies HTML markup.
           const res = await graphFetch(
             `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}/reply`,
-            { method: 'POST', body: JSON.stringify({ comment: body }) }
+            { method: 'POST', body: JSON.stringify({ message: { body: { contentType: 'HTML', content: body } } }) }
           );
           await ensureOk(res);
           log('outlook_reply', 'OK', `mailbox=${mailbox} to=${senderAddr} message_id=${message_id.slice(0, 20)}...`);
@@ -240,23 +279,27 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
         try {
           const res = await graphFetch(
             `/users/${encodeURIComponent(mailbox)}/mailFolders/${encodeURIComponent(graphFolder)}/messages` +
-              `?$select=id,subject,from,toRecipients,receivedDateTime,isRead` +
+              `?$select=id,subject,from,toRecipients,receivedDateTime,isRead,internetMessageHeaders` +
               `&$orderby=receivedDateTime desc` +
               `&$top=${top}` +
               filterParam
           );
           await ensureOk(res);
           const data = await res.json();
-          const messages = (data.value || [])
-            .map((m) => ({
+          // S3: gate on the RAW message (sender + DMARC, hydrating headers if the collection omitted
+          // them) BEFORE mapping, so headers never leak and a spoofed / DMARC-failed item is never surfaced.
+          const messages = [];
+          for (const m of data.value || []) {
+            if (!(await readGatePass(m))) continue;
+            messages.push({
               message_id: m.id,
               subject: m.subject,
               from: m.from?.emailAddress?.address,
               to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
               receivedDateTime: m.receivedDateTime,
               isRead: m.isRead,
-            }))
-            .filter((m) => senderAllowed(m.from)); // S3: hide non-allow-listed senders (from is the address string — stable contract)
+            });
+          }
           log('outlook_search_messages', 'OK', `mailbox=${mailbox} folder=${folder} ${messages.length} results`);
           return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
         } catch (err) {
@@ -284,22 +327,26 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
           const res = await graphFetch(
             `/users/${encodeURIComponent(mailbox)}/mailFolders/Inbox/messages` +
               `?$filter=isRead eq false` +
-              `&$select=id,subject,from,toRecipients,receivedDateTime,isRead` +
+              `&$select=id,subject,from,toRecipients,receivedDateTime,isRead,internetMessageHeaders` +
               `&$orderby=receivedDateTime asc` +
               `&$top=${top}`
           );
           await ensureOk(res);
           const data = await res.json();
-          const messages = (data.value || [])
-            .map((m) => ({
+          // S3: gate on the RAW message (sender + DMARC, hydrating headers if the collection omitted
+          // them) BEFORE mapping, so headers never leak and a spoofed / DMARC-failed item is never surfaced.
+          const messages = [];
+          for (const m of data.value || []) {
+            if (!(await readGatePass(m))) continue;
+            messages.push({
               message_id: m.id,
               subject: m.subject,
               from: m.from?.emailAddress?.address,
               to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
               receivedDateTime: m.receivedDateTime,
               isRead: m.isRead,
-            }))
-            .filter((m) => senderAllowed(m.from)); // S3: hide non-allow-listed senders (from is the address string — stable contract)
+            });
+          }
           log('outlook_get_new_messages', 'OK', `mailbox=${mailbox} ${messages.length} unread`);
           return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
         } catch (err) {
@@ -317,11 +364,12 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       [
         'Send a new email message (not a reply), sent from the agent mailbox.',
         'All recipients (to, cc) must be in the email whitelist (core/email_whitelist).',
+        'The body must be valid HTML (e.g. <p>, <ul>/<li>, <b>) — it is sent as an HTML message body.',
       ].join('\n'),
       {
         to: z.array(z.string().email()).describe('Recipient email addresses'),
         subject: z.string().describe('Email subject'),
-        body: z.string().describe('Email body (plain text)'),
+        body: z.string().describe('Email body as HTML markup (use <p>, <ul>/<li>, <b>; not plain text or markdown)'),
         cc: z.array(z.string().email()).optional().describe('CC recipient email addresses'),
       },
       async ({ to, subject, body, cc }) => {
@@ -341,7 +389,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             body: JSON.stringify({
               message: {
                 subject,
-                body: { contentType: 'Text', content: body },
+                body: { contentType: 'HTML', content: body },
                 toRecipients,
                 ...(ccRecipients.length > 0 && { ccRecipients }),
               },

@@ -177,7 +177,7 @@ class OutlookOnboarding:
         conn.commit()
 
         # Verify Graph auth + mailbox access NOW (the toolbox reads the just-committed config per
-        # request and decrypts the obscure secret, so /api/outlook/unread exercises the real creds).
+        # request and decrypts the obscure secret, so /api/outlook/delta exercises the real creds).
         from agento.framework.bootstrap import get_module_config
         from agento.modules.outlook.src.toolbox_client import (
             OutlookToolboxClient,
@@ -193,7 +193,7 @@ class OutlookOnboarding:
             return
         client = OutlookToolboxClient(toolbox_url)
         try:
-            client.list_unread(top=1, agent_view_id=verify_agent_view_id)
+            client.list_delta(top=1, agent_view_id=verify_agent_view_id)
             logger.info("Outlook Graph verification OK")
             print(f"  Verified: Graph auth + mailbox '{mailbox}' reachable.")
         except ToolboxAPIError as e:

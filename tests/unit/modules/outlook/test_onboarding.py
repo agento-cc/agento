@@ -8,6 +8,7 @@ from agento.modules.outlook.src.onboarding import (
     _pem_has_cert_and_key,
     _read_pem_block,
 )
+from agento.modules.outlook.src.toolbox_client import OutlookToolboxClient
 
 _VALID_PEM_LINES = [
     "-----BEGIN CERTIFICATE-----",
@@ -183,8 +184,8 @@ def _patch_run(monkeypatch, *, auth_choice, inputs, getpass_value, views=None, v
         "agento.framework.bootstrap.get_module_config",
         lambda m: {"toolbox/url": toolbox_url} if toolbox_url else {},
     )
-    client = MagicMock()
-    client.list_unread.return_value = {"mailbox": "agent@example.com", "messages": []}
+    client = MagicMock(spec=OutlookToolboxClient)
+    client.list_delta.return_value = {"mailbox": "agent@example.com", "messages": [], "deltaLink": "L", "resynced": False}
     monkeypatch.setattr(
         "agento.modules.outlook.src.toolbox_client.OutlookToolboxClient",
         lambda *a, **k: client,

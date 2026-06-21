@@ -11,9 +11,9 @@ from agento.modules.outlook.src.toolbox_client import (
 
 
 @respx.mock
-def test_list_unread_returns_full_payload_with_mailbox():
-    respx.post("http://toolbox:3001/api/outlook/unread").mock(
-        return_value=httpx.Response(200, json={"mailbox": "dev@example.com", "messages": [{
+def test_list_delta_returns_full_payload_with_mailbox_and_delta_link():
+    respx.post("http://toolbox:3001/api/outlook/delta").mock(
+        return_value=httpx.Response(200, json={"mailbox": "dev@example.com", "deltaLink": "L", "resynced": False, "messages": [{
             "id": "m1", "subject": "A",
             "from": {"name": "X", "address": "x@y.com"},
             "receivedDateTime": "2026-01-01T00:00:00Z",
@@ -21,53 +21,54 @@ def test_list_unread_returns_full_payload_with_mailbox():
         }]})
     )
     client = OutlookToolboxClient("http://toolbox:3001")
-    resp = client.list_unread(top=10)
+    resp = client.list_delta(top=10)
     client.close()
     assert resp["mailbox"] == "dev@example.com"
+    assert resp["deltaLink"] == "L"
     assert resp["messages"][0]["id"] == "m1"
     assert resp["messages"][0]["dmarc"] == "pass"
 
 
 @respx.mock
-def test_list_unread_sends_agent_view_id_in_body():
+def test_list_delta_sends_top_agent_view_id_and_cursors_in_body():
     captured = {}
 
     def _handler(request):
         captured.update(_json.loads(request.content))
-        return httpx.Response(200, json={"mailbox": "dev@example.com", "messages": []})
+        return httpx.Response(200, json={"mailbox": "dev@example.com", "deltaLink": "L", "resynced": False, "messages": []})
 
-    respx.post("http://toolbox:3001/api/outlook/unread").mock(side_effect=_handler)
+    respx.post("http://toolbox:3001/api/outlook/delta").mock(side_effect=_handler)
     client = OutlookToolboxClient("http://toolbox:3001")
-    resp = client.list_unread(top=7, agent_view_id=5)
+    resp = client.list_delta(top=7, agent_view_id=5, cursors={"dev@example.com": "PREV"})
     client.close()
-    assert captured == {"top": 7, "agent_view_id": 5}
-    assert resp == {"mailbox": "dev@example.com", "messages": []}
+    assert captured == {"top": 7, "agent_view_id": 5, "cursors": {"dev@example.com": "PREV"}}
+    assert resp["deltaLink"] == "L"
 
 
 @respx.mock
-def test_list_unread_omits_agent_view_id_when_none():
+def test_list_delta_omits_agent_view_id_when_none_and_defaults_cursors():
     captured = {}
 
     def _handler(request):
         captured.update(_json.loads(request.content))
-        return httpx.Response(200, json={"mailbox": None, "messages": []})
+        return httpx.Response(200, json={"mailbox": None, "deltaLink": None, "resynced": False, "messages": []})
 
-    respx.post("http://toolbox:3001/api/outlook/unread").mock(side_effect=_handler)
+    respx.post("http://toolbox:3001/api/outlook/delta").mock(side_effect=_handler)
     client = OutlookToolboxClient("http://toolbox:3001")
-    resp = client.list_unread(top=3)
+    resp = client.list_delta(top=3)
     client.close()
-    assert captured == {"top": 3}
+    assert captured == {"top": 3, "cursors": {}}
     assert "agent_view_id" not in captured
-    assert resp == {"mailbox": None, "messages": []}
+    assert resp["mailbox"] is None
 
 
 @respx.mock
-def test_list_unread_raises_on_non_200():
-    respx.post("http://toolbox:3001/api/outlook/unread").mock(
-        return_value=httpx.Response(500, text="boom")
+def test_list_delta_raises_on_non_200():
+    respx.post("http://toolbox:3001/api/outlook/delta").mock(
+        return_value=httpx.Response(502, text="boom")
     )
     client = OutlookToolboxClient("http://toolbox:3001")
     with pytest.raises(ToolboxAPIError) as exc:
-        client.list_unread(top=1, agent_view_id=9)
+        client.list_delta(top=1, agent_view_id=9, cursors={})
     client.close()
-    assert exc.value.status_code == 500
+    assert exc.value.status_code == 502

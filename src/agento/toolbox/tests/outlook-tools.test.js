@@ -22,6 +22,11 @@ const cfg = {
   outlook_client_secret: 'sec', outlook_mailbox_user_id: 'agent@example.com',
 };
 
+// The read tools surface a message only if it is allow-listed AND passes DMARC, so mocked Graph
+// messages that should be readable must carry a passing Authentication-Results header.
+const PASS_DMARC = [{ name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' }];
+const FAIL_DMARC = [{ name: 'Authentication-Results', value: 'spf=fail; dmarc=fail' }];
+
 function ctx(overrides = {}) {
   return {
     log: vi.fn(),
@@ -92,11 +97,17 @@ describe('outlook_reply recipient whitelist', () => {
     vi.stubGlobal('fetch', fetchMock);
     const s = makeServer();
     register(s, ctx());
-    const r = await s.tools.outlook_reply.handler({ message_id: 'm1', body: 'hi' });
+    const r = await s.tools.outlook_reply.handler({ message_id: 'm1', body: '<p>hi</p>' });
     expect(r.isError).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][0]).toContain('/reply');
     expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    // The reply is sent as an HTML message.body — NOT the plain-text `comment` param (mutually
+    // exclusive in Graph; sending both = HTTP 400). Lock the body shape against a regression.
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(sent.message.body.contentType).toBe('HTML');
+    expect(sent.message.body.content).toBe('<p>hi</p>');
+    expect(sent.comment).toBeUndefined();
   });
 });
 
@@ -141,8 +152,8 @@ describe('read restriction (restrict_read_to_allowed_senders)', () => {
     expect(r.isError).toBe(true);
   });
 
-  it('outlook_get_message ALLOWS a message from an allow-listed sender', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ subject: 'S', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } } }) }));
+  it('outlook_get_message ALLOWS a message from an allow-listed, DMARC-passing sender', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ subject: 'S', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } }, internetMessageHeaders: PASS_DMARC }) }));
     const s = makeServer();
     register(s, ctxRead('sklep@mycompanystudio.com'));
     const r = await s.tools.outlook_get_message.handler({ message_id: 'm1' });
@@ -159,9 +170,9 @@ describe('read restriction (restrict_read_to_allowed_senders)', () => {
 
   it('outlook_search_messages / outlook_get_new_messages filter out non-allow-listed senders', async () => {
     const value = [
-      { id: 'a', subject: 'A', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } }, receivedDateTime: 't', isRead: false },
-      { id: 'b', subject: 'B', from: { emailAddress: { address: 'stranger@evil.com' } }, receivedDateTime: 't', isRead: false },
-      { id: 'c', subject: 'C', from: { emailAddress: { address: 'anyone@mycompany.com' } }, receivedDateTime: 't', isRead: false },
+      { id: 'a', subject: 'A', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } }, receivedDateTime: 't', isRead: false, internetMessageHeaders: PASS_DMARC },
+      { id: 'b', subject: 'B', from: { emailAddress: { address: 'stranger@evil.com' } }, receivedDateTime: 't', isRead: false, internetMessageHeaders: PASS_DMARC },
+      { id: 'c', subject: 'C', from: { emailAddress: { address: 'anyone@mycompany.com' } }, receivedDateTime: 't', isRead: false, internetMessageHeaders: PASS_DMARC },
     ];
     for (const tool of ['outlook_search_messages', 'outlook_get_new_messages']) {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ value }) }));
@@ -283,10 +294,10 @@ describe('S1: Graph error bodies are sanitized (no provider internals leak to th
 });
 
 describe('S3: read tools are restricted to allowed_senders (default on)', () => {
-  const okMsg = (addr) => ({ ok: true, json: () => Promise.resolve({ subject: 'S', from: { emailAddress: { address: addr } } }) });
+  const okMsg = (addr, headers = PASS_DMARC) => ({ ok: true, json: () => Promise.resolve({ subject: 'S', from: { emailAddress: { address: addr } }, internetMessageHeaders: headers }) });
   const listOf = (...addrs) => ({
     ok: true,
-    json: () => Promise.resolve({ value: addrs.map((a, i) => ({ id: String(i + 1), subject: 's', from: { emailAddress: { address: a } } })) }),
+    json: () => Promise.resolve({ value: addrs.map((a, i) => ({ id: String(i + 1), subject: 's', from: { emailAddress: { address: a } }, internetMessageHeaders: PASS_DMARC })) }),
   });
 
   it('outlook_get_message BLOCKS (and withholds the body of) a non-allow-listed sender', async () => {
@@ -341,6 +352,104 @@ describe('S3: read tools are restricted to allowed_senders (default on)', () => 
     const r = await s.tools.outlook_get_new_messages.handler({});
     expect(JSON.parse(r.content[0].text)).toEqual([]);
   });
+
+  // --- DMARC gate: an allow-listed From is forgeable; the read tools require a DMARC pass too,
+  //     mirroring the publisher, so a spoofed allow-listed sender can't be read (prompt-injection). ---
+
+  it('ANTI-SPOOF: outlook_get_message BLOCKS an allow-listed sender that FAILS DMARC', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okMsg('sklep@mycompanystudio.com', FAIL_DMARC)));
+    const s = makeServer();
+    register(s, ctxWithOutlook());
+    const r = await s.tools.outlook_get_message.handler({ message_id: 'm1' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).not.toContain('"subject"'); // body withheld
+  });
+
+  it('FAIL-CLOSED: outlook_get_message BLOCKS an allow-listed sender with NO DMARC header', async () => {
+    // No internetMessageHeaders at all → verdict undeterminable → not surfaced.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ subject: 'S', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } } }) }));
+    const s = makeServer();
+    register(s, ctxWithOutlook());
+    const r = await s.tools.outlook_get_message.handler({ message_id: 'm1' });
+    expect(r.isError).toBe(true);
+  });
+
+  it('ANTI-SPOOF: search / get_new drop an allow-listed sender that fails DMARC, keep the passing one', async () => {
+    const mixed = {
+      ok: true,
+      json: () => Promise.resolve({ value: [
+        { id: '1', subject: 's', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } }, internetMessageHeaders: PASS_DMARC },
+        { id: '2', subject: 's', from: { emailAddress: { address: 'sklep@mycompanystudio.com' } }, internetMessageHeaders: FAIL_DMARC }, // spoofed allow-listed From
+        { id: '3', subject: 's', from: { emailAddress: { address: 'bob@mycompany.com' } } }, // no headers → fail-closed
+      ] }),
+    };
+    for (const tool of ['outlook_search_messages', 'outlook_get_new_messages']) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mixed));
+      const s = makeServer();
+      register(s, ctxWithOutlook());
+      const r = await s.tools[tool].handler({ folder: 'inbox' });
+      expect(JSON.parse(r.content[0].text).map((m) => m.message_id)).toEqual(['1']);
+    }
+  });
+
+  it('read tools request internetMessageHeaders so DMARC can be evaluated', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okMsg('sklep@mycompanystudio.com'));
+    vi.stubGlobal('fetch', fetchMock);
+    const s = makeServer();
+    register(s, ctxWithOutlook());
+    await s.tools.outlook_get_message.handler({ message_id: 'm1' });
+    expect(fetchMock.mock.calls[0][0]).toContain('internetMessageHeaders');
+  });
+
+  it('restriction OFF bypasses the DMARC gate too (documented security risk)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okMsg('stranger@evil.com', FAIL_DMARC)));
+    const s = makeServer();
+    register(s, ctxWithOutlook({ restrict_read_to_allowed_senders: false }));
+    const r = await s.tools.outlook_get_message.handler({ message_id: 'm1' });
+    expect(r.isError).toBeUndefined();
+  });
+
+  // --- DMARC hydration: a Graph message COLLECTION doesn't reliably return internetMessageHeaders, so
+  //     the list tools hydrate the verdict per-message when the collection omits it. ---
+
+  const listNoHeaders = (...addrs) => ({
+    ok: true,
+    json: () => Promise.resolve({ value: addrs.map((a, i) => ({ id: String(i + 1), subject: 's', from: { emailAddress: { address: a } } })) }),
+  });
+
+  it('hydrates DMARC via a per-message GET when the list omits internetMessageHeaders', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(listNoHeaders('sklep@mycompanystudio.com'))            // list: no headers inline
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ internetMessageHeaders: PASS_DMARC }) }); // hydration GET
+    vi.stubGlobal('fetch', fetchMock);
+    const s = makeServer();
+    register(s, ctxWithOutlook());
+    const r = await s.tools.outlook_get_new_messages.handler({});
+    expect(JSON.parse(r.content[0].text).map((m) => m.message_id)).toEqual(['1']);
+    expect(fetchMock.mock.calls[1][0]).toContain('/messages/1');
+    expect(fetchMock.mock.calls[1][0]).toContain('internetMessageHeaders');
+  });
+
+  it('FAIL-CLOSED: drops a message when DMARC hydration fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(listNoHeaders('sklep@mycompanystudio.com'))
+      .mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('') }); // hydration fails
+    vi.stubGlobal('fetch', fetchMock);
+    const s = makeServer();
+    register(s, ctxWithOutlook());
+    const r = await s.tools.outlook_search_messages.handler({ folder: 'inbox' });
+    expect(JSON.parse(r.content[0].text)).toEqual([]);
+  });
+
+  it('does NOT hydrate DMARC for a non-allow-listed sender (cheap short-circuit, no extra GET)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(listNoHeaders('stranger@evil.com'));
+    vi.stubGlobal('fetch', fetchMock);
+    const s = makeServer();
+    register(s, ctxWithOutlook());
+    const r = await s.tools.outlook_get_new_messages.handler({});
+    expect(JSON.parse(r.content[0].text)).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the list; the non-allow-listed sender is dropped before hydration
+  });
 });
 
 describe('matchesWhitelist semantics (S2: full metachar escaping)', () => {
@@ -385,6 +494,7 @@ describe('outlook_send_mail allow path + cc', () => {
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(sent.message.toRecipients[0].emailAddress.address).toBe('sklep@mycompanystudio.com');
     expect(sent.message.ccRecipients[0].emailAddress.address).toBe('bob@mycompany.com');
+    expect(sent.message.body.contentType).toBe('HTML'); // sent as HTML, not plain text
   });
 
   it('blocks the whole send when any cc recipient is not whitelisted', async () => {

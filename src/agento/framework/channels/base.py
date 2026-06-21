@@ -20,6 +20,13 @@ class PromptFragments:
     assign_back: str | None = None
     ask_and_handback: str | None = None
     extra: str | None = None
+    # Optional channel-supplied opening lines (one per workflow). When None, workflows fall back to
+    # the generic "({name}) {reference_id}" identifier. A channel sets these to avoid repeating a
+    # long/opaque reference_id in the prompt (e.g. Outlook's subject-slug::message-id) — the bare id
+    # still reaches the agent via read_context. Each is a complete sentence (trailing period); the
+    # workflow appends its own framing after a space.
+    task_intro: str | None = None      # TODO workflow opening
+    followup_intro: str | None = None  # FOLLOWUP workflow opening
 
 
 @dataclass

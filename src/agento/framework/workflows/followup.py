@@ -22,8 +22,9 @@ class FollowupWorkflow(Workflow):
         instructions = kwargs["instructions"]
         f = channel.get_followup_fragments(reference_id, str(instructions))
 
+        intro = f.followup_intro or f"Kontynuacja zadania ({channel.name}) {reference_id}."
         lines = [
-            f"Kontynuacja zadania ({channel.name}) {reference_id}. To jest zaplanowany follow-up.",
+            f"{intro} To jest zaplanowany follow-up.",
             "",
         ]
 

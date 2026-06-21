@@ -1,5 +1,5 @@
 import express from 'express';
-import { createUnreadHandler } from './api-handlers.js';
+import { createDeltaHandler } from './api-handlers.js';
 
 export function register(server, { app, log, loadModuleConfigs, loadScopedDbOverrides }) {
   // The toolbox calls every module's register() TWICE: once at startup via registerModuleRestApis()
@@ -23,5 +23,5 @@ export function register(server, { app, log, loadModuleConfigs, loadScopedDbOver
     const configs = await loadModuleConfigs(overrides);
     return { cfg: configs?.outlook || {}, resolved };
   }
-  app.post('/api/outlook/unread', express.json(), createUnreadHandler(getOutlookConfig, log));
+  app.post('/api/outlook/delta', express.json(), createDeltaHandler(getOutlookConfig, log));
 }
