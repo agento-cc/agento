@@ -51,7 +51,10 @@ async function createServer(agentViewId = null, jobId = null) {
   // Build scoped context with agent_view-aware logger before registering tools,
   // so adapters use the scoped log from the start.
   let artifactsDir = '/workspace/artifacts/_fallback';
-  let sessionContext = { ...context, artifactsDir };
+  // jobId (from req.query.job_id, null for interactive runs / tool-list) flows to every tool's
+  // register() via registerTools -> enrichedContext; schedule_followup uses it to inherit the
+  // current job's channel/reference/scope.
+  let sessionContext = { ...context, artifactsDir, jobId };
   let preloadedOverrides = null;
   if (agentViewId) {
     const { overrides, agentViewMeta } = await loadScopedDbOverrides(agentViewId);
