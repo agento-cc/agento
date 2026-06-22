@@ -10,7 +10,7 @@ from agento.modules.outlook.src.channel import (
     _slugify,
 )
 
-WHITELIST = ["sklep@mycompanystudio.com", "mklauza@mycompany.com", "*@partner.com"]
+WHITELIST = ["sklep@mycompanystudio.com", "ops@mycompany.com", "*@partner.com"]
 
 
 # ---- _slugify: ASCII, log-safe, deterministic subject slug ----

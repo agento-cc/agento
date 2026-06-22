@@ -20,7 +20,7 @@ from agento.modules.outlook.src.cursor import load_cursors
 
 from .conftest import _test_connection, fetch_all_jobs
 
-ALLOWED = "sklep@mycompanystudio.com, mklauza@mycompany.com"
+ALLOWED = "sklep@mycompanystudio.com, ops@mycompany.com"
 TOOLBOX_URL = "http://toolbox:3001"
 DELTA_URL = f"{TOOLBOX_URL}/api/outlook/delta"
 
@@ -89,7 +89,7 @@ def test_multi_view_fans_each_mailbox_to_correct_view(int_db_config, two_views):
         dev_id: {"mailbox": "dev@example.com", "messages": [
             {"id": "m-dev", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"}]},
         ops_id: {"mailbox": "ops@example.com", "messages": [
-            {"id": "m-ops", "from": {"address": "mklauza@mycompany.com"}, "dmarc": "pass"}]},
+            {"id": "m-ops", "from": {"address": "ops@mycompany.com"}, "dmarc": "pass"}]},
     }
     respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
 
@@ -179,7 +179,7 @@ def test_in_flight_published_but_unread_do_not_block_new_valid_mail(int_db_confi
     """ACC: >= poll_top already-published-but-still-unread messages must not block a newer valid one."""
     dev_id, _ = two_views
     inflight = [{"id": f"wip-{i}", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass"} for i in range(12)]
-    new_valid = {"id": "new-valid", "from": {"address": "mklauza@mycompany.com"}, "dmarc": "pass"}
+    new_valid = {"id": "new-valid", "from": {"address": "ops@mycompany.com"}, "dmarc": "pass"}
     by_view = {dev_id: {"mailbox": "dev@example.com", "messages": [*inflight, new_valid]}}
     respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
 

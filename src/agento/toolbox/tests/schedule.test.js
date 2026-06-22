@@ -94,7 +94,7 @@ describe('schedule_followup inherits identity from the current job', () => {
     register(server, baseCtx({ db, jobId: 42 }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Sprawdz status zadania.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Sprawdz status zadania.' }
     );
 
     expect(res.isError).toBeFalsy();
@@ -120,7 +120,7 @@ describe('schedule_followup inherits identity from the current job', () => {
     register(server, baseCtx({ db }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Sprawdz odpowiedz klienta.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Sprawdz odpowiedz klienta.' }
     );
 
     expect(res.isError).toBeFalsy();
@@ -135,7 +135,7 @@ describe('schedule_followup inherits identity from the current job', () => {
     register(server, baseCtx({ db }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Kontynuuj zadanie.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Kontynuuj zadanie.' }
     );
 
     expect(res.isError).toBeFalsy();
@@ -152,7 +152,7 @@ describe('schedule_followup rejects when it has no job to continue', () => {
     register(server, baseCtx({ db, jobId: null }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Nie powinno sie wykonac.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Nie powinno sie wykonac.' }
     );
 
     expect(res.isError).toBe(true);
@@ -167,7 +167,7 @@ describe('schedule_followup rejects when it has no job to continue', () => {
     register(server, baseCtx({ db, jobId: 99 }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Brak zadania w bazie.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Brak zadania w bazie.' }
     );
 
     expect(res.isError).toBe(true);
@@ -183,7 +183,7 @@ describe('schedule_followup rejects when it has no job to continue', () => {
     register(server, baseCtx({ db, jobId: 42 }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Niekompletny wiersz zadania.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Niekompletny wiersz zadania.' }
     );
 
     expect(res.isError).toBe(true);
@@ -199,7 +199,7 @@ describe('schedule_followup rejects when it has no job to continue', () => {
     register(server, baseCtx({ db, jobId: 42, log }));
 
     const res = await server.tools.schedule_followup.handler(
-      { user: 'agent@kazar.com', scheduled_at: FUTURE, instructions: 'Wywola blad bazy.' }
+      { user: 'agent@example.com', scheduled_at: FUTURE, instructions: 'Wywola blad bazy.' }
     );
 
     expect(res.isError).toBe(true);
