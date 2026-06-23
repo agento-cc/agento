@@ -45,7 +45,7 @@ Discovered by convention from `<module>/toolbox/*.js` files. Each file exports a
 
 | Tool | Description |
 |------|-------------|
-| `jira_search`, `jira_get_issue`, `jira_add_comment`, etc. | Jira Cloud integration |
+| `jira_search`, `jira_get_issue`, `jira_add_comment`, `jira_get_attachment` (opt-in), etc. | Jira Cloud integration |
 
 **Outlook module** (`src/agento/modules/outlook/toolbox/`):
 

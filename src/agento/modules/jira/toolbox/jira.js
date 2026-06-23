@@ -1,6 +1,40 @@
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
+
+// Resolve the attachment download limit to a non-negative integer.
+// Invalid input (negative, partial-numeric like "3abc", empty, null/undefined) falls back to 10.
+// `0` means "no limit" and is preserved. (Config values arrive as numbers from config.json
+// or strings from DB/ENV; parseInt would silently accept "-5"/"3abc", so use Number + guards.)
+function parseDownloadLimit(raw) {
+  if (raw === null || raw === undefined) return 10;
+  if (typeof raw === 'string' && raw.trim() === '') return 10;
+  const num = Number(raw);
+  return Number.isInteger(num) && num >= 0 ? num : 10;
+}
+
+const ATTACHMENT_DOWNLOAD_CONCURRENCY = 6;
+
+// Jira issue keys = a project key (letter then letters/digits) + "-" + number.
+// Validated before issue_key becomes a filesystem path below (anti path-traversal / least-privilege).
+const JIRA_KEY_RE = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
+
+// Run `worker` over `items` with at most `limit` concurrent in-flight calls.
+// Used to bound parallel attachment downloads (avoids hammering Jira / the FS).
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const run = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await worker(items[i], i);
+    }
+  };
+  const size = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: size }, run));
+  return results;
+}
 
 export async function healthcheck({ moduleConfigs }) {
   const cfg = moduleConfigs?.jira || {};
@@ -37,6 +71,8 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
     user: cfg.jira_user || null,
     token: cfg.jira_token || null,
   };
+  const enabled = (name) => !isToolEnabled || isToolEnabled(name);
+  const attachmentDownloadLimit = parseDownloadLimit(cfg.attachment_download_limit);
   // --- jira_search ---
   server.tool(
     'jira_search',
@@ -99,6 +135,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
       'For converted files, use the Read tool on convertedPath (e.g. .md for PDF, .csv for XLSX).',
       'Comments include author accountId — use it with jira_add_comment reply_to_comment_id to reply.',
       'If an attachment fails to download or convert, Attachments[].error contains the reason. In that case, inform the reporter via comment — do not silently skip the data.',
+      'Only the newest N attachments are auto-downloaded (N = jira/attachment_download_limit, default 10; 0 = all). Older ones are listed with an error telling you to call jira_get_attachment to fetch them on demand.',
       'AssigneeAccountId and ReporterAccountId can be used with jira_assign_issue.',
       'Examples:',
       '  issue_key: "AI-1"',
@@ -126,15 +163,28 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
         const data = await response.json();
         const f = data.fields;
 
-        // Download ALL attachments through FileManager
-        const allAttachments = (f.attachment || []).slice(0, 15);
-        const fileMap = new Map();
-        const errorMap = new Map();
+        // Full attachment list — metadata for ALL attachments, regardless of the download limit.
+        const allAttachments = f.attachment || [];
 
-        if (allAttachments.length > 0 && fileManager) {
+        // Select which to physically download: the N newest by `created` (descending).
+        // attachmentDownloadLimit === 0 means "no limit" (download all). Anything not
+        // selected is reported below with an explicit error — never a silent null.
+        const sortedByNewest = [...allAttachments].sort(
+          (a, b) => new Date(b.created || 0) - new Date(a.created || 0)
+        );
+        const toDownload = attachmentDownloadLimit === 0
+          ? sortedByNewest
+          : sortedByNewest.slice(0, attachmentDownloadLimit);
+        const downloadIds = new Set(toDownload.map((att) => att.id));
+
+        const fileMap = new Map();   // att.id -> FileManager success result
+        const errorMap = new Map();  // att.id -> real download/convert failure reason
+        const imageMap = new Map();  // filename -> localPath (for inline image refs)
+
+        if (toDownload.length > 0 && fileManager) {
           const dir = `${artifactsDir}/jira/${data.key}`;
 
-          await Promise.all(allAttachments.map(async (att) => {
+          await mapWithConcurrency(toDownload, ATTACHMENT_DOWNLOAD_CONCURRENCY, async (att) => {
             try {
               const result = await fileManager.download(att.content, att.filename, {
                 headers: authHeader,
@@ -142,26 +192,27 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
                 maxSize: att.size,
               });
               if (result.skipped) {
-                errorMap.set(att.filename, result.skipReason);
+                errorMap.set(att.id, result.skipReason);
                 log('jira_get_issue', 'WARN', `Attachment skipped: ${att.filename}: ${result.skipReason}`);
               } else {
-                fileMap.set(att.filename, result);
+                fileMap.set(att.id, result);
+                imageMap.set(att.filename, result.localPath);
                 if (result.conversionError) {
                   log('jira_get_issue', 'WARN', `Attachment conversion failed: ${att.filename}: ${result.conversionError}`);
                 }
               }
             } catch (err) {
-              errorMap.set(att.filename, err.message);
+              errorMap.set(att.id, err.message);
               log('jira_get_issue', 'ERROR', `Attachment download threw: ${att.filename}: ${err.message}`);
             }
-          }));
+          });
         }
 
         const replaceImageRefs = (text) => {
           if (!text || typeof text !== 'string') return text;
           return text.replace(/!([^|!\n]+)(\|[^!\n]*)?!/g, (match, filename) => {
-            const file = fileMap.get(filename);
-            return file ? `[Obrazek: ${filename}](${file.localPath})` : match;
+            const localPath = imageMap.get(filename);
+            return localPath ? `[Obrazek: ${filename}](${localPath})` : match;
           });
         };
 
@@ -184,16 +235,28 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
             body: replaceImageRefs(c.body),
             created: c.created,
           })),
-          Attachments: (f.attachment || []).map(a => {
-            const file = fileMap.get(a.filename);
+          Attachments: allAttachments.map((a) => {
+            const file = fileMap.get(a.id);
+            const downloadError = errorMap.get(a.id) || null;
+            let error;
+            if (file) {
+              error = file.conversionError || null;            // success (may carry a conversion error)
+            } else if (downloadError) {
+              error = downloadError;                            // real download/convert failure — original reason (C3)
+            } else if (!downloadIds.has(a.id)) {
+              error = `Attachment not downloaded: skipped because it is not among the ${attachmentDownloadLimit} newest attachments (jira/attachment_download_limit=${attachmentDownloadLimit}). Use jira_get_attachment(issue_key="${data.key}", attachment_id="${a.id}") to fetch it on demand.`;
+            } else {
+              error = 'Attachment download produced no result (unknown reason).'; // C2 backstop
+            }
             return {
               id: a.id,
               filename: a.filename,
               mimeType: a.mimeType,
               size: a.size,
+              created: a.created,
               localPath: file?.localPath || null,
               convertedPath: file?.convertedPath || null,
-              error: file?.conversionError || errorMap.get(a.filename) || null,
+              error,
             };
           }),
         };
@@ -677,4 +740,88 @@ export function register(server, { log, moduleConfigs, isToolEnabled, artifactsD
       }
     }
   );
+
+  // --- jira_get_attachment (opt-in: disabled by default; enable via `agento tool:enable jira_get_attachment`) ---
+  if (enabled('jira_get_attachment')) {
+    server.tool(
+      'jira_get_attachment',
+      [
+        'Download a SINGLE Jira attachment by its attachment ID, on demand.',
+        'Unlike jira_get_issue (which auto-downloads only the newest N attachments, per jira/attachment_download_limit), this fetches ANY attachment regardless of that limit.',
+        'Use it for an attachment that jira_get_issue listed with a "skipped because ... limit" error.',
+        'Returns the local path to the downloaded file (and convertedPath for auto-converted binaries like PDF/XLSX).',
+        'Examples:',
+        '  issue_key: "AI-1", attachment_id: "10500"',
+      ].join('\n'),
+      {
+        user: z.string().email().describe('Your (the LLM agent) email address from SOUL.md — identity credential'),
+        issue_key: z.string().regex(JIRA_KEY_RE, 'must be a Jira issue key like "AI-1"').describe('Jira issue key the attachment belongs to, e.g. "AI-1" — determines the artifacts subfolder'),
+        attachment_id: z.string().describe('Jira attachment ID (from jira_get_issue Attachments[].id)'),
+      },
+      async ({ user, issue_key, attachment_id }) => {
+        // Defense-in-depth: issue_key flows into a filesystem path (join below). Reject anything that is
+        // not a clean Jira key so a value like "../../x" can never escape the artifacts subtree — even
+        // from a non-validating MCP client that bypasses the Zod regex above.
+        if (!JIRA_KEY_RE.test(issue_key)) {
+          log('jira_get_attachment', 'ERROR', `user=${user} rejected invalid issue_key="${issue_key}"`);
+          return {
+            content: [{ type: 'text', text: `Jira get attachment error: invalid issue_key "${issue_key}" (expected a Jira key like "AI-1")` }],
+            isError: true,
+          };
+        }
+
+        const auth = Buffer.from(`${config.user}:${config.token}`).toString('base64');
+        const authHeader = { 'Authorization': `Basic ${auth}`, 'Accept': 'application/json' };
+
+        try {
+          const metaRes = await fetch(
+            `${config.host}/rest/api/3/attachment/${encodeURIComponent(attachment_id)}`,
+            { headers: authHeader }
+          );
+          if (!metaRes.ok) {
+            const text = await metaRes.text();
+            throw new Error(`HTTP ${metaRes.status}: ${text}`);
+          }
+          const meta = await metaRes.json();
+
+          if (!fileManager) {
+            throw new Error('File manager unavailable');
+          }
+
+          const dir = join(artifactsDir, 'jira', issue_key);
+          const result = await fileManager.download(meta.content, meta.filename, {
+            headers: authHeader,
+            dir,
+            maxSize: meta.size,
+          });
+
+          if (result.skipped) {
+            log('jira_get_attachment', 'WARN', `user=${user} ${issue_key} att=${attachment_id} skipped: ${result.skipReason}`);
+            return {
+              content: [{ type: 'text', text: `Jira get attachment error: ${result.skipReason}` }],
+              isError: true,
+            };
+          }
+
+          const out = {
+            id: attachment_id,
+            filename: meta.filename,
+            mimeType: meta.mimeType,
+            size: meta.size,
+            localPath: result.localPath,
+            convertedPath: result.convertedPath || null,
+            error: result.conversionError || null,
+          };
+          log('jira_get_attachment', 'OK', `user=${user} ${issue_key} att=${attachment_id} -> ${result.localPath}`);
+          return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
+        } catch (err) {
+          log('jira_get_attachment', 'ERROR', `user=${user} ${issue_key} att=${attachment_id} ${err.message}`);
+          return {
+            content: [{ type: 'text', text: `Jira get attachment error: ${err.message}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+  }
 }

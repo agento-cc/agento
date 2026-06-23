@@ -2,5 +2,6 @@
   "enabled": true,
   "todo_statuses": ["To Do", "TODO", "Selected for Development"],
   "create_issue_limit_per_hour": 50,
+  "attachment_download_limit": 10,
   "tools/jira/is_enabled": "1"
 }

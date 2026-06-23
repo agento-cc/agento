@@ -69,7 +69,7 @@ workspace/
 │               ├── modules/     → build/…  #     Symlink (RO)
 │               ├── screenshots/{job_id}/   #     Written by browser_take_screenshot
 │               ├── videos/{job_id}/        #     Written by browser_stop_video
-│               └── jira/{ISSUE-KEY}/       #     Attachments downloaded via jira_get_issue
+│               └── jira/{ISSUE-KEY}/       #     Attachments downloaded via jira_get_issue (newest N only; N=jira/attachment_download_limit, default 10)
 │
 ├── .claude/                                #     Agent CLI session store (Claude)
 │   └── projects/-workspace/

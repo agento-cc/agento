@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "description": "Jira Cloud integration — channel, workflows, and tools",
   "sequence": [],
-  "order": 100
+  "order": 100,
+  "tools": [
+    {"type": "mcp", "name": "jira_get_attachment", "description": "Download a single Jira attachment by ID on demand (bypasses the jira_get_issue download limit)", "toolset": "jira"}
+  ]
 }

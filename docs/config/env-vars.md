@@ -20,6 +20,7 @@ CONFIG__{MODULE}__{PATH}
 |-------------|-------------|
 | `jira/user` | `CONFIG__JIRA__USER` |
 | `jira/jira_host` | `CONFIG__JIRA__JIRA_HOST` |
+| `jira/attachment_download_limit` | `CONFIG__JIRA__ATTACHMENT_DOWNLOAD_LIMIT` |
 | `core/sql_timeout_seconds` | `CONFIG__CORE__SQL_TIMEOUT_SECONDS` |
 | `core/allowed_domains` | `CONFIG__CORE__ALLOWED_DOMAINS` |
 
