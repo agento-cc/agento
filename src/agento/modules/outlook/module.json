@@ -6,6 +6,7 @@
   "order": 110,
   "tools": [
     {"type": "mcp", "name": "outlook_get_message", "description": "Read a full email by message ID", "toolset": "outlook"},
+    {"type": "mcp", "name": "outlook_get_attachment", "description": "Download one attachment from an email to the artifacts dir", "toolset": "outlook"},
     {"type": "mcp", "name": "outlook_reply", "description": "Reply to an email (threaded)", "toolset": "outlook"},
     {"type": "mcp", "name": "outlook_mark_processed", "description": "Mark an email as read/processed", "toolset": "outlook"},
     {"type": "mcp", "name": "outlook_search_messages", "description": "Search emails by filters", "toolset": "outlook"},

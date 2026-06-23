@@ -40,11 +40,11 @@ function ctx(overrides = {}) {
 beforeEach(() => vi.unstubAllGlobals());
 
 describe('outlook tools registration + gating', () => {
-  it('registers all 6 tools when enabled', () => {
+  it('registers all 7 tools when enabled', () => {
     const s = makeServer();
     register(s, ctx());
     expect(Object.keys(s.tools).sort()).toEqual([
-      'outlook_get_message', 'outlook_get_new_messages', 'outlook_mark_processed',
+      'outlook_get_attachment', 'outlook_get_message', 'outlook_get_new_messages', 'outlook_mark_processed',
       'outlook_reply', 'outlook_search_messages', 'outlook_send_mail',
     ]);
   });
@@ -61,6 +61,14 @@ describe('outlook tools registration + gating', () => {
     register(s, ctx());
     expect(Object.keys(s.tools.outlook_get_message.schema)).not.toContain('user');
     expect(Object.keys(s.tools.outlook_send_mail.schema)).not.toContain('user');
+  });
+
+  it('outlook_send_mail description states it is PREFERRED over email_send (AC13)', () => {
+    const s = makeServer();
+    register(s, ctx());
+    const desc = s.tools.outlook_send_mail.desc;
+    expect(desc).toContain('email_send');
+    expect(desc).toMatch(/PREFERRED/i);
   });
 });
 
@@ -513,7 +521,7 @@ describe('outlook_send_mail allow path + cc', () => {
 describe('tools fail closed when Graph is not configured', () => {
   const unconfigured = () => ({ isConfigured: () => false, getToken: async () => 'AAA', getMailboxUserId: () => 'agent@example.com' });
   for (const name of [
-    'outlook_get_message', 'outlook_reply', 'outlook_search_messages',
+    'outlook_get_message', 'outlook_get_attachment', 'outlook_reply', 'outlook_search_messages',
     'outlook_get_new_messages', 'outlook_send_mail', 'outlook_mark_processed',
   ]) {
     it(`${name} returns isError and issues no Graph call when not configured`, async () => {
@@ -521,7 +529,7 @@ describe('tools fail closed when Graph is not configured', () => {
       vi.stubGlobal('fetch', fetchMock);
       const s = makeServer();
       register(s, ctx({ graphAuthFactory: unconfigured }));
-      const r = await s.tools[name].handler({ message_id: 'm1', body: 'b', subject: 's', to: ['sklep@mycompanystudio.com'] });
+      const r = await s.tools[name].handler({ message_id: 'm1', attachment_id: 'a1', body: 'b', subject: 's', to: ['sklep@mycompanystudio.com'] });
       expect(r.isError).toBe(true);
       expect(fetchMock).not.toHaveBeenCalled();
     });

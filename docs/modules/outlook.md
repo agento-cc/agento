@@ -156,9 +156,9 @@ behind it.
 
 ## Tools are opt-in
 
-All six tools (`outlook_get_message`, `outlook_reply`, `outlook_search_messages`,
-`outlook_get_new_messages`, `outlook_send_mail`, `outlook_mark_processed`) ship **disabled**. Enable only
-what the agent needs:
+All seven tools (`outlook_get_message`, `outlook_get_attachment`, `outlook_reply`,
+`outlook_search_messages`, `outlook_get_new_messages`, `outlook_send_mail`, `outlook_mark_processed`)
+ship **disabled**. Enable only what the agent needs:
 
 ```bash
 agento tool:enable outlook_get_message    --agent-view <code>
@@ -167,8 +167,35 @@ agento tool:enable outlook_mark_processed --agent-view <code>
 ```
 
 `outlook_send_mail` and `outlook_reply` send external email, so they are **recipient-whitelisted** against
-`core/email_whitelist` (reply gates the original sender's address) — independent of the inbound
-allow-list.
+`core/email_whitelist` (reply gates the address Graph actually delivers to — `Reply-To` when present,
+else `From`) — independent of the inbound allow-list.
+
+### Attachments
+
+- `outlook_get_message` returns attachment **metadata** for each attachment (`attachment_id`, `name`,
+  `contentType`, `size`, `isInline`, `type` ∈ `file`|`item`|`reference`) — it never fetches the bytes.
+- `outlook_get_attachment(message_id, attachment_id)` downloads **one** `file` attachment to the job's
+  artifacts dir and returns `{ path, name, contentType, size }`. It **re-applies the same read-gate** as
+  the read tools (sender on `allowed_senders` **and** DMARC `pass`) before any download, so it can never
+  fetch bytes the read tools could not surface; it rejects non-`file` attachments and anything over 25 MB,
+  writes inside the artifacts dir only (a malicious attachment name cannot escape it), never overwrites an
+  existing file (a numeric suffix is appended), and ships **opt-in (disabled)**.
+- `outlook_reply` and `outlook_send_mail` accept an optional `attachments: string[]` of absolute paths
+  inside `/workspace/` (typically files from `outlook_get_attachment`). Caps: **max 10 files, 25 MB each**.
+  Files under 3 MB upload via a simple POST; ≥3 MB use a Graph **upload session** (chunked PUT).
+  `outlook_send_mail` also accepts `bcc` (whitelist-gated like `to`/`cc`).
+- **Shared-mailbox upload-session risk:** upload-session `PUT`s go to `outlook.office.com` with **no auth
+  header** — the session URL is the capability (guarded by `isOutlookUploadUrl`: https + `outlook.office.com`,
+  no embedded creds). On a **shared mailbox**, treat the in-progress draft / upload session as visible to
+  co-owners.
+
+### Preferred sender for new mail
+
+When `outlook_send_mail` is enabled, the agent should use it (not the core SMTP `email_send`) for new
+mail: it sends from the agent's real Outlook mailbox (correct `From`, DMARC/SPF aligned) and supports
+attachments. The preference is conveyed via the tool descriptions only (a soft LLM hint, never a routing
+branch); if `outlook_send_mail` is not enabled, `email_send` remains the automatic fallback (a disabled
+tool's description is never shown).
 
 The **read** tools (`outlook_get_message`, `outlook_search_messages`, `outlook_get_new_messages`) are
 gated by `outlook/restrict_read_to_allowed_senders` (default **on**): they apply the **same gate as the

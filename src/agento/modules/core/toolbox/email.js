@@ -100,6 +100,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled }) {
     'email_send',
     [
       'Send a single SMTP email. Supports multiple To/Cc/Bcc recipients and file attachments.',
+      "If a channel-native mailbox sender is available for this agent, prefer it (it sends from the agent's real mailbox with correct identity and DMARC alignment); use this SMTP sender when no such sender is enabled.",
       'The body is HTML — wrap any plain text in <pre> or use tags like <p>, <br>, <ul>, <a href> for formatting.',
       'All recipient addresses (to, cc, bcc) must match the whitelist.',
       'Attachment paths must be absolute and inside /workspace/ (typically files in artifactsDir). Max 10 files, 25 MB each.',
