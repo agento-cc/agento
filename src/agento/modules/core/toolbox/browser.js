@@ -311,14 +311,17 @@ export function register(server, { log, playwright, moduleConfigs, isToolEnabled
             return { content: [{ type: 'text', text: `Waited ${ms}ms` }] };
           }
 
-          // browser_start_video: restructure width/height into size object
+          // browser_start_video: pick the recording size. Without an explicit
+          // size @playwright/mcp falls back to a hardcoded 800x600 canvas and
+          // pads the differently-sized page frame into the corner — low-res and
+          // letterboxed. Default to the browser viewport so the recording is
+          // full-frame and crisp; explicit width/height still override, and a
+          // single given dimension is completed from the viewport.
           if (name === 'browser_start_video') {
-            const videoArgs = {};
-            if (width || height) {
-              videoArgs.size = {};
-              if (width) videoArgs.size.width = width;
-              if (height) videoArgs.size.height = height;
-            }
+            const viewport = typeof playwright.getViewport === 'function' ? (playwright.getViewport() || {}) : {};
+            const vw = width || viewport.width;
+            const vh = height || viewport.height;
+            const videoArgs = (vw && vh) ? { size: { width: vw, height: vh } } : {};
             log(name, 'FORWARD', `user=${user} args=${JSON.stringify(videoArgs)}`);
             const result = await client.callTool({ name: 'browser_start_video', arguments: videoArgs });
             if (result.isError) {

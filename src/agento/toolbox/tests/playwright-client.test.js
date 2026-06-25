@@ -9,12 +9,14 @@ describe('playwright-client state machine', () => {
   let closeMock;
   let listToolsMock;
   let onCloseRef; // captured from the per-test mock Client
+  let transportOptsRef; // captured StdioClientTransport constructor options
 
   beforeEach(() => {
     vi.resetModules();
     vi.useRealTimers();
 
     onCloseRef = { fn: null };
+    transportOptsRef = { opts: null };
     connectMock = vi.fn().mockResolvedValue(undefined);
     closeMock = vi.fn().mockResolvedValue(undefined);
     listToolsMock = vi.fn().mockResolvedValue({ tools: [] });
@@ -34,8 +36,10 @@ describe('playwright-client state machine', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
       StdioClientTransport: class {
-        constructor() { this.stderr = null; }
+        constructor(opts) { transportOptsRef.opts = opts; this.stderr = null; }
       },
+      // SDK forwards only this curated allowlist to the child — PLAYWRIGHT_BROWSERS_PATH is NOT in it.
+      getDefaultEnvironment: () => ({ PATH: '/usr/bin:/bin', HOME: '/home/test' }),
     }));
     vi.doMock('fs/promises', () => ({
       readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
@@ -198,6 +202,30 @@ describe('playwright-client state machine', () => {
     expect(s.lastError).toBe('Playwright child process closed unexpectedly');
   });
 
+  it('spawns the Playwright child with PLAYWRIGHT_BROWSERS_PATH so it finds the baked browsers', async () => {
+    // Regression: the SDK forwards only getDefaultEnvironment() to the child,
+    // which omits PLAYWRIGHT_BROWSERS_PATH. Without explicit propagation the
+    // @playwright/mcp child looks in the empty $HOME/.cache/ms-playwright and
+    // every browser tool fails with 'Browser "chromium" is not installed'.
+    const prev = process.env.PLAYWRIGHT_BROWSERS_PATH;
+    process.env.PLAYWRIGHT_BROWSERS_PATH = '/opt/playwright';
+    try {
+      const mod = await import('../playwright-client.js');
+      mod.__resetForTests();
+
+      await mod.initPlaywright();
+
+      expect(transportOptsRef.opts).toBeTruthy();
+      expect(transportOptsRef.opts.env).toBeTruthy();
+      expect(transportOptsRef.opts.env.PLAYWRIGHT_BROWSERS_PATH).toBe('/opt/playwright');
+      // Base allowlist must survive — npx needs PATH/HOME to launch the child.
+      expect(transportOptsRef.opts.env.PATH).toBeTruthy();
+    } finally {
+      if (prev === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+      else process.env.PLAYWRIGHT_BROWSERS_PATH = prev;
+    }
+  });
+
   it('attempt counter resets to 0 after STABILITY_RESET_MS of stable ready', async () => {
     vi.useFakeTimers();
     const mod = await import('../playwright-client.js');
@@ -217,5 +245,36 @@ describe('playwright-client state machine', () => {
     // After 30s stable, attempt resets to 0.
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mod.getPlaywrightState().attempt).toBe(0);
+  });
+
+  it('always spawns with a fixed 1280x720 viewport when no session.json is present', async () => {
+    // viewport: null (Playwright default) renders at the unpredictable headless
+    // window size and makes on-demand video fall back to a tiny 800x600 canvas.
+    // A fixed viewport gives crisp, full-frame screenshots and recordings.
+    const mod = await import('../playwright-client.js');
+    mod.__resetForTests();
+
+    await mod.initPlaywright();
+
+    const args = transportOptsRef.opts.args;
+    const idx = args.indexOf('--viewport-size');
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe('1280,720');
+    expect(mod.getPlaywrightViewport()).toEqual({ width: 1280, height: 720 });
+  });
+
+  it('uses session.viewport when session.json provides one (override of the default)', async () => {
+    const fs = await import('fs/promises');
+    fs.readFile.mockResolvedValueOnce(JSON.stringify({ viewport: { width: 1920, height: 1080 } }));
+
+    const mod = await import('../playwright-client.js');
+    mod.__resetForTests();
+
+    await mod.initPlaywright();
+
+    const args = transportOptsRef.opts.args;
+    const idx = args.indexOf('--viewport-size');
+    expect(args[idx + 1]).toBe('1920,1080');
+    expect(mod.getPlaywrightViewport()).toEqual({ width: 1920, height: 1080 });
   });
 });

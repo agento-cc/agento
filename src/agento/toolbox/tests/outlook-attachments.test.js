@@ -103,11 +103,20 @@ describe('AC4 isOutlookUploadUrl', () => {
     expect(isOutlookUploadUrl('https://outlook.office.com/api/v2.0/uploadSession/abc')).toBe(true);
     expect(isOutlookUploadUrl('https://attachments.outlook.office.com/session/xyz')).toBe(true);
   });
-  it('rejects http, a foreign host, and embedded credentials', () => {
+  it('accepts https outlook.office365.com and a subdomain (real Graph upload-session host)', () => {
+    // Graph returns the attachment upload-session URL on outlook.office365.com (verified live),
+    // NOT outlook.office.com — without this every attachment >=3 MB fails with "untrusted upload URL".
+    expect(isOutlookUploadUrl('https://outlook.office365.com/api/v2.0/uploadSession/abc')).toBe(true);
+    expect(isOutlookUploadUrl('https://nam12.attachment.outlook.office365.com/session/xyz')).toBe(true);
+  });
+  it('rejects http, a foreign host, lookalikes, and embedded credentials', () => {
     expect(isOutlookUploadUrl('http://outlook.office.com/x')).toBe(false);
     expect(isOutlookUploadUrl('https://evil.com/x')).toBe(false);
     expect(isOutlookUploadUrl('https://u:p@outlook.office.com/x')).toBe(false);
     expect(isOutlookUploadUrl('not a url')).toBe(false);
+    // lookalike suffix must NOT be trusted
+    expect(isOutlookUploadUrl('https://outlook.office365.com.evil.com/x')).toBe(false);
+    expect(isOutlookUploadUrl('https://notoutlook.office365.com/x')).toBe(false);
   });
 });
 

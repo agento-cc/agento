@@ -37,6 +37,7 @@ describe('browser tools', () => {
       playwright: {
         getClient: () => mockClient,
         getTools: () => [],
+        getViewport: () => ({ width: 1366, height: 768 }),
       },
       moduleConfigs: {
         core: {
@@ -76,6 +77,28 @@ describe('browser tools', () => {
       expect(mockClient.callTool).toHaveBeenCalledWith({
         name: 'browser_start_video',
         arguments: { size: { width: 1280, height: 720 } },
+      });
+    });
+
+    it('defaults the recording size to the browser viewport when width/height are omitted', async () => {
+      const { handlers } = await importAndRegister(['browser_start_video']);
+
+      await handlers.browser_start_video({ user: 'a@b.com' });
+
+      expect(mockClient.callTool).toHaveBeenCalledWith({
+        name: 'browser_start_video',
+        arguments: { size: { width: 1366, height: 768 } },
+      });
+    });
+
+    it('fills the missing dimension from the viewport when only one is provided', async () => {
+      const { handlers } = await importAndRegister(['browser_start_video']);
+
+      await handlers.browser_start_video({ user: 'a@b.com', width: 1920 });
+
+      expect(mockClient.callTool).toHaveBeenCalledWith({
+        name: 'browser_start_video',
+        arguments: { size: { width: 1920, height: 768 } },
       });
     });
   });

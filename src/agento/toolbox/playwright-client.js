@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { readFile, writeFile } from 'fs/promises';
 import { logToolbox as log } from './log.js';
 
@@ -14,6 +14,15 @@ let discoveredTools = [];
 const MAX_ATTEMPTS = 5;
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 16000];
 const STABILITY_RESET_MS = 30000;
+
+// Playwright's default (viewport: null) renders the page at the unpredictable
+// headless window size and makes on-demand video fall back to a tiny 800x600
+// canvas, producing low-res, letterboxed recordings. We always emulate a fixed
+// viewport so screenshots and video are crisp and full-frame. session.viewport
+// overrides this default. This is also the single source of truth for the
+// default video size (see browser_start_video in browser.js).
+const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
+let resolvedViewport = { ...DEFAULT_VIEWPORT };
 
 let shuttingDown = false;
 let initInFlight = null;
@@ -38,9 +47,8 @@ async function buildMcpArgs() {
     // No session.json — proceed with defaults
   }
 
-  if (session.viewport) {
-    args.push('--viewport-size', `${session.viewport.width},${session.viewport.height}`);
-  }
+  resolvedViewport = session.viewport || { ...DEFAULT_VIEWPORT };
+  args.push('--viewport-size', `${resolvedViewport.width},${resolvedViewport.height}`);
   if (session.userAgent) {
     args.push('--user-agent', session.userAgent);
   }
@@ -54,10 +62,24 @@ async function buildMcpArgs() {
 }
 
 async function connectClient() {
+  // The MCP SDK forwards only its curated allowlist (getDefaultEnvironment) to
+  // the spawned child — PLAYWRIGHT_BROWSERS_PATH is NOT in it. The toolbox image
+  // installs Chromium to /opt/playwright via that var, so the @playwright/mcp
+  // child must receive it explicitly; otherwise it looks in the empty default
+  // $HOME/.cache/ms-playwright and every browser tool fails with
+  // 'Browser "chromium" is not installed'. Forward ONLY the non-secret
+  // Playwright var on top of the default env — never the full toolbox env, so
+  // the secrets this container holds never reach the browser child.
+  const childEnv = { ...getDefaultEnvironment() };
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
+    childEnv.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  }
+
   transport = new StdioClientTransport({
     command: 'npx',
     args: await buildMcpArgs(),
     stderr: 'pipe',
+    env: childEnv,
   });
 
   transport.stderr?.on('data', (chunk) => {
@@ -159,6 +181,10 @@ export function getPlaywrightTools() {
   return discoveredTools;
 }
 
+export function getPlaywrightViewport() {
+  return { ...resolvedViewport };
+}
+
 export async function closePlaywright() {
   shuttingDown = true;
   if (stabilityTimer) {
@@ -176,6 +202,7 @@ export function __resetForTests() {
   client = null;
   transport = null;
   discoveredTools = [];
+  resolvedViewport = { ...DEFAULT_VIEWPORT };
   shuttingDown = false;
   initInFlight = null;
   if (stabilityTimer) clearTimeout(stabilityTimer);

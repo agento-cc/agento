@@ -115,9 +115,17 @@ async function validateAttachments(paths) {
 export function isOutlookUploadUrl(u) {
   try {
     const url = new URL(u);
+    // Microsoft Graph returns the attachment upload-session URL on outlook.office365.com (verified
+    // against the live tenant), while older/other paths use outlook.office.com. Trust both official
+    // Microsoft 365 hosts (apex + subdomains). Without office365.com every attachment >=3 MB — which
+    // takes the createUploadSession path — fails with "untrusted upload URL".
+    const host = url.hostname;
+    const trustedHost =
+      host === 'outlook.office.com' || host.endsWith('.outlook.office.com') ||
+      host === 'outlook.office365.com' || host.endsWith('.outlook.office365.com');
     return (
       url.protocol === 'https:' &&
-      (url.hostname === 'outlook.office.com' || url.hostname.endsWith('.outlook.office.com')) &&
+      trustedHost &&
       url.username === '' &&
       url.password === ''
     );
