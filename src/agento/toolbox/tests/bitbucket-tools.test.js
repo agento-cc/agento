@@ -51,30 +51,43 @@ describe('bitbucket tools: registration + opt-in gating', () => {
   });
 });
 
-describe('bitbucket tools: allow-list / workspace enforcement (args validated, not trusted)', () => {
+describe('bitbucket tools: allow-list enforcement + workspace fixed by config', () => {
+  it('no tool declares a workspace parameter (workspace is config-only, never caller-supplied)', () => {
+    const s = makeServer();
+    register(s, ctx(fakeAuth(() => jsonRes({}))));
+    for (const name of ALL_TOOLS) {
+      expect(s.tools[name].schema).not.toHaveProperty('workspace');
+    }
+  });
+
   it('rejects a repo outside the allow-list, without calling Bitbucket', async () => {
     const auth = fakeAuth(() => jsonRes({}));
     const s = makeServer();
     register(s, ctx(auth));
-    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'acme', repo: 'secret', pr_id: 1 });
+    const r = await s.tools.bitbucket_get_pr.handler({ repo: 'secret', pr_id: 1 });
     expect(r.isError).toBe(true);
     expect(auth.bbFetch).not.toHaveBeenCalled();
   });
 
-  it('rejects a workspace different from the configured one', async () => {
-    const auth = fakeAuth(() => jsonRes({}));
+  it('ignores a caller-injected workspace and always targets the configured workspace', async () => {
+    const auth = fakeAuth(() => jsonRes({ id: 1, state: 'OPEN', title: 'X' }));
     const s = makeServer();
     register(s, ctx(auth));
+    // A caller cannot redirect the target: an injected `workspace` key is not in the schema and is ignored;
+    // the tool uses the configured workspace ('acme') regardless.
     const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'evil', repo: 'api', pr_id: 1 });
-    expect(r.isError).toBe(true);
-    expect(auth.bbFetch).not.toHaveBeenCalled();
+    expect(r.isError).toBeUndefined();
+    expect(auth.bbFetch).toHaveBeenCalledTimes(1);
+    const segments = auth.bbFetch.mock.calls[0][0];
+    expect(segments[0]).toBe('repositories');
+    expect(segments[1]).toBe('acme'); // configured workspace, never 'evil'
   });
 
   it('fail-closed by absence of config: an empty resolved config rejects every repo', async () => {
     const s = makeServer();
     // No bitbucketAuthFactory ⇒ the real createBitbucketAuth runs against an empty config (isConfigured false).
     register(s, { log: vi.fn(), moduleConfigs: { bitbucket: {} }, isToolEnabled: () => true });
-    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'acme', repo: 'api', pr_id: 1 });
+    const r = await s.tools.bitbucket_get_pr.handler({ repo: 'api', pr_id: 1 });
     expect(r.isError).toBe(true);
   });
 
@@ -82,7 +95,7 @@ describe('bitbucket tools: allow-list / workspace enforcement (args validated, n
     const auth = fakeAuth(() => jsonRes({ id: 1, state: 'OPEN', title: 'X' }));
     const s = makeServer();
     register(s, ctx(auth));
-    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'acme', repo: 'api', pr_id: 1 });
+    const r = await s.tools.bitbucket_get_pr.handler({ repo: 'api', pr_id: 1 });
     expect(r.isError).toBeUndefined();
     expect(r.content[0].text).toContain('"state": "OPEN"');
   });
@@ -101,7 +114,7 @@ describe('bitbucket write tools: OPEN-PR gate + request shapes', () => {
     const s = makeServer();
     register(s, ctx(auth));
     const r = await s.tools.bitbucket_add_comment.handler({
-      workspace: 'acme', repo: 'api', pr_id: 42, content: 'fix this', inline: { path: 'a.py', to: 10 },
+      repo: 'api', pr_id: 42, content: 'fix this', inline: { path: 'a.py', to: 10 },
     });
     expect(r.isError).toBeUndefined();
     expect(posted).toEqual({ content: { raw: 'fix this' }, inline: { path: 'a.py', to: 10 } });
@@ -115,7 +128,7 @@ describe('bitbucket write tools: OPEN-PR gate + request shapes', () => {
     });
     const s = makeServer();
     register(s, ctx(auth));
-    await s.tools.bitbucket_add_comment.handler({ workspace: 'acme', repo: 'api', pr_id: 42, content: 'ok', parent_id: 5 });
+    await s.tools.bitbucket_add_comment.handler({ repo: 'api', pr_id: 42, content: 'ok', parent_id: 5 });
     expect(posted.parent).toEqual({ id: 5 });
   });
 
@@ -123,7 +136,7 @@ describe('bitbucket write tools: OPEN-PR gate + request shapes', () => {
     const auth = fakeAuth(() => jsonRes({ state: 'MERGED' }));
     const s = makeServer();
     register(s, ctx(auth));
-    const r = await s.tools.bitbucket_add_comment.handler({ workspace: 'acme', repo: 'api', pr_id: 42, content: 'x' });
+    const r = await s.tools.bitbucket_add_comment.handler({ repo: 'api', pr_id: 42, content: 'x' });
     expect(r.isError).toBe(true);
     // only the requireOpenPr GET happened; no POST
     expect(auth.bbFetch).toHaveBeenCalledTimes(1);
@@ -138,9 +151,9 @@ describe('bitbucket write tools: OPEN-PR gate + request shapes', () => {
     });
     const s = makeServer();
     register(s, ctx(auth));
-    await s.tools.bitbucket_set_review.handler({ workspace: 'acme', repo: 'api', pr_id: 1, decision: 'approve' });
-    await s.tools.bitbucket_set_review.handler({ workspace: 'acme', repo: 'api', pr_id: 1, decision: 'request_changes' });
-    await s.tools.bitbucket_set_review.handler({ workspace: 'acme', repo: 'api', pr_id: 1, decision: 'none' });
+    await s.tools.bitbucket_set_review.handler({ repo: 'api', pr_id: 1, decision: 'approve' });
+    await s.tools.bitbucket_set_review.handler({ repo: 'api', pr_id: 1, decision: 'request_changes' });
+    await s.tools.bitbucket_set_review.handler({ repo: 'api', pr_id: 1, decision: 'none' });
     expect(seen).toContain('POST approve');
     expect(seen).toContain('POST request-changes');
     expect(seen).toContain('DELETE approve');
@@ -158,12 +171,27 @@ describe('bitbucket_create_pr: source + destination allow-list (F-sec4)', () => 
     const s = makeServer();
     register(s, ctx(auth));
     const r = await s.tools.bitbucket_create_pr.handler({
-      workspace: 'acme', repo: 'api', title: 'T', source_branch: 'feat', destination_branch: 'main',
+      repo: 'api', title: 'T', source_branch: 'feat', destination_branch: 'main',
     });
     expect(r.isError).toBeUndefined();
     expect(posted.source.branch.name).toBe('feat');
     expect(posted.destination.branch.name).toBe('main');
     expect(posted.source.repository).toBeUndefined();
+  });
+
+  it('targets the configured workspace even when one is injected into the args', async () => {
+    let segments = null;
+    const auth = fakeAuth((segs, opts) => {
+      if (opts.method === 'POST') { segments = segs; return jsonRes({ id: 9 }, 201); }
+      return jsonRes({});
+    });
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_create_pr.handler({
+      workspace: 'evil', repo: 'api', title: 'T', source_branch: 'feat',
+    });
+    expect(r.isError).toBeUndefined();
+    expect(segments[1]).toBe('acme'); // configured workspace, never the injected 'evil'
   });
 
   it('accepts an allow-listed source_repository (cross-repo / fork)', async () => {
@@ -175,7 +203,7 @@ describe('bitbucket_create_pr: source + destination allow-list (F-sec4)', () => 
     const s = makeServer();
     register(s, ctx(auth));
     const r = await s.tools.bitbucket_create_pr.handler({
-      workspace: 'acme', repo: 'api', title: 'T', source_branch: 'feat', source_repository: 'acme/web',
+      repo: 'api', title: 'T', source_branch: 'feat', source_repository: 'acme/web',
     });
     expect(r.isError).toBeUndefined();
     expect(posted.source.repository).toEqual({ full_name: 'acme/web' });
@@ -186,7 +214,7 @@ describe('bitbucket_create_pr: source + destination allow-list (F-sec4)', () => 
     const s = makeServer();
     register(s, ctx(auth));
     const r = await s.tools.bitbucket_create_pr.handler({
-      workspace: 'acme', repo: 'api', title: 'T', source_branch: 'feat', source_repository: 'acme/secret',
+      repo: 'api', title: 'T', source_branch: 'feat', source_repository: 'acme/secret',
     });
     expect(r.isError).toBe(true);
     expect(auth.bbFetch).not.toHaveBeenCalled();

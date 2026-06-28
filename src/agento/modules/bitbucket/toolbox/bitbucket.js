@@ -4,7 +4,8 @@ import { parseRepoAllowlist } from './api-handlers.js';
 
 // The agent's PR write surface — every tool opt-in (isToolEnabled) AND bounded to the SESSION-resolved
 // scoped config the toolbox hands every module (ctx.moduleConfigs.bitbucket): creds + workspace +
-// repo_allowlist. Tool args are VALIDATED, never TRUSTED — they may only narrow within the allow-list.
+// repo_allowlist. The workspace is NEVER a tool argument — it is fixed by config; the remaining tool
+// args are VALIDATED, never TRUSTED — they may only narrow within the allow-list.
 export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketAuthFactory }) {
   const cfg = (moduleConfigs && moduleConfigs.bitbucket) || {};
   const auth = (bitbucketAuthFactory || createBitbucketAuth)(cfg);
@@ -22,13 +23,11 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
   }
 
-  // Fail-closed by config-absence: no creds, or repo not in the resolved allow-list, or a mismatched
-  // workspace ⇒ rejected. An empty allow-list rejects every repo.
-  function guardTarget(toolName, ws, repo) {
+  // Fail-closed by config-absence: no creds (isConfigured() already requires a configured workspace),
+  // or repo not in the resolved allow-list ⇒ rejected. The workspace is fixed by config — never a tool
+  // argument — so it cannot be caller-influenced. An empty allow-list rejects every repo.
+  function guardTarget(toolName, repo) {
     if (!auth.isConfigured()) return err(toolName, 'Bitbucket not configured for this scope');
-    if (String(ws) !== String(workspace)) {
-      return err(toolName, `workspace "${ws}" is not the configured workspace`);
-    }
     if (!allowlist.includes(repo)) return err(toolName, `repo "${repo}" is not in the allow-list`);
     return null;
   }
@@ -44,10 +43,10 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
 
   // Write-tool gate: re-fetch the PR and reject anything but an OPEN PR (F-sec3). Returns an MCP error
   // object to return directly, or null when the PR is OPEN.
-  async function requireOpenPr(toolName, ws, repo, prId) {
+  async function requireOpenPr(toolName, repo, prId) {
     let pr;
     try {
-      pr = await getJson(toolName, ['repositories', ws, repo, 'pullrequests', prId]);
+      pr = await getJson(toolName, ['repositories', workspace, repo, 'pullrequests', prId]);
     } catch (e) {
       return err(toolName, `could not load PR ${prId}: ${e.message}`);
     }
@@ -64,13 +63,13 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     server.tool(
       'bitbucket_get_pr',
       'Read a pull request (title, description, state, source/destination branches).',
-      { workspace: z.string(), repo: z.string(), pr_id: idArg },
-      async ({ workspace: ws, repo, pr_id: prId }) => {
-        const blocked = guardTarget('bitbucket_get_pr', ws, repo);
+      { repo: z.string(), pr_id: idArg },
+      async ({ repo, pr_id: prId }) => {
+        const blocked = guardTarget('bitbucket_get_pr', repo);
         if (blocked) return blocked;
         try {
-          const pr = await getJson('bitbucket_get_pr', ['repositories', ws, repo, 'pullrequests', prId]);
-          log('bitbucket_get_pr', 'OK', `${ws}/${repo}#${prId}`);
+          const pr = await getJson('bitbucket_get_pr', ['repositories', workspace, repo, 'pullrequests', prId]);
+          log('bitbucket_get_pr', 'OK', `${workspace}/${repo}#${prId}`);
           return ok(JSON.stringify(pr, null, 2));
         } catch (e) {
           return err('bitbucket_get_pr', `read failed: ${e.message}`);
@@ -83,18 +82,18 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     server.tool(
       'bitbucket_get_pr_diff',
       "Read a pull request's diff (unified diff text).",
-      { workspace: z.string(), repo: z.string(), pr_id: idArg },
-      async ({ workspace: ws, repo, pr_id: prId }) => {
-        const blocked = guardTarget('bitbucket_get_pr_diff', ws, repo);
+      { repo: z.string(), pr_id: idArg },
+      async ({ repo, pr_id: prId }) => {
+        const blocked = guardTarget('bitbucket_get_pr_diff', repo);
         if (blocked) return blocked;
         try {
-          const r = await auth.bbFetch(['repositories', ws, repo, 'pullrequests', prId, 'diff']);
+          const r = await auth.bbFetch(['repositories', workspace, repo, 'pullrequests', prId, 'diff']);
           if (!r.ok) {
             await r.text().catch(() => '');
             throw new Error(`HTTP ${r.status}`);
           }
           const diff = await r.text();
-          log('bitbucket_get_pr_diff', 'OK', `${ws}/${repo}#${prId}`);
+          log('bitbucket_get_pr_diff', 'OK', `${workspace}/${repo}#${prId}`);
           return ok(diff);
         } catch (e) {
           return err('bitbucket_get_pr_diff', `read failed: ${e.message}`);
@@ -107,15 +106,15 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     server.tool(
       'bitbucket_get_pr_comments',
       "Read a pull request's comments.",
-      { workspace: z.string(), repo: z.string(), pr_id: idArg },
-      async ({ workspace: ws, repo, pr_id: prId }) => {
-        const blocked = guardTarget('bitbucket_get_pr_comments', ws, repo);
+      { repo: z.string(), pr_id: idArg },
+      async ({ repo, pr_id: prId }) => {
+        const blocked = guardTarget('bitbucket_get_pr_comments', repo);
         if (blocked) return blocked;
         try {
           const data = await getJson('bitbucket_get_pr_comments', [
-            'repositories', ws, repo, 'pullrequests', prId, 'comments',
+            'repositories', workspace, repo, 'pullrequests', prId, 'comments',
           ]);
-          log('bitbucket_get_pr_comments', 'OK', `${ws}/${repo}#${prId}`);
+          log('bitbucket_get_pr_comments', 'OK', `${workspace}/${repo}#${prId}`);
           return ok(JSON.stringify(data.values || data, null, 2));
         } catch (e) {
           return err('bitbucket_get_pr_comments', `read failed: ${e.message}`);
@@ -128,15 +127,15 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     server.tool(
       'bitbucket_get_pr_activity',
       "Read a pull request's activity / review history.",
-      { workspace: z.string(), repo: z.string(), pr_id: idArg },
-      async ({ workspace: ws, repo, pr_id: prId }) => {
-        const blocked = guardTarget('bitbucket_get_pr_activity', ws, repo);
+      { repo: z.string(), pr_id: idArg },
+      async ({ repo, pr_id: prId }) => {
+        const blocked = guardTarget('bitbucket_get_pr_activity', repo);
         if (blocked) return blocked;
         try {
           const data = await getJson('bitbucket_get_pr_activity', [
-            'repositories', ws, repo, 'pullrequests', prId, 'activity',
+            'repositories', workspace, repo, 'pullrequests', prId, 'activity',
           ]);
-          log('bitbucket_get_pr_activity', 'OK', `${ws}/${repo}#${prId}`);
+          log('bitbucket_get_pr_activity', 'OK', `${workspace}/${repo}#${prId}`);
           return ok(JSON.stringify(data.values || data, null, 2));
         } catch (e) {
           return err('bitbucket_get_pr_activity', `read failed: ${e.message}`);
@@ -154,31 +153,30 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
         'reply in a thread; pass inline { path, to } for an inline file:line comment.',
       ].join('\n'),
       {
-        workspace: z.string(),
         repo: z.string(),
         pr_id: idArg,
         content: z.string(),
         parent_id: idArg.optional(),
         inline: z.object({ path: z.string(), to: z.number().optional() }).optional(),
       },
-      async ({ workspace: ws, repo, pr_id: prId, content, parent_id: parentId, inline }) => {
-        const blocked = guardTarget('bitbucket_add_comment', ws, repo);
+      async ({ repo, pr_id: prId, content, parent_id: parentId, inline }) => {
+        const blocked = guardTarget('bitbucket_add_comment', repo);
         if (blocked) return blocked;
-        const open = await requireOpenPr('bitbucket_add_comment', ws, repo, prId);
+        const open = await requireOpenPr('bitbucket_add_comment', repo, prId);
         if (open) return open;
         try {
           const body = { content: { raw: content } };
           if (parentId !== undefined) body.parent = { id: parentId };
           if (inline) body.inline = inline;
           const r = await auth.bbFetch(
-            ['repositories', ws, repo, 'pullrequests', prId, 'comments'],
+            ['repositories', workspace, repo, 'pullrequests', prId, 'comments'],
             { method: 'POST', body },
           );
           if (!r.ok) {
             await r.text().catch(() => '');
             throw new Error(`HTTP ${r.status}`);
           }
-          log('bitbucket_add_comment', 'OK', `${ws}/${repo}#${prId}`);
+          log('bitbucket_add_comment', 'OK', `${workspace}/${repo}#${prId}`);
           return ok('Comment posted.');
         } catch (e) {
           return err('bitbucket_add_comment', `post failed: ${e.message}`);
@@ -191,22 +189,22 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     server.tool(
       'bitbucket_resolve_comment',
       'Resolve a pull request comment thread.',
-      { workspace: z.string(), repo: z.string(), pr_id: idArg, comment_id: idArg },
-      async ({ workspace: ws, repo, pr_id: prId, comment_id: commentId }) => {
-        const blocked = guardTarget('bitbucket_resolve_comment', ws, repo);
+      { repo: z.string(), pr_id: idArg, comment_id: idArg },
+      async ({ repo, pr_id: prId, comment_id: commentId }) => {
+        const blocked = guardTarget('bitbucket_resolve_comment', repo);
         if (blocked) return blocked;
-        const open = await requireOpenPr('bitbucket_resolve_comment', ws, repo, prId);
+        const open = await requireOpenPr('bitbucket_resolve_comment', repo, prId);
         if (open) return open;
         try {
           const r = await auth.bbFetch(
-            ['repositories', ws, repo, 'pullrequests', prId, 'comments', commentId, 'resolve'],
+            ['repositories', workspace, repo, 'pullrequests', prId, 'comments', commentId, 'resolve'],
             { method: 'POST' },
           );
           if (!r.ok) {
             await r.text().catch(() => '');
             throw new Error(`HTTP ${r.status}`);
           }
-          log('bitbucket_resolve_comment', 'OK', `${ws}/${repo}#${prId} c=${commentId}`);
+          log('bitbucket_resolve_comment', 'OK', `${workspace}/${repo}#${prId} c=${commentId}`);
           return ok('Comment resolved.');
         } catch (e) {
           return err('bitbucket_resolve_comment', `resolve failed: ${e.message}`);
@@ -220,17 +218,16 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
       'bitbucket_set_review',
       'Set the review decision on a pull request: approve, request_changes, or none (retract).',
       {
-        workspace: z.string(),
         repo: z.string(),
         pr_id: idArg,
         decision: z.enum(['approve', 'request_changes', 'none']),
       },
-      async ({ workspace: ws, repo, pr_id: prId, decision }) => {
-        const blocked = guardTarget('bitbucket_set_review', ws, repo);
+      async ({ repo, pr_id: prId, decision }) => {
+        const blocked = guardTarget('bitbucket_set_review', repo);
         if (blocked) return blocked;
-        const open = await requireOpenPr('bitbucket_set_review', ws, repo, prId);
+        const open = await requireOpenPr('bitbucket_set_review', repo, prId);
         if (open) return open;
-        const prSeg = ['repositories', ws, repo, 'pullrequests', prId];
+        const prSeg = ['repositories', workspace, repo, 'pullrequests', prId];
         try {
           if (decision === 'approve') {
             const r = await auth.bbFetch([...prSeg, 'approve'], { method: 'POST' });
@@ -255,7 +252,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
               }
             }
           }
-          log('bitbucket_set_review', 'OK', `${ws}/${repo}#${prId} ${decision}`);
+          log('bitbucket_set_review', 'OK', `${workspace}/${repo}#${prId} ${decision}`);
           return ok(`Review decision set: ${decision}.`);
         } catch (e) {
           return err('bitbucket_set_review', `set_review failed: ${e.message}`);
@@ -268,11 +265,11 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
     server.tool(
       'bitbucket_create_pr',
       [
-        'Open a new pull request. The destination repo must be in the allow-list. For a cross-repo /',
-        'fork PR, source_repository ("workspace/repo") must ALSO be in the allow-list.',
+        'Open a new pull request. The destination workspace is fixed by configuration; the destination',
+        'repo must be in the allow-list. For a cross-repo / fork PR, source_repository ("workspace/repo")',
+        'must ALSO be in the allow-list and its workspace half must equal the configured workspace.',
       ].join('\n'),
       {
-        workspace: z.string(),
         repo: z.string(),
         title: z.string(),
         source_branch: z.string(),
@@ -281,10 +278,10 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
         source_repository: z.string().optional(),
       },
       async ({
-        workspace: ws, repo, title, source_branch: src, destination_branch: dest,
+        repo, title, source_branch: src, destination_branch: dest,
         description, source_repository: sourceRepo,
       }) => {
-        const blocked = guardTarget('bitbucket_create_pr', ws, repo);
+        const blocked = guardTarget('bitbucket_create_pr', repo);
         if (blocked) return blocked;
         // Validate the source repository too when given (forks / cross-repo). Format: "workspace/repo".
         let sourceRepository;
@@ -301,7 +298,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
           if (dest) body.destination = { branch: { name: dest } };
           if (description) body.summary = { raw: description };
           const r = await auth.bbFetch(
-            ['repositories', ws, repo, 'pullrequests'],
+            ['repositories', workspace, repo, 'pullrequests'],
             { method: 'POST', body },
           );
           if (!r.ok) {
@@ -309,7 +306,7 @@ export function register(server, { log, moduleConfigs, isToolEnabled, bitbucketA
             throw new Error(`HTTP ${r.status}`);
           }
           const created = await r.json();
-          log('bitbucket_create_pr', 'OK', `${ws}/${repo} #${created.id}`);
+          log('bitbucket_create_pr', 'OK', `${workspace}/${repo} #${created.id}`);
           return ok(`PR created: #${created.id} ${created.links?.html?.href || ''}`.trim());
         } catch (e) {
           return err('bitbucket_create_pr', `create failed: ${e.message}`);
