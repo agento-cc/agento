@@ -19,6 +19,11 @@ from agento.framework.events import (
     WorkspaceBuildFailedEvent,
     WorkspaceBuildStartedEvent,
 )
+from agento.framework.git_identity import (
+    GIT_AUTHOR_EMAIL_PATH,
+    GIT_AUTHOR_NAME_PATH,
+    gitconfig_user_block,
+)
 from agento.framework.persistent_home import ensure_state_dir as _ensure_state_dir
 from agento.framework.persistent_home import link_persistent_paths
 from agento.framework.workspace_paths import BUILD_DIR, THEME_DIR
@@ -394,34 +399,23 @@ def materialize_ssh_identity(
         (ssh_dir / "known_hosts").write_text(known_hosts)
 
 
-def _gitconfig_value(raw: str) -> str | None:
-    """Encode a string as a safe, single-line, double-quoted git-config value — git's own value
-    encoding, which round-trips. Strips control chars (no raw NL/CR/NUL/etc.), trims surrounding
-    whitespace, then escapes ``\\`` and ``"``. Returns None if empty after cleaning (so the caller
-    skips writing that line). Neutralizes INI injection, comment chars, and line continuation."""
-    cleaned = "".join(c for c in raw if c >= " " and c != "\x7f").strip()
-    if not cleaned:
-        return None
-    return '"' + cleaned.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def materialize_git_identity(
     build_dir: Path,
     resolved: dict[str, str],
 ) -> None:
     """Write ``build_dir/.gitconfig`` ``[user]`` from agent_view/identity/git_author_*.
-    Values come pre-resolved (ENV->DB->config.json) and are encoded safely. Missing/empty fields are
-    skipped; if neither is set, no file is written (behaves exactly as before this feature)."""
-    name = _gitconfig_value(resolved.get(_GIT_AUTHOR_NAME_PATH) or "")
-    email = _gitconfig_value(resolved.get(_GIT_AUTHOR_EMAIL_PATH) or "")
-    if not (name or email):
+    Values come pre-resolved (ENV->DB->config.json) and are encoded safely (see
+    ``git_identity.gitconfig_user_block``). Missing/empty fields are skipped; if neither is set,
+    no file is written (behaves exactly as before this feature). The same values are ALSO exported
+    as ``GIT_AUTHOR_*``/``GIT_COMMITTER_*`` on the agent at run time (which override even a
+    repo-local ``.git/config``) — see ``agento.framework.git_identity.git_identity_env``."""
+    block = gitconfig_user_block(
+        resolved.get(GIT_AUTHOR_NAME_PATH) or "",
+        resolved.get(GIT_AUTHOR_EMAIL_PATH) or "",
+    )
+    if block is None:
         return
-    lines = ["[user]\n"]
-    if name:
-        lines.append(f"\tname = {name}\n")
-    if email:
-        lines.append(f"\temail = {email}\n")
-    (build_dir / ".gitconfig").write_text("".join(lines))
+    (build_dir / ".gitconfig").write_text(block)
 
 
 def _read_retention_max_builds(conn) -> int:

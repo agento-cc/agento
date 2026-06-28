@@ -22,6 +22,7 @@ def create_runner(
     home_dir: str | None = None,
     token_override: Token | None = None,
     credentials_override: dict | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> Runner:
     """Create the appropriate Runner for the given AgentProvider."""
     factory = _RUNNERS.get(agent_type)
@@ -46,6 +47,8 @@ def create_runner(
         credentials_override = token_override.credentials
     if credentials_override is not None:
         kwargs["credentials_override"] = credentials_override
+    if extra_env and _accepts_kwarg(factory, "extra_env"):
+        kwargs["extra_env"] = extra_env
     return factory(**kwargs)
 
 

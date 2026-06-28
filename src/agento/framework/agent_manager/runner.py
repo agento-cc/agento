@@ -36,6 +36,7 @@ class TokenRunner(ABC):
         model_override: str | None = None,
         token_override: Token | None = None,
         credentials_override: dict | None = None,
+        extra_env: dict[str, str] | None = None,
     ):
         self.working_dir = working_dir
         self.home_dir = home_dir
@@ -46,6 +47,9 @@ class TokenRunner(ABC):
         self.model_override = model_override
         self.token_override = token_override
         self.credentials_override = credentials_override
+        # Non-secret env overrides applied to the agent process (e.g. GIT_AUTHOR_*/
+        # GIT_COMMITTER_* from the agent_view identity). Applied last so they win.
+        self.extra_env = extra_env or {}
         self.pid_callback: Callable[[int], None] | None = None
         self.session_id_callback: Callable[[str], None] | None = None
 
@@ -208,7 +212,8 @@ class TokenRunner(ABC):
                     f"Register one: bin/agento token:register {self.agent_type.value} <label>"
                 )
         model = model or self.model_override
-        env = {**os.environ, **self._build_env(token)}
+        # extra_env last: GIT_AUTHOR_*/GIT_COMMITTER_* must override any inherited git env.
+        env = {**os.environ, **self._build_env(token), **self.extra_env}
         return token, env, model
 
     def _make_override_token(self, credentials: dict) -> Token:

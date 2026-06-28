@@ -96,10 +96,18 @@ All six support the standard 3-level scope fallback: `agent_view → workspace �
 ### Git commit author identity
 
 The agent commits with `git` inside the sandbox; the SSH key authenticates the *push* but does **not**
-set the commit author. The author comes from `~/.gitconfig` `[user]`, which `workspace:build`
-materializes from `git_author_name` / `git_author_email` (each value is single-line-encoded with git's
-own double-quoting, so control chars / `#` / `\` cannot corrupt or inject config). If neither is set, no
-`.gitconfig` is written and the author falls back to whatever the base image/CLI provides (often wrong).
+set the commit author. The configured identity is applied **two ways**, so it always wins:
+
+1. **`~/.gitconfig` `[user]`** — `workspace:build` materializes it from `git_author_name` /
+   `git_author_email` (each value is single-line-encoded with git's own double-quoting, so control
+   chars / `#` / `\` cannot corrupt or inject config).
+2. **`GIT_AUTHOR_NAME/EMAIL` + `GIT_COMMITTER_NAME/EMAIL` env vars** — exported on the agent process at
+   run time (by the consumer and by `agento run`). Git env vars override **every** gitconfig level —
+   including a **repo-local `.git/config [user]`**, which would otherwise beat the global `~/.gitconfig`
+   (e.g. a reused clone that carries a stale identity). This is what makes the author deterministic.
+
+If neither field is set, no `.gitconfig` is written, no git env is exported, and the author falls back to
+whatever the base image/CLI provides (often wrong) — i.e. behaviour is unchanged for unconfigured views.
 
 **Linking rule:** Bitbucket (and GitHub) link a commit to an account *only* when the commit author email
 matches a **verified** email on that account — set `git_author_email` accordingly. For Bitbucket views,
@@ -111,6 +119,7 @@ matches a **verified** email on that account — set `git_author_email` accordin
 1. `agento workspace:build --agent-view <code>` resolves scoped overrides, decrypts the SSH private key, and writes identity files into `workspace/build/<ws>/<av>/builds/<id>/.ssh/` with correct permissions.
 2. `agento run` and the consumer copy the current build into a per-run artifacts directory, set `HOME=<artifacts_dir>` on the agent subprocess, and wrap the command with a short shell prelude that symlinks `<artifacts_dir>/.ssh` into the process's passwd home (`/root` or `/home/agent`). This is required because OpenSSH expands `~/.ssh/` via `getpwuid(getuid())->pw_dir`, not `$HOME` — so merely setting `HOME` is not enough for `ssh` / `git` to find the materialized key. The symlink is established per-invocation by [`agento.framework.ssh_prelude`](../../src/agento/framework/ssh_prelude.py).
 3. `git_author_*` are materialized into `<build_dir>/.gitconfig` `[user]`. Unlike `.ssh/`, **no prelude symlink is needed**: git reads `~/.gitconfig` via `$HOME`, which is already set to the artifacts dir. `.gitconfig` is **copied** (not symlinked) into each per-run artifacts dir, so a run-time `git config` write stays private to that run instead of corrupting the shared build.
+4. The same `git_author_*` values are also exported as `GIT_AUTHOR_*`/`GIT_COMMITTER_*` on the agent process (consumer: subprocess env; `agento run`: `docker exec -e`). These env vars take precedence over **all** gitconfig files — so even a repo-local `.git/config [user]` in a reused clone cannot override the configured author. Derived via [`agento.framework.git_identity`](../../src/agento/framework/git_identity.py).
 
 See [workspace-build.md](../cli/workspace-build.md) for the full build flow.
 

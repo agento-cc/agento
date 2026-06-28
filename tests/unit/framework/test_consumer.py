@@ -363,6 +363,7 @@ class TestRunJob:
             working_dir=None,
             home_dir=None,
             token_override=self._token_resolver_mock.resolve.return_value,
+            extra_env=None,  # no agent_view ⇒ no git identity env
         )
         assert isinstance(result, _JobResult)
         assert "subtype=" in result.summary

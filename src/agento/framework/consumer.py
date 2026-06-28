@@ -466,6 +466,22 @@ class Consumer:
             artifacts_dir=str(artifacts_dir) if artifacts_dir else "",
         ))
 
+        # Git commit author identity → GIT_AUTHOR_*/GIT_COMMITTER_* env. These override every
+        # gitconfig level (incl. a repo-local .git/config), so the agent's commits are authored
+        # correctly even in a clone carrying its own stale [user]. Empty config ⇒ no override.
+        from .git_identity import (
+            GIT_AUTHOR_EMAIL_PATH,
+            GIT_AUTHOR_NAME_PATH,
+            git_identity_env,
+        )
+        git_env = (
+            git_identity_env(
+                agent_config_svc.get(GIT_AUTHOR_NAME_PATH) or "",
+                agent_config_svc.get(GIT_AUTHOR_EMAIL_PATH) or "",
+            )
+            if agent_config_svc is not None else {}
+        )
+
         success = True
         try:
             runner = create_runner(
@@ -477,6 +493,7 @@ class Consumer:
                 working_dir=str(artifacts_dir) if artifacts_dir else None,
                 home_dir=str(home_dir) if home_dir else None,
                 token_override=token,
+                extra_env=git_env or None,
             )
             runner.pid_callback = lambda pid: self._save_pid(job.id, pid)
             # Persist session_id to both the DB and the in-memory job — the

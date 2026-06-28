@@ -109,6 +109,21 @@ class AgentViewPrepareRunCommand:
 
         writer = get_config_writer(provider)
         env = writer.credential_env(token)
+        # Add GIT_AUTHOR_*/GIT_COMMITTER_* from the agent_view identity so the agent's commits are
+        # authored correctly even in a clone with its own repo-local .git/config (env beats all
+        # gitconfig levels). Non-secret, but delivered the same name-only -e way by `agento run`.
+        from agento.framework.git_identity import (
+            GIT_AUTHOR_EMAIL_PATH,
+            GIT_AUTHOR_NAME_PATH,
+            git_identity_env,
+        )
+        env = {
+            **env,
+            **git_identity_env(
+                agent_config_svc.get(GIT_AUTHOR_NAME_PATH) or "",
+                agent_config_svc.get(GIT_AUTHOR_EMAIL_PATH) or "",
+            ),
+        }
 
         effective_model = args.model or runtime.model
         # Mirror ``agent_view:runtime``: a missing CliInvoker yields a JSON

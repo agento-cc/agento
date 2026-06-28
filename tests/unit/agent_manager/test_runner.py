@@ -60,6 +60,37 @@ class TestRunnerProtocolCompliance:
         )
 
 
+class TestExtraEnv:
+    """extra_env (e.g. GIT_AUTHOR_*/GIT_COMMITTER_*) is merged last so it overrides
+    both the credential env and any inherited process env."""
+
+    def test_extra_env_is_merged(self):
+        token = _make_token({"raw_auth": {}})  # oauth ⇒ _build_env() == {}
+        runner = TokenClaudeRunner(
+            dry_run=True, token_override=token,
+            extra_env={"GIT_AUTHOR_NAME": "Mieszko", "GIT_AUTHOR_EMAIL": "m@example.com"},
+        )
+        _token, env, _model = runner._resolve_env_and_model(None)
+        assert env["GIT_AUTHOR_NAME"] == "Mieszko"
+        assert env["GIT_AUTHOR_EMAIL"] == "m@example.com"
+
+    def test_extra_env_overrides_inherited_process_env(self, monkeypatch):
+        monkeypatch.setenv("GIT_AUTHOR_NAME", "Stale Inherited")
+        token = _make_token({"raw_auth": {}})
+        runner = TokenClaudeRunner(
+            dry_run=True, token_override=token, extra_env={"GIT_AUTHOR_NAME": "Mieszko"},
+        )
+        _token, env, _model = runner._resolve_env_and_model(None)
+        assert env["GIT_AUTHOR_NAME"] == "Mieszko"  # extra_env wins over os.environ
+
+    def test_default_no_extra_env(self):
+        token = _make_token({"raw_auth": {}})
+        runner = TokenClaudeRunner(dry_run=True, token_override=token)
+        _token, env, _model = runner._resolve_env_and_model(None)
+        assert "GIT_AUTHOR_NAME" not in env or env.get("GIT_AUTHOR_NAME") != ""
+        assert runner.extra_env == {}
+
+
 class TestTokenRunnerDryRun:
     def test_claude_dry_run(self):
         runner = TokenClaudeRunner(dry_run=True)

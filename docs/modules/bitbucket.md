@@ -174,10 +174,13 @@ key (git) are different credentials.
   never receives it in any case.
 - **Authorization boundary = the toolbox.** `enabled`, workspace, `account_uuid` and `repo_allowlist`
   are resolved from **scoped config** and enforced on **every** REST + MCP call; caller/body args may
-  only *narrow* a request, never authorize it. Every read/write is bounded to the resolved
+  only *narrow* a request, never authorize it. The **workspace is never a tool argument** — every MCP
+  tool targets the configured `bitbucket_workspace`, so a caller cannot redirect a call to another
+  workspace (an injected `workspace` arg is ignored). Every read/write is bounded to the resolved
   `repo_allowlist` (empty allow-list rejects all — fail-closed by config absence). `bitbucket_create_pr`
-  validates **both** the destination repo and any `source.repository` (forks/cross-repo) against the
-  allow-list. Write tools re-fetch the PR and reject anything but an OPEN PR.
+  validates **both** the destination repo and any `source.repository` (forks/cross-repo, whose workspace
+  half must equal the configured workspace) against the allow-list. Write tools re-fetch the PR and
+  reject anything but an OPEN PR.
 - **Honest boundary (N5-2):** the MCP layer cannot see `agentViewMeta`, and the agent — a shell-capable
   process on the same Docker network as the toolbox — could in principle open its own MCP session with a
   different/omitted `agent_view_id`. That is the **framework-wide internal-caller-auth gap shared by the
