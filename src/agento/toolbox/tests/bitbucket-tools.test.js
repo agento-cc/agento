@@ -1,0 +1,194 @@
+import { describe, it, expect, vi } from 'vitest';
+
+import { register } from '../../modules/bitbucket/toolbox/bitbucket.js';
+
+function makeServer() {
+  const tools = {};
+  return { tools, tool(name, desc, schema, handler) { tools[name] = { desc, schema, handler }; } };
+}
+
+function jsonRes(body, status = 200) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body, text: async () => '' };
+}
+
+function fakeAuth(handler) {
+  return { isConfigured: () => true, bbFetch: vi.fn(async (segments, opts = {}) => handler(segments, opts)) };
+}
+
+const CFG = {
+  bitbucket_workspace: 'acme', bitbucket_email: 'e@x.com',
+  bitbucket_api_token: 'tok', repo_allowlist: 'api,web',
+};
+
+function ctx(auth, overrides = {}) {
+  return {
+    log: vi.fn(),
+    moduleConfigs: { bitbucket: CFG },
+    isToolEnabled: () => true,
+    bitbucketAuthFactory: () => auth,
+    ...overrides,
+  };
+}
+
+const ALL_TOOLS = [
+  'bitbucket_add_comment', 'bitbucket_create_pr', 'bitbucket_get_pr',
+  'bitbucket_get_pr_activity', 'bitbucket_get_pr_comments', 'bitbucket_get_pr_diff',
+  'bitbucket_resolve_comment', 'bitbucket_set_review',
+];
+
+describe('bitbucket tools: registration + opt-in gating', () => {
+  it('registers all 8 tools when enabled', () => {
+    const s = makeServer();
+    register(s, ctx(fakeAuth(() => jsonRes({}))));
+    expect(Object.keys(s.tools).sort()).toEqual(ALL_TOOLS);
+  });
+
+  it('skips a tool whose is_enabled resolves false', () => {
+    const s = makeServer();
+    register(s, ctx(fakeAuth(() => jsonRes({})), { isToolEnabled: (n) => n !== 'bitbucket_create_pr' }));
+    expect(s.tools.bitbucket_create_pr).toBeUndefined();
+    expect(s.tools.bitbucket_get_pr).toBeDefined();
+  });
+});
+
+describe('bitbucket tools: allow-list / workspace enforcement (args validated, not trusted)', () => {
+  it('rejects a repo outside the allow-list, without calling Bitbucket', async () => {
+    const auth = fakeAuth(() => jsonRes({}));
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'acme', repo: 'secret', pr_id: 1 });
+    expect(r.isError).toBe(true);
+    expect(auth.bbFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a workspace different from the configured one', async () => {
+    const auth = fakeAuth(() => jsonRes({}));
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'evil', repo: 'api', pr_id: 1 });
+    expect(r.isError).toBe(true);
+    expect(auth.bbFetch).not.toHaveBeenCalled();
+  });
+
+  it('fail-closed by absence of config: an empty resolved config rejects every repo', async () => {
+    const s = makeServer();
+    // No bitbucketAuthFactory ⇒ the real createBitbucketAuth runs against an empty config (isConfigured false).
+    register(s, { log: vi.fn(), moduleConfigs: { bitbucket: {} }, isToolEnabled: () => true });
+    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'acme', repo: 'api', pr_id: 1 });
+    expect(r.isError).toBe(true);
+  });
+
+  it('reads a PR for an allow-listed repo', async () => {
+    const auth = fakeAuth(() => jsonRes({ id: 1, state: 'OPEN', title: 'X' }));
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_get_pr.handler({ workspace: 'acme', repo: 'api', pr_id: 1 });
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain('"state": "OPEN"');
+  });
+});
+
+describe('bitbucket write tools: OPEN-PR gate + request shapes', () => {
+  it('add_comment builds an inline comment and only after confirming the PR is OPEN', async () => {
+    let posted = null;
+    const auth = fakeAuth((segments, opts) => {
+      if (opts.method === 'POST' && segments[segments.length - 1] === 'comments') {
+        posted = opts.body;
+        return jsonRes({ id: 'c-new' }, 201);
+      }
+      return jsonRes({ state: 'OPEN' }); // requireOpenPr
+    });
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_add_comment.handler({
+      workspace: 'acme', repo: 'api', pr_id: 42, content: 'fix this', inline: { path: 'a.py', to: 10 },
+    });
+    expect(r.isError).toBeUndefined();
+    expect(posted).toEqual({ content: { raw: 'fix this' }, inline: { path: 'a.py', to: 10 } });
+  });
+
+  it('add_comment threads a reply via parent.id', async () => {
+    let posted = null;
+    const auth = fakeAuth((segments, opts) => {
+      if (opts.method === 'POST') { posted = opts.body; return jsonRes({ id: 'c' }, 201); }
+      return jsonRes({ state: 'OPEN' });
+    });
+    const s = makeServer();
+    register(s, ctx(auth));
+    await s.tools.bitbucket_add_comment.handler({ workspace: 'acme', repo: 'api', pr_id: 42, content: 'ok', parent_id: 5 });
+    expect(posted.parent).toEqual({ id: 5 });
+  });
+
+  it('write tools reject a non-OPEN PR (no write issued)', async () => {
+    const auth = fakeAuth(() => jsonRes({ state: 'MERGED' }));
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_add_comment.handler({ workspace: 'acme', repo: 'api', pr_id: 42, content: 'x' });
+    expect(r.isError).toBe(true);
+    // only the requireOpenPr GET happened; no POST
+    expect(auth.bbFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('set_review hits /approve, /request-changes, or DELETEs both for none', async () => {
+    const seen = [];
+    const auth = fakeAuth((segments, opts) => {
+      const tail = segments[segments.length - 1];
+      if (tail === 'approve' || tail === 'request-changes') { seen.push(`${opts.method} ${tail}`); return jsonRes({}); }
+      return jsonRes({ state: 'OPEN' });
+    });
+    const s = makeServer();
+    register(s, ctx(auth));
+    await s.tools.bitbucket_set_review.handler({ workspace: 'acme', repo: 'api', pr_id: 1, decision: 'approve' });
+    await s.tools.bitbucket_set_review.handler({ workspace: 'acme', repo: 'api', pr_id: 1, decision: 'request_changes' });
+    await s.tools.bitbucket_set_review.handler({ workspace: 'acme', repo: 'api', pr_id: 1, decision: 'none' });
+    expect(seen).toContain('POST approve');
+    expect(seen).toContain('POST request-changes');
+    expect(seen).toContain('DELETE approve');
+    expect(seen).toContain('DELETE request-changes');
+  });
+});
+
+describe('bitbucket_create_pr: source + destination allow-list (F-sec4)', () => {
+  it('creates a same-repo PR', async () => {
+    let posted = null;
+    const auth = fakeAuth((segments, opts) => {
+      if (opts.method === 'POST') { posted = opts.body; return jsonRes({ id: 7, links: { html: { href: 'u' } } }, 201); }
+      return jsonRes({});
+    });
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_create_pr.handler({
+      workspace: 'acme', repo: 'api', title: 'T', source_branch: 'feat', destination_branch: 'main',
+    });
+    expect(r.isError).toBeUndefined();
+    expect(posted.source.branch.name).toBe('feat');
+    expect(posted.destination.branch.name).toBe('main');
+    expect(posted.source.repository).toBeUndefined();
+  });
+
+  it('accepts an allow-listed source_repository (cross-repo / fork)', async () => {
+    let posted = null;
+    const auth = fakeAuth((segments, opts) => {
+      if (opts.method === 'POST') { posted = opts.body; return jsonRes({ id: 8 }, 201); }
+      return jsonRes({});
+    });
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_create_pr.handler({
+      workspace: 'acme', repo: 'api', title: 'T', source_branch: 'feat', source_repository: 'acme/web',
+    });
+    expect(r.isError).toBeUndefined();
+    expect(posted.source.repository).toEqual({ full_name: 'acme/web' });
+  });
+
+  it('rejects a source_repository outside the allow-list', async () => {
+    const auth = fakeAuth(() => jsonRes({}, 201));
+    const s = makeServer();
+    register(s, ctx(auth));
+    const r = await s.tools.bitbucket_create_pr.handler({
+      workspace: 'acme', repo: 'api', title: 'T', source_branch: 'feat', source_repository: 'acme/secret',
+    });
+    expect(r.isError).toBe(true);
+    expect(auth.bbFetch).not.toHaveBeenCalled();
+  });
+});

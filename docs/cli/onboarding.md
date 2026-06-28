@@ -41,3 +41,10 @@ agento setup:upgrade
 ```
 
 When `is_complete()` finds all required values present, the onboarding prompt is skipped automatically for that module.
+
+## Channel-specific onboarding
+
+Some channels add their own verify-before-save onboarding and completeness rules:
+
+- **Outlook** — Graph app credentials (client secret or certificate PEM). See [docs/modules/outlook.md](../modules/outlook.md).
+- **Bitbucket** — workspace, agent account, API token (verified against `GET /2.0/user` inside the toolbox before anything is saved) and watched repos. Bitbucket config is **always agent_view-scoped** (the API token is never stored at DEFAULT scope, so it is only ever decrypted in the toolbox); onboarding auto-selects the sole active view or prompts when there are several, and refuses if there are none. Completeness requires the token + `bitbucket_account_uuid` + `repo_allowlist` at the owning view's agent_view scope. See [docs/modules/bitbucket.md](../modules/bitbucket.md) for the manual `config:set` path.

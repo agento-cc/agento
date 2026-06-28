@@ -95,7 +95,8 @@ def resolve_module_source(
     """Determine where a module is sourced from.
 
     - ``"local"``: ``<project_dir>/app/code/<name>/module.json`` exists.
-    - ``"core"``: bundled in ``<venv>/lib/python*/site-packages/agento/modules/<name>/module.json``.
+    - ``"core"``: bundled in the installed agento package (handles both regular
+      installs and editable installs via ``.pth`` files).
     - ``"pypi"``: top-level package at ``<venv>/lib/python*/site-packages/<name>/__init__.py``.
     - ``"missing"``: none of the above.
 
@@ -112,4 +113,12 @@ def resolve_module_source(
         for site_packages in venv.glob("lib/python*/site-packages"):
             if (site_packages / name / "__init__.py").is_file():
                 return "pypi"
+
+    # Editable installs redirect the agento package via a .pth file, so the
+    # site-packages physical check above misses them.  Fall back to resolving
+    # relative to this file — always correct regardless of install mode.
+    core_modules_dir = Path(__file__).parent.parent / "modules"
+    if (core_modules_dir / name / "module.json").is_file():
+        return "core"
+
     return "missing"

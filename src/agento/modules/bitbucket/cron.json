@@ -1,0 +1,6 @@
+{
+  "jobs": [
+    {"name": "bitbucket_publish_changes", "schedule": "* * * * *", "command": "bitbucket:publish-changes"},
+    {"name": "bitbucket_publish_comments", "schedule": "0 */2 * * *", "command": "bitbucket:publish-comments"}
+  ]
+}

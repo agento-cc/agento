@@ -1,0 +1,12 @@
+{
+  "config_class": "src.config.BitbucketConfig",
+  "channels": [
+    {"name": "bitbucket-comments", "class": "src.channel.BitbucketCommentsChannel"},
+    {"name": "bitbucket-changes", "class": "src.channel.BitbucketChangesChannel"}
+  ],
+  "commands": [
+    {"name": "bitbucket:publish-comments", "class": "src.commands.publish_comments.BitbucketPublishCommentsCommand"},
+    {"name": "bitbucket:publish-changes", "class": "src.commands.publish_changes.BitbucketPublishChangesCommand"}
+  ],
+  "onboarding": "src.onboarding.BitbucketOnboarding"
+}

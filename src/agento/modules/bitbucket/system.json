@@ -1,0 +1,9 @@
+{
+  "enabled": {"type": "boolean", "label": "Enable Bitbucket channel"},
+  "bitbucket_workspace": {"type": "string", "label": "Bitbucket Cloud workspace slug"},
+  "bitbucket_email": {"type": "string", "label": "Agent Atlassian account email (Basic-auth username)"},
+  "bitbucket_api_token": {"type": "obscure", "label": "Atlassian API token (encrypted at rest; toolbox-only)"},
+  "bitbucket_account_uuid": {"type": "string", "label": "Agent's Bitbucket account UUID (author.uuid match)"},
+  "repo_allowlist": {"type": "string", "label": "Watched repo slugs (comma-separated; empty blocks all)"},
+  "poll_top": {"type": "integer", "label": "Max open PRs fetched per repo per poll (<=50)"}
+}
