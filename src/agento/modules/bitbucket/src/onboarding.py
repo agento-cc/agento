@@ -212,6 +212,12 @@ class BitbucketOnboarding:
         scoped_config_set(conn, "bitbucket/bitbucket_email", email, scope=scope, scope_id=scope_id)
         scoped_config_set(conn, "bitbucket/bitbucket_account_uuid", account_uuid, scope=scope, scope_id=scope_id)
         scoped_config_set(conn, "bitbucket/repo_allowlist", repo_allowlist, scope=scope, scope_id=scope_id)
+        # Seed this agent_view's git commit identity so its commits link to this Bitbucket account.
+        # Bitbucket links a commit by author email matching a verified account email — which is the
+        # email entered here. The framework materializes ~/.gitconfig [user] from these at workspace:build.
+        scoped_config_set(conn, "agent_view/identity/git_author_email", email, scope=scope, scope_id=scope_id)
+        if username:
+            scoped_config_set(conn, "agent_view/identity/git_author_name", username, scope=scope, scope_id=scope_id)
         scoped_config_set(
             conn, "bitbucket/bitbucket_api_token", api_token,
             scope=scope, scope_id=scope_id, encrypted=True,

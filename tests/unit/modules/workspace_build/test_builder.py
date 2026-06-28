@@ -21,6 +21,7 @@ from agento.modules.workspace_build.src.builder import (
     build_manifest,
     compute_build_checksum,
     execute_build,
+    materialize_git_identity,
     materialize_ssh_identity,
 )
 
@@ -822,6 +823,71 @@ class TestMaterializeSshIdentity:
     def test_noop_when_no_identity(self, tmp_path):
         materialize_ssh_identity(tmp_path, {"agent_view/model": "opus"})
         assert not (tmp_path / ".ssh").exists()
+
+
+class TestMaterializeGitIdentity:
+    _N = "agent_view/identity/git_author_name"
+    _E = "agent_view/identity/git_author_email"
+
+    def test_writes_gitconfig_from_resolved(self, tmp_path):
+        materialize_git_identity(tmp_path, {self._N: "Example User", self._E: "agent@example.com"})
+        assert (tmp_path / ".gitconfig").read_text() == (
+            '[user]\n\tname = "Example User"\n\temail = "agent@example.com"\n'
+        )
+
+    def test_writes_email_only(self, tmp_path):
+        materialize_git_identity(tmp_path, {self._E: "agent@example.com"})
+        assert (tmp_path / ".gitconfig").read_text() == '[user]\n\temail = "agent@example.com"\n'
+
+    def test_writes_name_only(self, tmp_path):
+        materialize_git_identity(tmp_path, {self._N: "Example"})
+        assert (tmp_path / ".gitconfig").read_text() == '[user]\n\tname = "Example"\n'
+
+    def test_noop_when_no_identity(self, tmp_path):
+        materialize_git_identity(tmp_path, {"agent_view/model": "opus"})
+        assert not (tmp_path / ".gitconfig").exists()
+
+    def test_noop_when_only_whitespace_or_control_chars(self, tmp_path):
+        # Values that clean to empty are treated as absent — no file written.
+        materialize_git_identity(tmp_path, {self._N: "  \t ", self._E: "\n\r\x00"})
+        assert not (tmp_path / ".gitconfig").exists()
+
+    def test_strips_whitespace(self, tmp_path):
+        materialize_git_identity(tmp_path, {self._N: "  Example  "})
+        assert (tmp_path / ".gitconfig").read_text() == '[user]\n\tname = "Example"\n'
+
+    def test_escapes_quotes_and_backslash(self, tmp_path):
+        materialize_git_identity(tmp_path, {self._N: 'Foo\\bar"baz'})
+        assert (tmp_path / ".gitconfig").read_text() == '[user]\n\tname = "Foo\\\\bar\\"baz"\n'
+
+    def test_neutralizes_gitconfig_injection(self, tmp_path):
+        # A newline-laden value must NOT inject a new [core] section / sshCommand directive: the
+        # control chars are stripped and the residue is confined to a single double-quoted value line.
+        evil = "Evil\n[core]\n\tsshCommand = touch /pwned"
+        materialize_git_identity(tmp_path, {self._N: evil, self._E: "agent@example.com\x00"})
+        content = (tmp_path / ".gitconfig").read_text()
+        lines = content.splitlines()
+        # Exactly one section header, and it is [user].
+        assert [ln for ln in lines if ln.startswith("[")] == ["[user]"]
+        # No standalone injected section / directive lines.
+        assert not any(ln.strip() == "[core]" for ln in lines)
+        assert not any(ln.strip().startswith("sshCommand") for ln in lines)
+        # No raw newline/NUL survived inside the value lines.
+        assert "\x00" not in content
+        # The name value is a single double-quoted line containing the collapsed residue.
+        assert '\tname = "Evil[core]\tsshCommand = touch /pwned"' in lines or \
+               '\tname = "Evil[core]sshCommand = touch /pwned"' in lines
+        # Optional: if git is available, confirm it reads the cleaned value and finds NO injection.
+        import shutil as _sh
+        import subprocess
+        if _sh.which("git"):
+            f = str(tmp_path / ".gitconfig")
+            name = subprocess.run(["git", "config", "--file", f, "--get", "user.name"],
+                                  capture_output=True, text=True).stdout.strip()
+            assert name and "\n" not in name and name != evil  # cleaned, single-line, not raw
+            inj = subprocess.run(["git", "config", "--file", f, "--get", "core.sshCommand"],
+                                 capture_output=True, text=True)
+            assert inj.returncode != 0 and inj.stdout.strip() == ""  # no injected directive
 
 
 class TestWriteSkillsToBuild:

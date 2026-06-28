@@ -29,6 +29,8 @@ _VIEW_SCOPED = (
     "bitbucket/repo_allowlist",
 )
 _DEFAULTABLE = ("bitbucket/bitbucket_workspace", "bitbucket/bitbucket_email")
+# Onboarding also seeds the agent_view's git commit identity so its commits link to the account.
+_IDENTITY = ("agent_view/identity/git_author_email", "agent_view/identity/git_author_name")
 
 
 def _view_complete_rows(view_id, *, defaultable_at_default=True):
@@ -231,10 +233,39 @@ def test_run_multiview_writes_at_selected_agent_view_scope():
         selects=[1],  # pick the second view (ops, id=2)
     )
     saved = {path: (scope, sid) for path, _v, _e, scope, sid in calls["set"]}
-    assert set(saved) == set(_ALL)
+    assert set(saved) == set(_ALL) | set(_IDENTITY)  # bitbucket config + seeded git identity
     for path, (scope, sid) in saved.items():
         assert scope == "agent_view" and sid == 2, path  # the selected view
     assert calls["commit"] == 1
+
+
+def test_run_seeds_git_author_identity_from_verified_account():
+    # Onboarding seeds the agent_view's git commit identity: email = the entered Atlassian email,
+    # name = the verify-result username — so the agent's commits link to this Bitbucket account.
+    calls, _ = _drive_run(
+        verify_result={"ok": True, "account_uuid": "{a}", "username": "Agent Smith"},
+        views=[SimpleNamespace(id=1, code="dev", label="Dev")],
+        inputs=["acme", "agent@example.com", "api"],
+        token="tok",
+        selects=[],
+    )
+    saved = {path: (value, scope, sid) for path, value, _e, scope, sid in calls["set"]}
+    assert saved["agent_view/identity/git_author_email"] == ("agent@example.com", "agent_view", 1)
+    assert saved["agent_view/identity/git_author_name"] == ("Agent Smith", "agent_view", 1)
+
+
+def test_run_skips_git_author_name_when_username_empty():
+    # No nickname/display name/account_id ⇒ skip the name seed (email alone still links the commit).
+    calls, _ = _drive_run(
+        verify_result={"ok": True, "account_uuid": "{a}", "username": ""},
+        views=[SimpleNamespace(id=1, code="dev", label="Dev")],
+        inputs=["acme", "agent@example.com", "api"],
+        token="tok",
+        selects=[],
+    )
+    saved_paths = {path for path, *_ in calls["set"]}
+    assert "agent_view/identity/git_author_email" in saved_paths
+    assert "agent_view/identity/git_author_name" not in saved_paths
 
 
 def test_run_no_active_views_saves_nothing():

@@ -422,7 +422,7 @@ This symlink is the **only thing the consumer looks at** to find "the active bui
 
 On job start, the consumer calls `copy_build_to_artifacts_dir(build, artifacts)`:
 
-- **Copied** (small, mutable per-job): items each ConfigWriter declares via `owned_paths()`, plus `CLAUDE.md`, `AGENTS.md`, `SOUL.md`.
+- **Copied** (small, mutable per-job): items each ConfigWriter declares via `owned_paths()`, plus `CLAUDE.md`, `AGENTS.md`, `SOUL.md`, and `.gitconfig` (copied so a run-time `git config` write can't follow a symlink back into the shared build).
 - **Symlinked** (large, read-only): everything else — `app/`, `modules/`, skills, theme assets.
 
 So the artifacts dir starts as a **thin overlay** — gigabytes of static build content are symlinked, only hundreds of bytes are actually copied. Output files produced during the job are added on top.

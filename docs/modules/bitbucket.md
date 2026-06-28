@@ -77,7 +77,17 @@ agento setup:upgrade            # choose "bitbucket" — prompts for workspace, 
 Onboarding **verifies the credential against `GET /2.0/user` (inside the toolbox) before saving
 anything**: on failure it offers retry/abort and writes nothing; on success it captures the account UUID
 and writes all fields in one transaction. A reachable `core/toolbox/url` is required (the token is only
-ever used inside the toolbox). Offline alternative — set everything manually:
+ever used inside the toolbox).
+
+**Git commit identity is seeded automatically.** In the same transaction, onboarding also writes
+`agent_view/identity/git_author_email` (the email you entered) and `agent_view/identity/git_author_name`
+(the verified account's `username`) so the agent's PR commits are **authored by — and link to — this
+Bitbucket account**. Bitbucket links a commit only when the author email matches a *verified* email on
+the account, which is exactly the email used here. `workspace:build` materializes these into the
+sandbox's `~/.gitconfig` (see [identity docs](../config/identity.md)); override anytime with
+`config:set agent_view/identity/git_author_*`.
+
+Offline alternative — set everything manually:
 
 # All Bitbucket keys go at AGENT_VIEW scope (the token must never be at DEFAULT). Replace <id> with the
 # owning agent_view's id.
@@ -90,6 +100,10 @@ printf '%s' "$BITBUCKET_API_TOKEN" | agento config:set bitbucket/bitbucket_api_t
 agento config:set bitbucket/bitbucket_account_uuid '{your-uuid}' --scope=agent_view --scope-id=<id>
 agento config:set bitbucket/repo_allowlist 'api,web'            --scope=agent_view --scope-id=<id>
 agento config:set bitbucket/enabled 1                           --scope=agent_view --scope-id=<id>
+# Git commit identity so PR commits link to the account (onboarding sets these for you).
+# The email MUST be a verified email on the Bitbucket account.
+agento config:set agent_view/identity/git_author_email agent@example.com --scope=agent_view --scope-id=<id>
+agento config:set agent_view/identity/git_author_name 'Agent Acme'    --scope=agent_view --scope-id=<id>
 ```
 
 See [docs/cli/onboarding.md](../cli/onboarding.md) for the onboarding model.

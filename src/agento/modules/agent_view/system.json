@@ -44,5 +44,19 @@
     "showInDefault": true,
     "showInWorkspace": true,
     "showInAgentView": true
+  },
+  "identity/git_author_name": {
+    "type": "string",
+    "label": "Git commit author name (user.name)",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  },
+  "identity/git_author_email": {
+    "type": "string",
+    "label": "Git commit author email (user.email) — MUST be a verified email on the target Bitbucket account, or commits will not link to it",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
   }
 }

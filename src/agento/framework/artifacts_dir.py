@@ -69,8 +69,11 @@ def get_current_build_dir(workspace_code: str, agent_view_code: str) -> Path | N
     return None
 
 
-# Universal instruction files (agent-agnostic) — always copied so per-job edits are isolated.
-_UNIVERSAL_COPY_FILES = {"CLAUDE.md", "AGENTS.md", "SOUL.md"}
+# Top-level build files copied (not symlinked) into each per-run artifacts dir so per-job edits stay
+# isolated: the agent-agnostic instruction files, plus `.gitconfig` — copied so a run-time `git config`
+# write stays private to the run instead of following a symlink back into the shared, persistent build
+# dir (which would corrupt the identity for future runs).
+_UNIVERSAL_COPY_FILES = {"CLAUDE.md", "AGENTS.md", "SOUL.md", ".gitconfig"}
 
 
 def copy_build_to_artifacts_dir(

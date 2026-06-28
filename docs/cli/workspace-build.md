@@ -42,6 +42,7 @@ The `--agent-view` and `--all` flags are mutually exclusive; `--force` can be co
    - **Module workspaces** — each enabled module's `workspace/` with the same `_` prefix scoping convention
    - **Skills** — `.claude/skills/<name>/` directories (SKILL.md + companion files like `references/`, `scripts/`); a `.agents/skills` symlink pointing to `.claude/skills` is also created for Codex compatibility
    - **SSH identity** — decrypts `agent_view/identity/ssh_private_key`, writes it to `.ssh/id_rsa` with mode 600; also materializes `ssh_public_key`, `ssh_config`, `ssh_known_hosts` when present (see [identity docs](../config/identity.md))
+   - **Git commit author identity** — when `agent_view/identity/git_author_name` / `git_author_email` are set, writes `.gitconfig` `[user]` (git-quoted, injection-safe) so the agent's commits are authored correctly; the email must be a verified email on the target Bitbucket/Git account for commits to link (see [identity docs](../config/identity.md))
    - **Persistent-state symlinks** — each registered agent module declares relative-to-HOME paths that must survive rebuilds (e.g. `.claude/projects` for session history). Framework symlinks each to a per-agent_view `state/` directory outside the build dir.
 6. Marks the build as `ready` in the `workspace_build` table
 7. Updates the `current` symlink to point to the new build
@@ -88,6 +89,7 @@ Config files are only generated when the corresponding `agent_view/*` config pat
 │   │   ├── .ssh/id_rsa.pub
 │   │   ├── .ssh/config                     # optional
 │   │   ├── .ssh/known_hosts                # optional
+│   │   ├── .gitconfig                      # optional — [user] name/email (copied per-run, not symlinked)
 │   │   ├── .claude.json
 │   │   ├── .mcp.json
 │   │   ├── .claude/

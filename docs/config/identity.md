@@ -1,6 +1,6 @@
 # Agent Identity (SSH + Credentials)
 
-Each `agent_view` has its own identity: SSH private key, optional public key, optional `~/.ssh/config`, and (via `token:register`) its agent CLI credentials. All identity material is stored **encrypted in the database**. Workspace builds materialize reusable identity/config templates; each run copies that build into an artifacts directory and uses the artifacts directory as the agent's `$HOME`.
+Each `agent_view` has its own identity: SSH private key, optional public key, optional `~/.ssh/config`, the git commit author (`git_author_name`/`git_author_email`), and (via `token:register`) its agent CLI credentials. **Secrets** (the SSH private key, OAuth credentials) are stored **encrypted in the database** (`obscure` fields); **non-secret public metadata** like the git author name/email is stored as plaintext (`string` fields) — it ends up in public commit metadata anyway. Workspace builds materialize reusable identity/config templates; each run copies that build into an artifacts directory and uses the artifacts directory as the agent's `$HOME`.
 
 ## Registering a New Agent — Quick Start
 
@@ -88,13 +88,29 @@ Defined in `src/agento/modules/agent_view/system.json`:
 | `agent_view/identity/ssh_public_key` | `textarea` | Plaintext; written to `<build_dir>/.ssh/id_rsa.pub`. |
 | `agent_view/identity/ssh_config` | `textarea` | Optional — contents of `~/.ssh/config` (Host/IdentityFile blocks for multi-host setups). |
 | `agent_view/identity/ssh_known_hosts` | `textarea` | Optional — pre-populated trust entries. |
+| `agent_view/identity/git_author_name` | `string` | Optional — git commit author `user.name`. Written to `<build_dir>/.gitconfig` `[user]`. |
+| `agent_view/identity/git_author_email` | `string` | Optional — git commit author `user.email`. **Must be a verified email on the target Bitbucket/Git account, or commits will not link to it.** |
 
-All four support the standard 3-level scope fallback: `agent_view → workspace → default`.
+All six support the standard 3-level scope fallback: `agent_view → workspace → default`.
+
+### Git commit author identity
+
+The agent commits with `git` inside the sandbox; the SSH key authenticates the *push* but does **not**
+set the commit author. The author comes from `~/.gitconfig` `[user]`, which `workspace:build`
+materializes from `git_author_name` / `git_author_email` (each value is single-line-encoded with git's
+own double-quoting, so control chars / `#` / `\` cannot corrupt or inject config). If neither is set, no
+`.gitconfig` is written and the author falls back to whatever the base image/CLI provides (often wrong).
+
+**Linking rule:** Bitbucket (and GitHub) link a commit to an account *only* when the commit author email
+matches a **verified** email on that account — set `git_author_email` accordingly. For Bitbucket views,
+`bitbucket` onboarding seeds both fields automatically from the verified account (see
+[bitbucket.md](../modules/bitbucket.md)); override anytime with `config:set`.
 
 ## How It Reaches the Agent Process
 
 1. `agento workspace:build --agent-view <code>` resolves scoped overrides, decrypts the SSH private key, and writes identity files into `workspace/build/<ws>/<av>/builds/<id>/.ssh/` with correct permissions.
 2. `agento run` and the consumer copy the current build into a per-run artifacts directory, set `HOME=<artifacts_dir>` on the agent subprocess, and wrap the command with a short shell prelude that symlinks `<artifacts_dir>/.ssh` into the process's passwd home (`/root` or `/home/agent`). This is required because OpenSSH expands `~/.ssh/` via `getpwuid(getuid())->pw_dir`, not `$HOME` — so merely setting `HOME` is not enough for `ssh` / `git` to find the materialized key. The symlink is established per-invocation by [`agento.framework.ssh_prelude`](../../src/agento/framework/ssh_prelude.py).
+3. `git_author_*` are materialized into `<build_dir>/.gitconfig` `[user]`. Unlike `.ssh/`, **no prelude symlink is needed**: git reads `~/.gitconfig` via `$HOME`, which is already set to the artifacts dir. `.gitconfig` is **copied** (not symlinked) into each per-run artifacts dir, so a run-time `git config` write stays private to that run instead of corrupting the shared build.
 
 See [workspace-build.md](../cli/workspace-build.md) for the full build flow.
 

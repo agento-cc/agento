@@ -8,6 +8,7 @@ import pytest
 from agento.framework.artifacts_dir import (
     build_artifacts_dir,
     cleanup_artifacts_dir,
+    copy_build_to_artifacts_dir,
     prepare_artifacts_dir,
 )
 
@@ -87,3 +88,25 @@ class TestCleanupArtifactsDir:
         with patch("shutil.rmtree", side_effect=OSError("permission denied")):
             cleanup_artifacts_dir(artifacts_dir)
         assert "Failed to clean up" in caplog.text
+
+
+class TestCopyBuildToArtifactsDir:
+    def test_gitconfig_is_copied_not_symlinked(self, tmp_path):
+        # .gitconfig must be a private per-run COPY, not a symlink into the shared build — otherwise a
+        # run-time `git config` write would follow the link and corrupt the build for future runs.
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        (build_dir / ".gitconfig").write_text('[user]\n\tname = "X"\n')
+        ssh = build_dir / ".ssh"
+        ssh.mkdir()
+        (ssh / "id_rsa").write_text("KEY")
+        artifacts_dir = tmp_path / "art"
+        artifacts_dir.mkdir()
+
+        copy_build_to_artifacts_dir(build_dir, artifacts_dir)  # no provider/job_id
+
+        gc = artifacts_dir / ".gitconfig"
+        assert gc.is_file() and not gc.is_symlink()
+        assert gc.read_text() == '[user]\n\tname = "X"\n'
+        # .ssh stays symlinked (keys are read-only-used; only .gitconfig is at write-through risk).
+        assert (artifacts_dir / ".ssh").is_symlink()
