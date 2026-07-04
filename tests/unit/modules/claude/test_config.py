@@ -664,6 +664,19 @@ class TestCaptureRefreshedCredentials:
             writer.capture_refreshed_credentials(work_dir, token, MagicMock())
         mock_reg.assert_not_called()
 
+    def test_noop_when_access_token_empty_in_file(self, writer, work_dir):
+        # Poison guard: a failed CLI refresh can rewrite .credentials.json with a
+        # rotated refreshToken but an EMPTY accessToken. Persisting that verbatim
+        # would poison the DB token (materializes to "Not logged in" on every
+        # future run). Capture must skip it, leaving the last-good creds in place.
+        self._write_creds_file(work_dir, {
+            "claudeAiOauth": {"accessToken": "", "refreshToken": "rt-NEW"}
+        })
+        token = self._oauth_token(refresh="rt-OLD", access="acc-OLD")
+        with patch("agento.modules.claude.src.config.update_refreshed_credentials") as mock_reg:
+            writer.capture_refreshed_credentials(work_dir, token, MagicMock())
+        mock_reg.assert_not_called()
+
     def test_persists_rotated_credentials(self, writer, work_dir):
         refreshed = {
             "claudeAiOauth": {

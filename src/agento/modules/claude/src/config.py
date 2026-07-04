@@ -283,6 +283,17 @@ class ClaudeConfigWriter:
         new_oauth = refreshed.get("claudeAiOauth") if isinstance(refreshed, dict) else None
         if not isinstance(new_oauth, dict):
             return
+        # A failed CLI refresh can rewrite .credentials.json with a rotated
+        # refreshToken but an empty/missing accessToken. Persisting that verbatim
+        # poisons the DB token (every future run materializes it → "Not logged
+        # in"). An accessToken-less payload is never a healthy refresh, so skip it
+        # and leave the last-good credentials untouched.
+        if not new_oauth.get("accessToken"):
+            logger.warning(
+                "Refreshed .credentials.json for token id=%s has no accessToken; "
+                "skipping capture to avoid poisoning the token.", token.id
+            )
+            return
         new_refresh = new_oauth.get("refreshToken")
         if not new_refresh:
             return
