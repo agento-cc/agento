@@ -35,8 +35,8 @@ ENV EDITOR=nano
 # behavior) can't slip in unannounced. Customers bump via docker/.env without
 # an agento release. Defaults kept in sync with default_range in each agent
 # module's di.json (claude/codex) — see cli/_provisioning.py.
-ARG CLAUDE_CODE_VERSION=2.1.165
-ARG CODEX_VERSION=0.137.0
+ARG CLAUDE_CODE_VERSION=2.1.198
+ARG CODEX_VERSION=0.142.5
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"
 
 # Disable claude-code's built-in self-updater so the exact pin above can't
