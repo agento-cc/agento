@@ -68,6 +68,34 @@ def test_parse_picks_up_legacy_mcp_name(build_root: Path):
     assert "mcp__toolbox__legacy_tool" in names
 
 
+def test_parse_normalizes_namespace_without_trailing_underscores(tmp_path: Path, monkeypatch):
+    """codex >=0.141 records MCP function_calls with namespace "mcp__toolbox"
+    (no trailing "__"); <=0.140 used "mcp__toolbox__". Both must yield the
+    canonical "mcp__<server>__<tool>" so app_monitor's ``mcp__toolbox__``
+    counter and any name-based routing keep working across the version bump.
+    """
+    build = tmp_path / "build"
+    sessions = (
+        build / "acme" / "developer" / "build-001"
+        / ".codex" / "sessions" / "2026" / "07" / "02"
+    )
+    sessions.mkdir(parents=True)
+    sid = "44444444-4444-4444-4444-444444444444"
+    body = "\n".join([
+        '{"type":"session_meta","payload":{"id":"' + sid + '","cli_version":"0.142.5"}}',
+        '{"type":"response_item","payload":{"type":"function_call",'
+        '"name":"jira_get_attachment","namespace":"mcp__toolbox","call_id":"call_a"}}',
+        '{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"call_a",'
+        '"invocation":{"server":"toolbox","tool":"jira_get_attachment"}}}',
+    ])
+    (sessions / f"rollout-2026-07-02T12-00-00-{sid}.jsonl").write_text(body + "\n")
+    monkeypatch.setattr(cx_tr, "BUILD_DIR", str(build))
+
+    names = [u.name for u in CodexTranscriptReader().parse(sid).tool_uses]
+    assert names == ["mcp__toolbox__jira_get_attachment"]
+    assert all(n.startswith("mcp__toolbox__") for n in names)
+
+
 def test_parse_emits_non_mcp_tools_too(build_root: Path):
     summary = CodexTranscriptReader().parse(GOOD_ID)
     names = [u.name for u in summary.tool_uses]

@@ -89,6 +89,16 @@ class TestPrepareWorkspace:
         data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
         assert data["mcp_servers"]["toolbox"]["type"] == "streamable_http"
 
+    def test_disables_hosted_apps_and_plugins_features(self, writer, work_dir):
+        """codex >=0.138 auto-registers a hosted ``codex_apps`` MCP + plugin
+        marketplace that 401s against chatgpt.com under agento's non-ChatGPT
+        auth, spamming fatal-looking errors every run. Disable both so the
+        toolbox is the only MCP server."""
+        writer.prepare_workspace(work_dir, {}, toolbox_url=self.TOOLBOX)
+        data = tomllib.loads((work_dir / ".codex" / "config.toml").read_text())
+        assert data["features"]["apps"] is False
+        assert data["features"]["plugins"] is False
+
     def test_ignores_invalid_extras_json(self, writer, work_dir):
         writer.prepare_workspace(
             work_dir, {"model": "o3", "mcp/servers": "not-json{"},
@@ -133,6 +143,29 @@ class TestInjectRuntimeParams:
     def test_noop_when_no_config_toml(self, writer, work_dir):
         writer.inject_runtime_params(work_dir, job_id=10)
         assert not (work_dir / ".codex" / "config.toml").exists()
+
+    def test_preserves_features_block(self, writer, work_dir):
+        """The runtime-param rewrite must not drop the ``[features]`` block
+        that disables the hosted apps/plugins MCP (else the 401 noise returns
+        on the job/consumer path)."""
+        codex_dir = work_dir / ".codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "config.toml").write_text(
+            'model = "gpt-5"\n'
+            "\n[features]\n"
+            "apps = false\n"
+            "plugins = false\n"
+            "\n[mcp_servers.toolbox]\n"
+            'type = "streamable_http"\n'
+            'url = "http://toolbox:3001/mcp?agent_view_id=1"\n'
+        )
+
+        writer.inject_runtime_params(work_dir, job_id=5)
+
+        data = tomllib.loads((codex_dir / "config.toml").read_text())
+        assert data["features"]["apps"] is False
+        assert data["features"]["plugins"] is False
+        assert "job_id=5" in data["mcp_servers"]["toolbox"]["url"]
 
     def test_preserves_model_and_approval_mode(self, writer, work_dir):
         codex_dir = work_dir / ".codex"

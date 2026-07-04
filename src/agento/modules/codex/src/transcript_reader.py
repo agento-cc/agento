@@ -22,7 +22,10 @@ as ``response_item`` records with ``payload.type == "function_call"``:
 MCP detection follows three rules, in priority order:
 
 1. **Modern** — ``payload.namespace`` starts with ``mcp__`` → qualified name
-   is ``namespace + name`` (e.g. ``mcp__toolbox__jira_search``).
+   is ``namespace`` + ``__`` + ``name`` (e.g. ``mcp__toolbox__jira_search``).
+   The trailing ``__`` on the namespace is normalized: codex ≤0.140 emitted
+   ``mcp__toolbox__`` while ≥0.141 emits ``mcp__toolbox`` — both collapse to a
+   single ``__`` separator.
 2. **Event-correlated** — a sibling ``event_msg`` with
    ``payload.type == "mcp_tool_call_end"`` and a matching ``call_id`` covers
    MCP meta-calls (e.g. ``list_mcp_resources``) that lack a namespace.
@@ -128,7 +131,11 @@ class CodexTranscriptReader:
 
             namespace = payload.get("namespace")
             if isinstance(namespace, str) and namespace.startswith("mcp__"):
-                qualified = f"{namespace}{name}"
+                # codex >=0.141 emits the namespace without a trailing "__"
+                # (e.g. "mcp__toolbox"); <=0.140 emitted "mcp__toolbox__".
+                # Normalize to exactly one "__" separator so the qualified name
+                # is always "mcp__<server>__<tool>".
+                qualified = f"{namespace.rstrip('_')}__{name}"
             elif call_id in mcp_events:
                 inv = mcp_events[call_id]
                 server = inv.get("server")

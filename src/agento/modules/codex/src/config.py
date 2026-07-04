@@ -284,6 +284,14 @@ class CodexConfigWriter:
         if approval_mode:
             lines.append(f'approval_mode = "{approval_mode}"')
 
+        # Disable codex's hosted apps/plugins MCP + marketplace. Under agento's
+        # non-ChatGPT auth they 401 against chatgpt.com and spam fatal-looking
+        # `rmcp::transport::worker` errors on every run; the toolbox is the only
+        # MCP server we want. (codex ≥0.138; verified via `codex features`.)
+        lines.append("\n[features]")
+        lines.append("apps = false")
+        lines.append("plugins = false")
+
         # Auto-inject the toolbox MCP entry; operators can add more (or shadow
         # "toolbox") via agent_view/mcp/servers.
         servers: dict[str, dict] = {
@@ -345,6 +353,15 @@ class CodexConfigWriter:
         approval_mode = data.get("approval_mode")
         if approval_mode:
             lines.append(f'approval_mode = "{approval_mode}"')
+
+        # Preserve the [features] block (e.g. apps/plugins disabled) that
+        # prepare_workspace wrote — this full-rewrite must not resurrect the
+        # hosted-apps 401 noise on the job/consumer path.
+        features = data.get("features")
+        if isinstance(features, dict) and features:
+            lines.append("\n[features]")
+            for key in sorted(features):
+                lines.append(f"{_toml_quote_key(key)} = {_toml_literal(features[key])}")
 
         for name, server_cfg in mcp_servers.items():
             lines.append(f"\n[mcp_servers.{name}]")
