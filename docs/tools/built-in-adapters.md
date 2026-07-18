@@ -11,7 +11,7 @@ Read-only SQL queries against MySQL/MariaDB databases.
 
 **Enforced:** Only `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`, `WITH` queries allowed.
 
-**Timeout:** Controlled by `SQL_TIMEOUT_SECONDS` env var (default: 300s).
+**Timeout:** Controlled by `core/sql_timeout_seconds` (default: 300s) through the standard config fallback.
 
 Source: [src/agento/toolbox/adapters/mysql.js](../../src/agento/toolbox/adapters/mysql.js)
 
@@ -51,7 +51,8 @@ Source: [src/agento/toolbox/adapters/opensearch.js](../../src/agento/toolbox/ada
         "port": {"type": "integer", "label": "Port", "default": 3306},
         "user": {"type": "string", "label": "User"},
         "pass": {"type": "obscure", "label": "Password"},
-        "database": {"type": "string", "label": "Database"}
+        "database": {"type": "string", "label": "Database"},
+        "client_connection_pool_max_per_tool": {"type": "integer", "label": "Maximum client connections"}
       }
     }
   ]
@@ -60,15 +61,33 @@ Source: [src/agento/toolbox/adapters/opensearch.js](../../src/agento/toolbox/ada
 
 ## SQL Timeout
 
-Set globally via env var in docker-compose:
+Set globally through the standard config path (or its ENV equivalent):
 
-```yaml
-toolbox:
-  environment:
-    SQL_TIMEOUT_SECONDS: 300   # 5 minutes (default)
+```bash
+agento config:set core/sql_timeout_seconds 300
+# ENV: CONFIG__CORE__SQL_TIMEOUT_SECONDS=300
 ```
 
 Source: [src/agento/toolbox/adapters/sql-timeout.js](../../src/agento/toolbox/adapters/sql-timeout.js)
+
+## SQL Connection Pools
+
+MySQL and MSSQL pools are scoped to the adapter type, tool name, and fully resolved connection configuration. Identical configurations reuse one lazy pool across MCP sessions; different tools never share one, even when they target the same server.
+
+Each active tool configuration is limited by `core/client_connection_pool_max_per_tool` (default 10). Override one tool with `<module>/tools/<tool>/client_connection_pool_max_per_tool`. A pool that has no active operation for 30 seconds is closed, and all SQL pools are closed when the toolbox receives `SIGTERM`.
+
+All pools targeting the same adapter, host, and port share `core/server_concurrency_budget` (default 10). This is a process-wide limit on active database operations, regardless of tool, database, credentials, or agent_view. It does not multiply by the number of pools. The setting is default-scope only so scoped sessions cannot create conflicting server-wide budgets. At most 100 operations may wait per server endpoint; queued operations are cancelled when their SQL deadline expires (or an AbortSignal is supplied and aborted).
+
+SQL healthchecks use the same server budget but are actively cancelled at the health endpoint deadline: MySQL destroys its borrowed connection and MSSQL cancels its request. A timed-out `/health?test=true` therefore cannot leave an invisible query occupying the shared budget.
+
+```bash
+# Defaults applied to every SQL tool and every DB server endpoint
+agento config:set core/client_connection_pool_max_per_tool 10
+agento config:set core/server_concurrency_budget 10
+
+# Optional override for one tool's client pool
+agento config:set acme/tools/mysql_acme_prod/client_connection_pool_max_per_tool 20
+```
 
 ## Large Result Offload
 

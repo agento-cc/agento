@@ -4,6 +4,8 @@ import { createSearchHandler, createCommentsHandler } from './api-handlers.js';
 import { createJiraProxyHandler } from './jira-proxy.js';
 
 export function register(server, { app, log, loadModuleConfigs, loadScopedDbOverrides }) {
+  if (!app || !loadModuleConfigs) return;
+
   async function getJiraConfig(agentViewId = null) {
     let overrides = null;
     if (agentViewId && loadScopedDbOverrides) {

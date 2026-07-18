@@ -425,7 +425,11 @@ describe('MySQL tool large result integration', () => {
 
     const { registerMysqlTools } = await import('../adapters/mysql.js');
     const tools = [{ name: 'mysql_test', description: 'test', config: { host: 'localhost', pass: 'pass', user: 'root', database: 'db' } }];
-    registerMysqlTools(fakeServer, tools, { sqlTimeoutSeconds: 300 });
+    const { SqlPoolRegistry } = await import('../adapters/sql-pool-registry.js');
+    registerMysqlTools(fakeServer, tools, {
+      sqlTimeoutSeconds: 300,
+      sqlPoolRegistry: new SqlPoolRegistry(),
+    });
 
     return { handler, mockQuery, logCalls, capturedOptions };
   }
@@ -496,10 +500,14 @@ describe('MSSQL tool large result integration', () => {
       timeout: undefined,
       query: vi.fn().mockResolvedValue({ recordset: rows }),
     };
-    const mockPool = { request: () => mockRequest };
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue(),
+      close: vi.fn().mockResolvedValue(),
+      request: () => mockRequest,
+    };
 
     vi.doMock('mssql', () => ({
-      default: { connect: vi.fn().mockResolvedValue(mockPool) },
+      default: { ConnectionPool: vi.fn(() => mockPool) },
     }));
 
     mockFs();
@@ -513,7 +521,8 @@ describe('MSSQL tool large result integration', () => {
 
     const { registerMssqlTools } = await import('../adapters/mssql.js');
     const tools = [{ name: 'mssql_test', description: 'test', config: { host: 'localhost', pass: 'pass', user: 'sa', database: 'db' } }];
-    registerMssqlTools(fakeServer, tools, {});
+    const { SqlPoolRegistry } = await import('../adapters/sql-pool-registry.js');
+    registerMssqlTools(fakeServer, tools, { sqlPoolRegistry: new SqlPoolRegistry() });
 
     return { handler, logCalls, capturedOptions };
   }

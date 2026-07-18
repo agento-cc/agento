@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+function sqlPoolRegistry() {
+  return {
+    createPoolHandle: ({ create }) => {
+      let resource;
+      return {
+        use: async callback => callback(resource ??= await create()),
+        invalidate: vi.fn(),
+      };
+    },
+  };
+}
+
 describe('adapter healthchecks', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -7,17 +19,21 @@ describe('adapter healthchecks', () => {
 
   describe('mysql', () => {
     it('returns ok for configured tool with working connection', async () => {
+      const connection = {
+        query: vi.fn().mockResolvedValue([[{ ok: 1 }]]),
+        release: vi.fn(),
+        destroy: vi.fn(),
+      };
       vi.doMock('mysql2/promise', () => ({
         default: {
           createPool: () => ({
-            query: vi.fn().mockResolvedValue([[{ ok: 1 }]]),
+            getConnection: vi.fn().mockResolvedValue(connection),
           }),
         },
       }));
       vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({
         getSqlTimeoutMs: () => 300000,
-        setSqlTimeoutSeconds: vi.fn(),
       }));
 
       const { registerMysqlTools } = await import('../adapters/mysql.js');
@@ -26,7 +42,7 @@ describe('adapter healthchecks', () => {
         { name: 'mysql_test', description: 'Test DB', config: { host: 'db', port: '3306', user: 'u', pass: 'p', database: 'd' } },
       ];
 
-      const { names, healthcheck } = registerMysqlTools(server, tools);
+      const { names, healthcheck } = registerMysqlTools(server, tools, { sqlPoolRegistry: sqlPoolRegistry() });
       expect(names).toEqual(['mysql_test']);
 
       const results = await healthcheck();
@@ -40,7 +56,6 @@ describe('adapter healthchecks', () => {
       vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({
         getSqlTimeoutMs: () => 300000,
-        setSqlTimeoutSeconds: vi.fn(),
       }));
 
       const { registerMysqlTools } = await import('../adapters/mysql.js');
@@ -49,23 +64,27 @@ describe('adapter healthchecks', () => {
         { name: 'mysql_nocfg', description: 'No config', config: { host: null, pass: null } },
       ];
 
-      const { healthcheck } = registerMysqlTools(server, tools);
+      const { healthcheck } = registerMysqlTools(server, tools, { sqlPoolRegistry: sqlPoolRegistry() });
       const results = await healthcheck();
       expect(results[0]).toMatchObject({ tool: 'mysql_nocfg', status: 'skip' });
     });
 
     it('returns fail when connection throws', async () => {
+      const connection = {
+        query: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+        release: vi.fn(),
+        destroy: vi.fn(),
+      };
       vi.doMock('mysql2/promise', () => ({
         default: {
           createPool: () => ({
-            query: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+            getConnection: vi.fn().mockResolvedValue(connection),
           }),
         },
       }));
       vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({
         getSqlTimeoutMs: () => 300000,
-        setSqlTimeoutSeconds: vi.fn(),
       }));
 
       const { registerMysqlTools } = await import('../adapters/mysql.js');
@@ -74,9 +93,33 @@ describe('adapter healthchecks', () => {
         { name: 'mysql_broken', description: 'Broken', config: { host: 'db', pass: 'p' } },
       ];
 
-      const { healthcheck } = registerMysqlTools(server, tools);
+      const { healthcheck } = registerMysqlTools(server, tools, { sqlPoolRegistry: sqlPoolRegistry() });
       const results = await healthcheck();
       expect(results[0]).toMatchObject({ tool: 'mysql_broken', status: 'fail', error: 'ECONNREFUSED' });
+      expect(connection.release).toHaveBeenCalledOnce();
+    });
+
+    it('destroys the healthcheck connection when its deadline expires', async () => {
+      let rejectQuery;
+      const connection = {
+        query: vi.fn(() => new Promise((_, reject) => { rejectQuery = reject; })),
+        release: vi.fn(),
+        destroy: vi.fn(() => rejectQuery(new Error('cancelled'))),
+      };
+      vi.doMock('mysql2/promise', () => ({
+        default: { createPool: () => ({ getConnection: vi.fn().mockResolvedValue(connection) }) },
+      }));
+      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+
+      const { registerMysqlTools } = await import('../adapters/mysql.js');
+      const { healthcheck } = registerMysqlTools({ tool: vi.fn() }, [
+        { name: 'mysql_slow', description: 'Slow', config: { host: 'db', pass: 'p' } },
+      ], { sqlPoolRegistry: sqlPoolRegistry() });
+      const results = await healthcheck({ timeoutMs: 5 });
+      expect(results[0]).toMatchObject({ tool: 'mysql_slow', status: 'fail' });
+      expect(connection.query).toHaveBeenCalledOnce();
+      expect(connection.destroy).toHaveBeenCalledOnce();
+      expect(connection.release).not.toHaveBeenCalled();
     });
   });
 
@@ -85,7 +128,11 @@ describe('adapter healthchecks', () => {
       const mockRequest = { query: vi.fn().mockResolvedValue({ recordset: [{ ok: 1 }] }) };
       vi.doMock('mssql', () => ({
         default: {
-          connect: vi.fn().mockResolvedValue({ request: () => mockRequest }),
+          ConnectionPool: vi.fn(() => ({
+            connect: vi.fn().mockResolvedValue(),
+            close: vi.fn().mockResolvedValue(),
+            request: () => mockRequest,
+          })),
         },
       }));
       vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
@@ -97,7 +144,7 @@ describe('adapter healthchecks', () => {
         { name: 'mssql_test', description: 'Test', config: { host: 'db', port: '1433', user: 'u', pass: 'p', database: 'd' } },
       ];
 
-      const { names, healthcheck } = registerMssqlTools(server, tools);
+      const { names, healthcheck } = registerMssqlTools(server, tools, { sqlPoolRegistry: sqlPoolRegistry() });
       expect(names).toEqual(['mssql_test']);
 
       const results = await healthcheck();
@@ -115,9 +162,43 @@ describe('adapter healthchecks', () => {
         { name: 'mssql_nocfg', description: 'No config', config: { host: null, pass: null } },
       ];
 
-      const { healthcheck } = registerMssqlTools(server, tools);
+      const { healthcheck } = registerMssqlTools(server, tools, { sqlPoolRegistry: sqlPoolRegistry() });
       const results = await healthcheck();
       expect(results[0]).toMatchObject({ tool: 'mssql_nocfg', status: 'skip' });
+    });
+
+    it('cancels an active MSSQL request when aborted', async () => {
+      let rejectQuery;
+      const request = {
+        timeout: undefined,
+        query: vi.fn(() => new Promise((_, reject) => { rejectQuery = reject; })),
+        cancel: vi.fn(() => rejectQuery(new Error('cancelled'))),
+      };
+      vi.doMock('mssql', () => ({
+        default: {
+          ConnectionPool: vi.fn(() => ({
+            healthy: true,
+            connect: vi.fn().mockResolvedValue(),
+            close: vi.fn().mockResolvedValue(),
+            request: () => request,
+          })),
+        },
+      }));
+      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+
+      const { registerMssqlTools } = await import('../adapters/mssql.js');
+      const { healthcheck } = registerMssqlTools({ tool: vi.fn() }, [
+        { name: 'mssql_slow', description: 'Slow', config: { host: 'db', pass: 'p' } },
+      ], { sqlPoolRegistry: sqlPoolRegistry() });
+      const controller = new globalThis.AbortController();
+      const pending = healthcheck({ signal: controller.signal, timeoutMs: 1_000 });
+      await vi.waitFor(() => expect(request.query).toHaveBeenCalledOnce());
+      controller.abort();
+
+      const results = await pending;
+      expect(results[0]).toMatchObject({ tool: 'mssql_slow', status: 'fail' });
+      expect(request.cancel).toHaveBeenCalledOnce();
+      expect(request.timeout).toBe(1_000);
     });
   });
 

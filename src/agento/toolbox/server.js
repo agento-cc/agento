@@ -4,6 +4,8 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import { registerTools, registerModuleRestApis, loadScopedDbOverrides } from './config-loader.js';
+import { SqlPoolRegistry } from './adapters/sql-pool-registry.js';
+import { createHealthRegistration } from './health-registration.js';
 import { logToolbox, logPublisher, createScopedLogger } from './log.js';
 import * as db from './db.js';
 import * as playwright from './playwright-client.js';
@@ -14,6 +16,7 @@ const app = express();
 // NOTE: no express.json() here — SSEServerTransport reads raw body from req stream
 
 const sessions = new Map();
+const sqlPoolRegistry = new SqlPoolRegistry({ log: logToolbox });
 
 // Shared context passed to all module register() functions
 const context = {
@@ -21,6 +24,7 @@ const context = {
   log: logToolbox,
   logPublisher,
   db,
+  sqlPoolRegistry,
   playwright: {
     getClient: playwright.getPlaywrightClient,
     getTools: playwright.getPlaywrightTools,
@@ -28,9 +32,6 @@ const context = {
     getViewport: playwright.getPlaywrightViewport,
   },
 };
-
-let registeredToolNames = [];
-let registeredHealthchecks = [];
 
 function buildArtifactsDir(agentViewMeta, jobId) {
   if (!agentViewMeta || !jobId) return '/workspace/artifacts/_fallback';
@@ -67,9 +68,7 @@ async function createServer(agentViewId = null, jobId = null) {
     }
   }
 
-  const { toolNames, healthchecks } = await registerTools(server, sessionContext, agentViewId, preloadedOverrides);
-  registeredToolNames = toolNames;
-  registeredHealthchecks = healthchecks;
+  const { healthchecks } = await registerTools(server, sessionContext, agentViewId, preloadedOverrides);
   return { server, healthchecks };
 }
 
@@ -140,12 +139,20 @@ const HEALTHCHECK_TIMEOUT_MS = 10_000;
 
 async function runHealthchecks(healthchecks) {
   const results = await Promise.allSettled(
-    healthchecks.map(fn =>
-      Promise.race([
-        fn(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), HEALTHCHECK_TIMEOUT_MS)),
-      ])
-    )
+    healthchecks.map(fn => {
+      const controller = new globalThis.AbortController();
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('timeout'));
+        }, HEALTHCHECK_TIMEOUT_MS);
+      });
+      return Promise.race([
+        fn({ signal: controller.signal, timeoutMs: HEALTHCHECK_TIMEOUT_MS }),
+        timeout,
+      ]).finally(() => clearTimeout(timer));
+    })
   );
 
   const checks = [];
@@ -163,22 +170,7 @@ app.get('/health', async (req, res) => {
   const agentViewId = req.query.agent_view_id ? parseInt(req.query.agent_view_id, 10) : null;
   const runTests = req.query.test === 'true';
 
-  let tools;
-  let healthchecks;
-
-  if (agentViewId) {
-    const tmpServer = new McpServer({ name: 'toolbox-health', version: '1.0.0' });
-    const { overrides, agentViewMeta } = await loadScopedDbOverrides(agentViewId);
-    const sessionContext = agentViewMeta
-      ? { ...context, log: createScopedLogger(agentViewMeta) }
-      : context;
-    const result = await registerTools(tmpServer, sessionContext, agentViewId, overrides);
-    tools = result.toolNames;
-    healthchecks = result.healthchecks;
-  } else {
-    tools = registeredToolNames;
-    healthchecks = registeredHealthchecks;
-  }
+  const { tools, healthchecks } = await createHealthRegistration(agentViewId, context);
 
   // Docker HEALTHCHECK uses this endpoint to decide container liveness — it cares
   // about the HTTP status code only. A dead Playwright subsystem leaves the body
@@ -221,6 +213,7 @@ Promise.allSettled([
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
+  await sqlPoolRegistry.closeAll();
   await playwright.closePlaywright();
   process.exit(0);
 });

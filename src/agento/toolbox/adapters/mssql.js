@@ -1,35 +1,42 @@
 import { z } from 'zod';
 import sql from 'mssql';
 import { logToolbox as log } from '../log.js';
+import { runCancellable } from '../cancellable-operation.js';
+import { isReadOnlySql } from './sql-read-only.js';
 import { getSqlTimeoutMs } from './sql-timeout.js';
 
-const ALLOWED_KEYWORDS = ['SELECT', 'WITH', 'SHOW', 'EXEC SP_HELP'];
+const ALLOWED_KEYWORDS = ['SELECT', 'WITH'];
 
-function isReadOnly(query) {
-  const normalized = query.trim().replace(/\/\*[\s\S]*?\*\//g, '').trim();
-  const firstWord = normalized.split(/\s/)[0].toUpperCase();
-  return ALLOWED_KEYWORDS.includes(firstWord);
-}
-
-function createMssqlTool(server, toolName, description, config) {
+function createMssqlTool(server, toolName, description, config, options) {
+  const port = parseInt(config.port || '1433');
+  const configuredPoolMax = Number.parseInt(config.client_connection_pool_max_per_tool, 10);
+  const poolMax = Number.isInteger(configuredPoolMax) && configuredPoolMax > 0
+    ? configuredPoolMax
+    : options.clientConnectionPoolMaxPerTool;
   const mssqlConfig = {
     server: config.host,
-    port: parseInt(config.port || '1433'),
+    port,
     user: config.user,
     password: config.pass,
     database: config.database,
-    options: { trustServerCertificate: true },
-    pool: { max: 2, min: 0, idleTimeoutMillis: 30000 },
+    options: { encrypt: true, trustServerCertificate: true },
+    pool: { max: poolMax, min: 0, idleTimeoutMillis: 30000 },
   };
 
-  let pool = null;
-
-  async function getPool() {
-    if (!pool) {
-      pool = await sql.connect(mssqlConfig);
-    }
-    return pool;
-  }
+  const poolHandle = options.sqlPoolRegistry.createPoolHandle({
+    adapter: 'mssql',
+    toolName,
+    config: mssqlConfig,
+    server: { host: String(config.host).trim().toLowerCase(), port },
+    serverConcurrencyBudget: options.serverConcurrencyBudget,
+    queueWaitTimeoutMs: options.sqlTimeoutMs || 300_000,
+    create: async () => {
+      const pool = new sql.ConnectionPool(mssqlConfig);
+      await pool.connect();
+      return pool;
+    },
+    close: pool => pool.close(),
+  });
 
   server.tool(
     toolName,
@@ -47,7 +54,7 @@ function createMssqlTool(server, toolName, description, config) {
         };
       }
 
-      if (!isReadOnly(query)) {
+      if (!isReadOnlySql(query, ALLOWED_KEYWORDS, { dialect: 'mssql' })) {
         log(toolName, 'BLOCKED', `user=${user} non-readonly query: ${query.substring(0, 80)}`);
         return {
           content: [{ type: 'text', text: 'Error: Only SELECT and WITH queries are allowed.' }],
@@ -57,12 +64,15 @@ function createMssqlTool(server, toolName, description, config) {
 
       log(toolName, 'QUERY', `user=${user} | ${query}`);
       const start = Date.now();
+      let pool;
 
       try {
-        const p = await getPool();
-        const req = p.request();
-        req.timeout = getSqlTimeoutMs();
-        const result = await req.query(query);
+        const result = await poolHandle.use(async p => {
+          pool = p;
+          const req = p.request();
+          req.timeout = options.sqlTimeoutMs;
+          return req.query(query);
+        });
         const elapsed = Date.now() - start;
         const rows = result.recordset;
 
@@ -71,10 +81,8 @@ function createMssqlTool(server, toolName, description, config) {
         const text = JSON.stringify(rows, null, 2);
         return { content: [{ type: 'text', text }] };
       } catch (err) {
+        if (pool?.healthy === false) poolHandle.invalidate();
         log(toolName, 'ERROR', `user=${user} ${err.message}`);
-        if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEOUT') {
-          pool = null;
-        }
         return {
           content: [{ type: 'text', text: `Query error: ${err.message}` }],
           isError: true,
@@ -84,36 +92,57 @@ function createMssqlTool(server, toolName, description, config) {
     { resultStrategy: 'rows' }
   );
 
-  return getPool;
+  return poolHandle;
 }
 
 /**
  * Register MSSQL tools from pre-resolved tool configs.
  * @returns {{ names: string[], healthcheck: () => Promise<Array> }}
  */
-export function registerMssqlTools(server, tools, _options = {}) {
+export function registerMssqlTools(server, tools, options = {}) {
+  if (tools.length > 0 && !options.sqlPoolRegistry) {
+    throw new Error('MSSQL adapter requires sqlPoolRegistry');
+  }
+  const resolvedOptions = {
+    clientConnectionPoolMaxPerTool: options.clientConnectionPoolMaxPerTool || 10,
+    serverConcurrencyBudget: options.serverConcurrencyBudget || 10,
+    sqlPoolRegistry: options.sqlPoolRegistry,
+    sqlTimeoutMs: getSqlTimeoutMs(options.sqlTimeoutSeconds),
+  };
   const registered = [];
   const poolRefs = [];
 
   for (const tool of tools) {
-    const getPool = createMssqlTool(server, tool.name, tool.description, tool.config);
+    const poolHandle = createMssqlTool(server, tool.name, tool.description, tool.config, resolvedOptions);
     registered.push(tool.name);
-    poolRefs.push({ name: tool.name, getPool, config: tool.config });
+    poolRefs.push({ name: tool.name, poolHandle, config: tool.config });
   }
 
-  async function healthcheck() {
+  async function healthcheck({ signal, timeoutMs = 10_000 } = {}) {
     const results = [];
-    for (const { name, getPool, config } of poolRefs) {
+    for (const { name, poolHandle, config } of poolRefs) {
       if (!config.host || !config.pass) {
         results.push({ tool: name, status: 'skip', error: 'not configured' });
         continue;
       }
       const start = Date.now();
+      let pool;
+      let request;
       try {
-        const p = await getPool();
-        await p.request().query('SELECT 1');
+        await poolHandle.use(p => runCancellable(async ({ isCancelled }) => {
+          pool = p;
+          request = p.request();
+          request.timeout = timeoutMs;
+          if (isCancelled()) request.cancel();
+          return request.query('SELECT 1');
+        }, {
+          signal,
+          timeoutMs,
+          onCancel: () => request?.cancel(),
+        }), { signal, waitTimeoutMs: timeoutMs });
         results.push({ tool: name, status: 'ok', ms: Date.now() - start });
       } catch (err) {
+        if (pool?.healthy === false) poolHandle.invalidate();
         results.push({ tool: name, status: 'fail', ms: Date.now() - start, error: err.message });
       }
     }

@@ -147,6 +147,27 @@ describe('config-loader', () => {
     expect(tools[0].config.host).toBe('10.0.0.50');
   });
 
+  it('resolves the standard per-tool SQL pool limit without a manifest field', async () => {
+    createModule('my-app', {
+      name: 'my-app',
+      tools: [{
+        type: 'mysql',
+        name: 'mysql_myapp',
+        description: 'My DB',
+        fields: { host: { type: 'string', label: 'Host' } },
+      }],
+    });
+
+    const tools = await loadTools({
+      'my_app/tools/mysql_myapp/client_connection_pool_max_per_tool': {
+        value: '7',
+        encrypted: false,
+      },
+    });
+
+    expect(tools[0].config.client_connection_pool_max_per_tool).toBe('7');
+  });
+
   it('returns null for unresolved field without default', async () => {
     createModule('my-app', {
       name: 'my-app',
@@ -717,7 +738,8 @@ describe('registerTools integration', () => {
     const { registerAdapterTools } = await import('../adapters/index.js');
     const mod = await import('../config-loader.js');
     const mockServer = { tool: vi.fn() };
-    const mockContext = { log: vi.fn(), db: {}, playwright: {} };
+    const sqlPoolRegistry = { createPoolHandle: vi.fn() };
+    const mockContext = { log: vi.fn(), db: {}, playwright: {}, sqlPoolRegistry };
 
     await mod.registerTools(mockServer, mockContext, 2);
 
@@ -726,6 +748,7 @@ describe('registerTools integration', () => {
     expect(calledTools).toHaveLength(1);
     expect(calledTools[0].config.host).toBe('scoped-db.internal');
     expect(calledTools[0].config.pass).toBe('secret');
+    expect(registerAdapterTools.mock.calls[0][4]).toEqual({ sqlPoolRegistry });
   });
 
   it('is_enabled=0 at agent_view scope filters out adapter tool', async () => {
@@ -781,6 +804,7 @@ describe('registerTools integration', () => {
          fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({
            hasFn: typeof ctx.isToolEnabled === 'function',
            emailEnabled: ctx.isToolEnabled('email_send'),
+           hasApp: !!ctx.app,
          }));
        }`
     );
@@ -805,13 +829,14 @@ describe('registerTools integration', () => {
     vi.resetModules();
     const mod = await import('../config-loader.js');
     const mockServer = { tool: vi.fn() };
-    const mockContext = { log: vi.fn(), db: {}, playwright: {} };
+    const mockContext = { app: { post: vi.fn() }, log: vi.fn(), db: {}, playwright: {} };
 
     await mod.registerTools(mockServer, mockContext);
 
     const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
     expect(captured.hasFn).toBe(true);
     expect(captured.emailEnabled).toBe(false);
+    expect(captured.hasApp).toBe(false);
   });
 
   it('no agent_view_id serves only globally enabled tools (opt-in)', async () => {

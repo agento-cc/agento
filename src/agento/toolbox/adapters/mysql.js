@@ -1,33 +1,37 @@
 import { z } from 'zod';
 import mysql from 'mysql2/promise';
 import { logToolbox as log } from '../log.js';
-import { getSqlTimeoutMs, setSqlTimeoutSeconds } from './sql-timeout.js';
+import { runCancellable } from '../cancellable-operation.js';
+import { isReadOnlySql } from './sql-read-only.js';
+import { getSqlTimeoutMs } from './sql-timeout.js';
 
 const ALLOWED_KEYWORDS = ['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN', 'WITH'];
 
-function isReadOnly(query) {
-  const normalized = query.trim().replace(/\/\*[\s\S]*?\*\//g, '').trim();
-  const firstWord = normalized.split(/\s/)[0].toUpperCase();
-  return ALLOWED_KEYWORDS.includes(firstWord);
-}
-
-function createMysqlTool(server, toolName, description, config) {
-  let pool = null;
-
-  function getPool() {
-    if (!pool) {
-      pool = mysql.createPool({
-        host: config.host,
-        port: parseInt(config.port || '3306'),
-        user: config.user,
-        password: config.pass,
-        database: config.database,
-        waitForConnections: true,
-        connectionLimit: 2,
-      });
-    }
-    return pool;
-  }
+function createMysqlTool(server, toolName, description, config, options) {
+  const port = parseInt(config.port || '3306');
+  const configuredPoolMax = Number.parseInt(config.client_connection_pool_max_per_tool, 10);
+  const poolMax = Number.isInteger(configuredPoolMax) && configuredPoolMax > 0
+    ? configuredPoolMax
+    : options.clientConnectionPoolMaxPerTool;
+  const mysqlConfig = {
+    host: config.host,
+    port,
+    user: config.user,
+    password: config.pass,
+    database: config.database,
+    waitForConnections: true,
+    connectionLimit: poolMax,
+  };
+  const poolHandle = options.sqlPoolRegistry.createPoolHandle({
+    adapter: 'mysql',
+    toolName,
+    config: mysqlConfig,
+    server: { host: String(config.host).trim().toLowerCase(), port },
+    serverConcurrencyBudget: options.serverConcurrencyBudget,
+    queueWaitTimeoutMs: options.sqlTimeoutMs || 300_000,
+    create: () => mysql.createPool(mysqlConfig),
+    close: pool => pool.end(),
+  });
 
   server.tool(
     toolName,
@@ -45,7 +49,7 @@ function createMysqlTool(server, toolName, description, config) {
         };
       }
 
-      if (!isReadOnly(query)) {
+      if (!isReadOnlySql(query, ALLOWED_KEYWORDS, { dialect: 'mysql' })) {
         log(toolName, 'BLOCKED', `user=${user} non-readonly query: ${query.substring(0, 80)}`);
         return {
           content: [{ type: 'text', text: 'Error: Only SELECT, SHOW, DESCRIBE, and EXPLAIN queries are allowed.' }],
@@ -57,7 +61,7 @@ function createMysqlTool(server, toolName, description, config) {
       const start = Date.now();
 
       try {
-        const [rows] = await getPool().query({ sql: query, timeout: getSqlTimeoutMs() });
+        const [rows] = await poolHandle.use(pool => pool.query({ sql: query, timeout: options.sqlTimeoutMs }));
         const elapsed = Date.now() - start;
         const rowCount = Array.isArray(rows) ? rows.length : '?';
 
@@ -76,7 +80,7 @@ function createMysqlTool(server, toolName, description, config) {
     { resultStrategy: 'rows' }
   );
 
-  return getPool;
+  return poolHandle;
 }
 
 /**
@@ -86,31 +90,55 @@ function createMysqlTool(server, toolName, description, config) {
  * @returns {{ names: string[], healthcheck: () => Promise<Array> }} Registered tool names and healthcheck function
  */
 export function registerMysqlTools(server, tools, options = {}) {
-  if (options.sqlTimeoutSeconds !== null && options.sqlTimeoutSeconds !== undefined) {
-    setSqlTimeoutSeconds(options.sqlTimeoutSeconds);
+  if (tools.length > 0 && !options.sqlPoolRegistry) {
+    throw new Error('MySQL adapter requires sqlPoolRegistry');
   }
+  const resolvedOptions = {
+    clientConnectionPoolMaxPerTool: options.clientConnectionPoolMaxPerTool || 10,
+    serverConcurrencyBudget: options.serverConcurrencyBudget || 10,
+    sqlPoolRegistry: options.sqlPoolRegistry,
+    sqlTimeoutMs: getSqlTimeoutMs(options.sqlTimeoutSeconds),
+  };
   const registered = [];
   const poolRefs = [];
 
   for (const tool of tools) {
-    const getPool = createMysqlTool(server, tool.name, tool.description, tool.config);
+    const poolHandle = createMysqlTool(server, tool.name, tool.description, tool.config, resolvedOptions);
     registered.push(tool.name);
-    poolRefs.push({ name: tool.name, getPool, config: tool.config });
+    poolRefs.push({ name: tool.name, poolHandle, config: tool.config });
   }
 
-  async function healthcheck() {
+  async function healthcheck({ signal, timeoutMs = 10_000 } = {}) {
     const results = [];
-    for (const { name, getPool, config } of poolRefs) {
+    for (const { name, poolHandle, config } of poolRefs) {
       if (!config.host || !config.pass) {
         results.push({ tool: name, status: 'skip', error: 'not configured' });
         continue;
       }
       const start = Date.now();
+      let connection = null;
+      let cancelled = false;
       try {
-        await getPool().query('SELECT 1');
+        await poolHandle.use(pool => runCancellable(async ({ isCancelled }) => {
+          connection = await pool.getConnection();
+          if (isCancelled()) {
+            connection.destroy();
+            throw new Error('Healthcheck cancelled');
+          }
+          await connection.query('SELECT 1');
+        }, {
+          signal,
+          timeoutMs,
+          onCancel: () => {
+            cancelled = true;
+            connection?.destroy();
+          },
+        }), { signal, waitTimeoutMs: timeoutMs });
         results.push({ tool: name, status: 'ok', ms: Date.now() - start });
       } catch (err) {
         results.push({ tool: name, status: 'fail', ms: Date.now() - start, error: err.message });
+      } finally {
+        if (connection && !cancelled) connection.release();
       }
     }
     return results;

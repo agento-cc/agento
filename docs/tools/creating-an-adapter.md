@@ -10,23 +10,29 @@ Create `src/agento/toolbox/adapters/postgres.js`:
 import { z } from 'zod';
 import pg from 'pg';
 import { logToolbox as log } from '../log.js';
+import { isReadOnlySql } from './sql-read-only.js';
+import { getSqlTimeoutMs } from './sql-timeout.js';
 
-function createPostgresTool(server, toolName, description, config) {
-  let pool = null;
-
-  function getPool() {
-    if (!pool) {
-      pool = new pg.Pool({
-        host: config.host,
-        port: parseInt(config.port || '5432'),
-        user: config.user,
-        password: config.pass,
-        database: config.database,
-        max: 2,
-      });
-    }
-    return pool;
-  }
+function createPostgresTool(server, toolName, description, config, options) {
+  const port = parseInt(config.port || '5432', 10);
+  const poolConfig = {
+    host: config.host,
+    port,
+    user: config.user,
+    password: config.pass,
+    database: config.database,
+    max: options.clientConnectionPoolMaxPerTool,
+  };
+  const poolHandle = options.sqlPoolRegistry.createPoolHandle({
+    adapter: 'postgres',
+    toolName,
+    config: poolConfig,
+    server: { host: String(config.host).trim().toLowerCase(), port },
+    serverConcurrencyBudget: options.serverConcurrencyBudget,
+    queueWaitTimeoutMs: getSqlTimeoutMs(options.sqlTimeoutSeconds),
+    create: () => new pg.Pool(poolConfig),
+    close: pool => pool.end(),
+  });
 
   server.tool(
     toolName,
@@ -36,25 +42,40 @@ function createPostgresTool(server, toolName, description, config) {
       query: z.string().describe('SQL query (SELECT only)'),
     },
     async ({ user, query }) => {
-      // ... validate read-only, execute, return results
-      // See mysql.js for the full pattern
+      if (!isReadOnlySql(query, ['SELECT', 'WITH'], { dialect: 'postgresql' })) {
+        log(toolName, 'BLOCKED', `user=${user} non-readonly query`);
+        return {
+          content: [{ type: 'text', text: 'Error: Only read-only SELECT queries are allowed.' }],
+          isError: true,
+        };
+      }
+      const result = await poolHandle.use(pool => pool.query(query));
+      return { content: [{ type: 'text', text: JSON.stringify(result.rows) }] };
     }
   );
+
+  return poolHandle;
 }
 
-export function registerPostgresTools(server, tools) {
+export function registerPostgresTools(server, tools, options) {
   const registered = [];
   const poolRefs = [];
 
   for (const tool of tools) {
-    createPostgresTool(server, tool.name, tool.description, tool.config);
+    const poolHandle = createPostgresTool(
+      server,
+      tool.name,
+      tool.description,
+      tool.config,
+      options
+    );
     registered.push(tool.name);
-    poolRefs.push({ name: tool.name, config: tool.config });
+    poolRefs.push({ name: tool.name, config: tool.config, poolHandle });
   }
 
   async function healthcheck() {
     const results = [];
-    for (const { name, config } of poolRefs) {
+    for (const { name, config, poolHandle } of poolRefs) {
       if (!config.host || !config.pass) {
         results.push({ tool: name, status: 'skip', error: 'not configured' });
         continue;
@@ -62,7 +83,7 @@ export function registerPostgresTools(server, tools) {
       const start = Date.now();
       try {
         // Adapter-specific connectivity check
-        await getPool().query('SELECT 1');
+        await poolHandle.use(pool => pool.query('SELECT 1'));
         results.push({ tool: name, status: 'ok', ms: Date.now() - start });
       } catch (err) {
         results.push({ tool: name, status: 'fail', ms: Date.now() - start, error: err.message });
@@ -125,11 +146,20 @@ Each adapter exports a register function with this signature:
 function registerXxxTools(
   server: McpServer,
   tools: Array<{ name: string, description: string, config: Record<string, any> }>,
-  options?: { sqlTimeoutSeconds?: number }
+  options: {
+    sqlTimeoutSeconds: number,
+    clientConnectionPoolMaxPerTool: number,
+    serverConcurrencyBudget: number,
+    sqlPoolRegistry: SqlPoolRegistry
+  }
 ): { names: string[], healthcheck: () => Promise<Array<{ tool: string, status: 'ok' | 'fail' | 'skip', ms?: number, error?: string }>> }
 ```
 
 The `config` object contains resolved values from the 3-level fallback. Fields match the `fields` schema in module.json.
+
+SQL adapters must use the process-owned `sqlPoolRegistry` supplied in `options`. Do not keep a module-level pool or registry: adapter registrations happen per MCP session, while safe pool reuse and the per-server concurrency budget are process-wide concerns managed by the injected registry. They must also enforce read-only SQL before calling the driver, using the matching dialect; a read-only database principal remains mandatory defense in depth.
+
+The shared validator deliberately rejects backslashes inside PostgreSQL string literals. PostgreSQL `E'...'` strings always interpret backslash escapes, while plain strings depend on server settings; rejecting the ambiguous form prevents the validator and server from disagreeing about where a statement ends.
 
 The `healthcheck` function is called by `/health?test=true` to verify connectivity. It should return one result per tool: `ok` (connected), `fail` (error), or `skip` (not configured).
 

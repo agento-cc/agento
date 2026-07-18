@@ -22,6 +22,8 @@ CONFIG__{MODULE}__{PATH}
 | `jira/jira_host` | `CONFIG__JIRA__JIRA_HOST` |
 | `jira/attachment_download_limit` | `CONFIG__JIRA__ATTACHMENT_DOWNLOAD_LIMIT` |
 | `core/sql_timeout_seconds` | `CONFIG__CORE__SQL_TIMEOUT_SECONDS` |
+| `core/client_connection_pool_max_per_tool` | `CONFIG__CORE__CLIENT_CONNECTION_POOL_MAX_PER_TOOL` |
+| `core/server_concurrency_budget` | `CONFIG__CORE__SERVER_CONCURRENCY_BUDGET` |
 | `core/allowed_domains` | `CONFIG__CORE__ALLOWED_DOMAINS` |
 
 ### Tool-level fields
@@ -31,6 +33,7 @@ CONFIG__{MODULE}__{PATH}
 | `my-ecommerce/tools/mysql_ecom_prod/host` | `CONFIG__MY_ECOMMERCE__TOOLS__MYSQL_ECOM_PROD__HOST` |
 | `my-ecommerce/tools/mysql_ecom_prod/pass` | `CONFIG__MY_ECOMMERCE__TOOLS__MYSQL_ECOM_PROD__PASS` |
 | `nav-erp/tools/mssql_nav/host` | `CONFIG__NAV_ERP__TOOLS__MSSQL_NAV__HOST` |
+| `nav-erp/tools/mssql_nav/client_connection_pool_max_per_tool` | `CONFIG__NAV_ERP__TOOLS__MSSQL_NAV__CLIENT_CONNECTION_POOL_MAX_PER_TOOL` |
 | `my-app/tools/opensearch_prod/host` | `CONFIG__MY_APP__TOOLS__OPENSEARCH_PROD__HOST` |
 
 ## Where to Set

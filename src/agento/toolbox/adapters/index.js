@@ -13,19 +13,43 @@ const ADAPTERS = {
 // no adapter here by design, so they must not trigger the "No adapter for tool type" warning.
 const DECLARATIVE_TYPES = new Set(['mcp']);
 
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /**
  * Register config-driven adapter tools (mysql, mssql, opensearch) from module.json declarations.
  * @param {object} moduleConfigs - Resolved module-level configs (for sql_timeout_seconds etc.)
  * @returns {{ names: string[], healthchecks: Array<() => Promise<Array>> }}
  */
-export function registerAdapterTools(server, allTools, moduleToolTypes, moduleConfigs = {}) {
+export function registerAdapterTools(
+  server,
+  allTools,
+  moduleToolTypes,
+  moduleConfigs = {},
+  { sqlPoolRegistry } = {}
+) {
   const dynamicNames = [];
   const healthchecks = [];
   const sqlTimeoutSeconds = parseInt(moduleConfigs?.core?.sql_timeout_seconds || '300', 10);
+  const clientConnectionPoolMaxPerTool = positiveInteger(
+    moduleConfigs?.core?.client_connection_pool_max_per_tool,
+    10
+  );
+  const serverConcurrencyBudget = positiveInteger(
+    moduleConfigs?.core?.server_concurrency_budget,
+    10
+  );
 
   for (const [type, registerFn] of Object.entries(ADAPTERS)) {
     const tools = allTools.filter(t => t.type === type);
-    const { names, healthcheck } = registerFn(server, tools, { sqlTimeoutSeconds });
+    const { names, healthcheck } = registerFn(server, tools, {
+      sqlTimeoutSeconds,
+      clientConnectionPoolMaxPerTool,
+      serverConcurrencyBudget,
+      sqlPoolRegistry,
+    });
     dynamicNames.push(...names);
     healthchecks.push(healthcheck);
   }

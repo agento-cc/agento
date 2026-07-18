@@ -300,6 +300,16 @@ export async function loadTools(dbOverrides = null) {
       for (const fieldName of Object.keys(tool.fields || {})) {
         config[fieldName] = resolveField(mod.name, tool.name, fieldName, configDefaults, dbOverrides);
       }
+      if ((tool.type === 'mysql' || tool.type === 'mssql')
+          && config.client_connection_pool_max_per_tool === undefined) {
+        config.client_connection_pool_max_per_tool = resolveField(
+          mod.name,
+          tool.name,
+          'client_connection_pool_max_per_tool',
+          configDefaults,
+          dbOverrides
+        );
+      }
 
       tools.push({
         name: tool.name,
@@ -454,7 +464,7 @@ export async function registerTools(server, context, agentViewId = null, preload
   const configDefaults = loadConfigDefaults();
   const enabledCheck = (toolName) => isToolEnabled(toolName, dbOverrides, configDefaults);
   const fileManager = createFileManager(moduleConfigs, context.log);
-  const enrichedContext = { ...context, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
+  const enrichedContext = { ...context, app: undefined, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
 
   // Build offload config for the result offload middleware
   const offloadConfig = {
@@ -478,7 +488,13 @@ export async function registerTools(server, context, agentViewId = null, preload
   const allTools = await loadTools(dbOverrides);
   const enabledTools = allTools.filter(t => enabledCheck(t.name));
   const moduleToolTypes = getModuleToolTypes();
-  const { healthchecks: adapterHealthchecks } = registerAdapterTools(server, enabledTools, moduleToolTypes, moduleConfigs);
+  const { healthchecks: adapterHealthchecks } = registerAdapterTools(
+    server,
+    enabledTools,
+    moduleToolTypes,
+    moduleConfigs,
+    { sqlPoolRegistry: context.sqlPoolRegistry }
+  );
 
   const healthchecks = [...adapterHealthchecks];
 

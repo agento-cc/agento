@@ -92,6 +92,8 @@ The `core` module provides these framework-level config paths:
 |------|------|---------|-------------|
 | `core/timezone` | string | `"UTC"` | IANA timezone (e.g., `Europe/Warsaw`, `America/New_York`). Scoped per agent_view/workspace. |
 | `core/sql_timeout_seconds` | integer | `300` | SQL query timeout |
+| `core/client_connection_pool_max_per_tool` | integer | `10` | Maximum client connections in one MySQL/MSSQL tool pool |
+| `core/server_concurrency_budget` | integer | `10` | Process-wide maximum active SQL operations per adapter/host/port; default scope only |
 | `core/email_whitelist` | string | — | Allowed email recipients (comma-separated) |
 | `core/allowed_domains` | string | — | Allowed browser domains (comma-separated) |
 | `core/toolbox/url` | string | `"http://toolbox:3001"` | Toolbox base URL. Agent `ConfigWriter` implementations append their transport path (`/mcp` for Codex, `/sse` for Claude). Jira also reads this for REST calls. |
