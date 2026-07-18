@@ -14,7 +14,8 @@
         "port": {"type": "integer", "label": "Port"},
         "user": {"type": "string", "label": "User"},
         "pass": {"type": "obscure", "label": "Password"},
-        "database": {"type": "string", "label": "Database"}
+        "database": {"type": "string", "label": "Database"},
+        "client_connection_pool_max_per_tool": {"type": "integer", "label": "Maximum client connections"}
       }
     }
   ],

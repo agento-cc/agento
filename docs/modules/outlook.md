@@ -23,7 +23,7 @@ manifests.
 | Concern | Where |
 |---|---|
 | Graph auth (cert **or** client secret) | `toolbox/graph-auth.js` (`@azure/identity`) |
-| 6 MCP tools (read / reply / search / list / send / mark) | `toolbox/outlook.js` |
+| 5 MCP tools (read / get-attachment / reply / send / mark) | `toolbox/outlook.js` |
 | Delta-poll REST endpoint (`POST /api/outlook/delta`, validated cursor resume + paging + DMARC parse) | `toolbox/api.js`, `toolbox/api-handlers.js` |
 | Channel prompt fragments + publisher security gate | `src/channel.py` |
 | Poll command (`outlook:publish`, cron every minute — loops active agent_views; `--agent-view <code>` for one) | `src/commands/publish.py`, `cron.json` |
@@ -46,7 +46,7 @@ Set via `agento config:set outlook/<key> <value>` (or `CONFIG__OUTLOOK__<KEY>` e
 | `outlook/outlook_mailbox_user_id` | string | Mailbox UPN to poll — **per agent_view** (the mailbox identifies the target view). Set at the view's scope for multi-view; `default` works for a single-view deployment (resolved via fallback). |
 | `outlook/allowed_senders` | string | **Comma-separated allow-list** of `From` addresses, resolved **per view**. Supports **glob wildcards** (`*@mycompany.com` matches any local part at that domain; `*` never crosses the `@`) and exact addresses. **Empty = block all.** |
 | `outlook/poll_top` | int | Delta **page size** per poll, resolved per view, clamped 1..50 (default `10`). The poll pages `@odata.nextLink` to the end, so this caps the per-page size, not the total fetched. |
-| `outlook/restrict_read_to_allowed_senders` | bool | **Default `true`.** When on, the agent read tools (`outlook_get_message` / `outlook_search_messages` / `outlook_get_new_messages`) only surface mail that passes the **same gate as the publisher** — sender on `allowed_senders` **and** a DMARC `pass` (the `From` header is forgeable; DMARC is the proof). Verdict undeterminable ⇒ not surfaced (fail-closed); empty `allowed_senders` ⇒ block all reads. Disabling it (`false`) lets the agent read **any** message in the mailbox, including spoofed / non-allow-listed / DMARC-failed mail — a documented **security risk**. |
+| `outlook/restrict_read_to_allowed_senders` | bool | **Default `true`.** When on, the agent read tools (`outlook_get_message` / `outlook_get_attachment`) only surface mail that passes the **same gate as the publisher** — sender on `allowed_senders` **and** a DMARC `pass` (the `From` header is forgeable; DMARC is the proof). Verdict undeterminable ⇒ not surfaced (fail-closed); empty `allowed_senders` ⇒ block all reads. Disabling it (`false`) lets the agent read **any** message in the mailbox, including spoofed / non-allow-listed / DMARC-failed mail — a documented **security risk**. (Reads are *additionally* bound to the triggering job's own message — see [Stateless activation & loop safety](#stateless-activation--loop-safety).) |
 
 A DMARC pass is **always required** for allow-listed senders — it is not a config option (see the security gate below).
 
@@ -55,9 +55,16 @@ view normally inherits the global Azure app credentials and overrides only its `
 (and, if it differs, `enabled`/`allowed_senders`). Two views resolving to the **same** mailbox UPN are
 deduped at poll time — the **lowest agent_view id wins** and a warning is logged.
 
-The Python `OutlookConfig` carries only `enabled`, `poll_top`, `allowed_senders` — the
-Graph credentials/mailbox are resolved **toolbox-side only**, so the cron/framework registry never holds
-the secret.
+The **per-agent_view publisher** reads only **non-secret** fields — `enabled`, `poll_top`, `allowed_senders`,
+and the activation/marker keys in [Stateless activation & loop safety](#stateless-activation--loop-safety) —
+via per-path config `.get()` (never `get_module()`), so the publisher itself never resolves the obscure Graph
+secret. The Graph credentials are consumed **toolbox-side** (that is where all Graph HTTP happens). Note the
+precise scope: the Graph secret is still a declared `obscure` field, and — as a **pre-existing** behavior
+outside this change's scope — the framework `bootstrap()` resolves DEFAULT/ENV-scope module config on the
+cron; the `OutlookConfig` dataclass drops the secret so it never reaches the job/registry. Loop suppression
+introduces **no new secret** — it is address-based and **auto-derived from the agent_views** (no
+hand-maintained list), so there is nothing extra to resolve or protect (see
+[Stateless activation & loop safety](#stateless-activation--loop-safety)).
 
 ### Authentication: certificate or client secret
 
@@ -119,6 +126,85 @@ with admin consent.
    One job per message (idempotency `outlook:mail:<id>`), with the `From` stored in
    `job.requester_email` and `requester_trust = domain`.
 
+## Stateless activation & loop safety
+
+After a message clears the inbound security gate above, a second, purely **stateless** decision governs
+whether the agent actually acts — computed from the current message alone, with **no thread-state table**
+and no persisted state.
+
+### Activation: when the agent may act
+
+An authorized message creates a job **only** when at least one enabled `activation_modes` entry matches:
+
+- **`direct`** — the mailbox (its primary UPN, or any address in `mailbox_aliases`) is the sole recipient
+  across `To`+`Cc`. Set `direct_requires_sole_recipient` to `false` to activate on any direct address
+  (even when others are also addressed).
+- **`mention`** — the `summon_token` (default `@agento`, case-insensitive) appears in the subject or the
+  body preview.
+
+Otherwise the publisher **stays silent** — it creates no job but still advances the delta cursor (the
+message is evaluated once, not re-clogged). This mirrors the "not for us → leave unread, advance"
+pattern; the channel never *holds* on a policy decision.
+
+### Reply is reply-to-all
+
+`outlook_reply` replies to **every** participant Graph will deliver to — `(Reply-To || From) ∪ To ∪ Cc`,
+minus the agent's own mailbox — keeping a group thread in one conversation. Every recipient is gated
+against `core/email_whitelist`, and **only whitelisted addresses ever receive the reply**. What happens to
+a non-whitelisted recipient is governed by **`outlook/reply_policy`**:
+
+- **`remove`** (default) — the blocked recipient is **dropped** from the reply and the message is sent to
+  the rest, so one un-whitelisted address in a group thread never blocks the whole conversation. The tool
+  result names exactly who was omitted (logged as `dropped=…`), so it is never silent to the agent. The
+  reply preserves reply-all buckets (original sender → To, surviving To/Cc → Cc). If **every** recipient is
+  blocked, nothing is sent and the tool returns an error (you cannot reply to nobody — use
+  `outlook_send_mail`).
+- **`block`** — the original strict behavior: if **any** recipient fails the whitelist, the **whole send is
+  blocked** and nothing is sent (no draft is created).
+
+Either way the whitelist invariant holds — a blocked address never receives mail; the policy only chooses
+between *dropping* it and *blocking the whole send*. `reply_policy` applies to `outlook_reply` only;
+`outlook_send_mail` always blocks the whole send (there the agent typed the addresses explicitly). For a
+1:1 email reply-to-all is just a reply. Targeted 1:1 mail to a new address still uses `outlook_send_mail`.
+
+### Bot-to-bot loop suppression (fleet-mailbox detection)
+
+To stop two agents from replying to each other forever, the publisher treats an inbound message as
+**agent-authored** when its **DMARC-verified `From`** is one of the deployment's other agent mailboxes. That
+fleet set is **auto-derived** — never hand-maintained: the toolbox delta handler enumerates the **active
+agent_views** and unions each **outlook-enabled** view's resolved `outlook/outlook_mailbox_user_id` (through
+the normal `agent_view → workspace → global` fallback), deduped and lowercased, then drops the
+currently-polled mailbox so only **other** fleet agents remain (`deriveFleetMailboxes`). Dropping self is
+safe: the reply path already excludes the agent's own address, so no self-loop is possible. It then matches
+the inbound `From` against that set per message (`isAgentSender`, case-insensitive), and the
+publisher **hard-suppresses** agent-authored mail (creates no job) — even when humans are also on the thread
+— unless `allow_bot_collaboration` is `true`. Adding or removing an agent_view (or changing its mailbox)
+updates the fleet automatically.
+
+This is deliberately **address-based, not a per-message header/HMAC**: Microsoft Graph makes
+`internetMessageHeaders` **read-only after a message is created**, so a signed marker header cannot be set on
+a `createReplyAll` reply draft — making an outbound-stamped marker unreliable for the main (reply) path. The
+`From` is already DMARC-gated before this matters, so it can't be spoofed into a false positive; and a false
+positive only ever *suppresses* a reply (the safe direction). An **empty fleet** (a single-view deployment,
+or none outlook-enabled) means nothing is treated as agent-authored — loops are still bounded by the
+activation rule, since a reply-all in a multi-party thread leaves the agent as one-of-many and it stays
+silent. Only agents that are **agent_views in this deployment** are detected; a cross-deployment peer's
+mailbox is not part of the fleet. If the derivation ever fails (e.g. a DB blip), it **fails safe to an empty
+fleet** — no suppression, loops still bounded by the activation rule.
+
+### Config keys
+
+All resolve with the standard 3-tier fallback **agent_view → workspace → default**.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `outlook/activation_modes` | string | `direct,mention` | Comma-set of enabled activation modes. Empty = the agent never activates. |
+| `outlook/summon_token` | string | `@agento` | Token that triggers `mention` activation (case-insensitive) in subject/body-preview. |
+| `outlook/direct_requires_sole_recipient` | bool | `true` | When on, `direct` fires only if the mailbox/alias is the **sole** recipient across To+Cc. |
+| `outlook/mailbox_aliases` | string | `""` | Comma-separated extra addresses that count as this mailbox for `direct` (e.g. an aliased `support@`). |
+| `outlook/allow_bot_collaboration` | bool | `false` | When off, inbound mail from a **fleet** agent mailbox is suppressed. The fleet is **auto-derived** from the agent_views (every other outlook-enabled view's mailbox) — no manual list. Turn on to let agents collaborate on a thread. |
+| `outlook/reply_policy` | select | `remove` | How `outlook_reply` handles a reply-all recipient not in `core/email_whitelist`. `remove` (default) drops the blocked recipient(s) and sends to the rest; `block` blocks the whole reply if any recipient is not whitelisted. Only whitelisted addresses ever receive mail either way. `outlook_reply` only. |
+
 ## Polling: the delta cursor
 
 Poll progress is tracked by a durable Graph **delta cursor**, not `isRead`. This fixes the starvation
@@ -156,9 +242,8 @@ behind it.
 
 ## Tools are opt-in
 
-All seven tools (`outlook_get_message`, `outlook_get_attachment`, `outlook_reply`,
-`outlook_search_messages`, `outlook_get_new_messages`, `outlook_send_mail`, `outlook_mark_processed`)
-ship **disabled**. Enable only what the agent needs:
+All five tools (`outlook_get_message`, `outlook_get_attachment`, `outlook_reply`, `outlook_send_mail`,
+`outlook_mark_processed`) ship **disabled**. Enable only what the agent needs:
 
 ```bash
 agento tool:enable outlook_get_message    --agent-view <code>
@@ -166,9 +251,33 @@ agento tool:enable outlook_reply          --agent-view <code>
 agento tool:enable outlook_mark_processed --agent-view <code>
 ```
 
-`outlook_send_mail` and `outlook_reply` send external email, so they are **recipient-whitelisted** against
-`core/email_whitelist` (reply gates the address Graph actually delivers to — `Reply-To` when present,
-else `From`) — independent of the inbound allow-list.
+> **No enumeration tools.** The former `outlook_search_messages` / `outlook_get_new_messages` list tools
+> were removed: in a shared mailbox they leaked other people's subjects, senders, and message ids. Message
+> discovery is now impossible by construction — see [Reads are bound to the triggering
+> message](#reads-are-bound-to-the-triggering-message).
+
+`outlook_send_mail` and `outlook_reply` send external email, so **every** recipient is checked against
+`core/email_whitelist` — independent of the inbound allow-list, and only whitelisted addresses ever
+receive mail. `outlook_send_mail` blocks the whole send if any recipient fails. `outlook_reply` gates the
+full `(Reply-To || From) ∪ To ∪ Cc` set and, per `outlook/reply_policy`, either drops the blocked
+recipients (`remove`, default) or blocks the whole send (`block`). See
+[Reply is reply-to-all](#reply-is-reply-to-all).
+
+### Reads and thread actions are bound to the triggering message
+
+`outlook_get_message` / `outlook_get_attachment` (reads) **and** `outlook_reply` / `outlook_mark_processed`
+(thread actions) accept a message id, but for a headless email-triggered job they operate on **only** the
+message that triggered that job. The toolbox resolves the job's own message id once per session from
+`job.reference_id` (a scope-checked lookup bound to the job's `agent_view_id` and the `outlook` source,
+fail-closed); any other id — even a valid-looking one leaked via a prompt, log, or prior output — returns a
+generic error and does nothing (no read, no reply-all into another thread, no marking another mail read).
+Combined with the removal of the enumeration tools, the agent cannot reach a conversation it is not part of,
+with no ACL and no new tables. (Email is self-quoting, so the triggering message usually carries the prior
+thread inline.)
+
+**Operator escape hatch:** an interactive `agento run` has no triggering job (`jobId` is null), so this
+binding is not applied — the operator is trusted at a console. The by-construction guarantee applies to
+headless, email-triggered jobs.
 
 ### Attachments
 
@@ -197,14 +306,14 @@ attachments. The preference is conveyed via the tool descriptions only (a soft L
 branch); if `outlook_send_mail` is not enabled, `email_send` remains the automatic fallback (a disabled
 tool's description is never shown).
 
-The **read** tools (`outlook_get_message`, `outlook_search_messages`, `outlook_get_new_messages`) are
+The **read** tools (`outlook_get_message`, `outlook_get_attachment`) are
 gated by `outlook/restrict_read_to_allowed_senders` (default **on**): they apply the **same gate as the
 publisher** — a message is surfaced only if its sender is on `outlook/allowed_senders` **and** it carries
 a DMARC `pass`. The `From` header is forgeable, so the allow-list alone is not enough; without the DMARC
 check a spoofed allow-listed sender on a DMARC-failing email would be readable (a prompt-injection
-vector). A Graph message **collection** does not reliably return `internetMessageHeaders`, so the list
-tools (`search` / `get_new`) **hydrate** the verdict via a per-message GET when the listing omits it —
-bounded to already-allow-listed senders, like the publisher's delta path. An undeterminable verdict ⇒
+vector). A single-message GET reliably returns `internetMessageHeaders`, so the verdict is parsed
+directly (the removed enumeration tools once needed per-message hydration for message collections; with
+them gone, no collection is ever surfaced). An undeterminable verdict ⇒
 not surfaced (fail-closed); empty `allowed_senders` ⇒ no readable mail. So an enabled read tool can't
 expose mail the channel would never have turned into a job (incl. spoofed / DMARC-failed mail sharing the
 mailbox). Disabling the flag bypasses **both** checks — a documented security risk.

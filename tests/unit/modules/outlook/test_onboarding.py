@@ -5,8 +5,12 @@ from unittest.mock import MagicMock
 from agento.framework.scoped_config import Scope
 from agento.modules.outlook.src.onboarding import (
     OutlookOnboarding,
+    _conflicting_mailbox_scopes,
     _pem_has_cert_and_key,
+    _print_next_steps,
+    _read_gate_disabled_scopes,
     _read_pem_block,
+    _warn_read_gate_disabled,
 )
 from agento.modules.outlook.src.toolbox_client import OutlookToolboxClient
 
@@ -146,6 +150,9 @@ def _patch_run(monkeypatch, *, auth_choice, inputs, getpass_value, views=None, v
     """
     calls = []
     conn = MagicMock()
+    # run() now queries core_config_data (cross-scope mailbox collision + read-gate warning); default the
+    # cursor's fetchall to empty so those guards see no conflict / no disabled scope unless a test overrides.
+    conn.cursor.return_value.__enter__.return_value.fetchall.return_value = []
     conn.commit.side_effect = lambda: calls.append(("commit",))
 
     feed = iter(inputs)
@@ -337,3 +344,101 @@ def test_next_steps_printed_even_without_toolbox_url(monkeypatch, capsys):
     assert "tool:enable" in out
     assert "outlook/enabled" in out
     assert "ingress:bind" not in out
+
+
+def _conn_with_fetchall(rows):
+    """Mock a conn whose `with conn.cursor() as cur: ... cur.fetchall()` yields `rows`."""
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = rows
+    return conn
+
+
+# --- Item A: least-privilege hint in the onboarding checklist ---
+
+def test_print_next_steps_includes_least_privilege_hint(capsys):
+    _print_next_steps()
+    out = capsys.readouterr().out
+    assert "least privilege" in out.lower()
+    assert "restrict the Azure app" in out
+
+
+# --- Item D: cross-scope mailbox collision guard ---
+
+def test_conflicting_mailbox_scopes_detects_default_scope_conflict():
+    conn = _conn_with_fetchall([{"scope": "default", "scope_id": 0}])
+    conflicts = _conflicting_mailbox_scopes(conn, "Agent@X.com", Scope.AGENT_VIEW, 5)
+    assert conflicts == [("default", 0)]
+
+
+def test_conflicting_mailbox_scopes_detects_other_agent_view_tuple_cursor():
+    conn = _conn_with_fetchall([("agent_view", 3)])  # tuple-style cursor
+    conflicts = _conflicting_mailbox_scopes(conn, "agent@x.com", Scope.AGENT_VIEW, 5)
+    assert conflicts == [("agent_view", 3)]
+
+
+def test_conflicting_mailbox_scopes_none_when_only_target():
+    conn = _conn_with_fetchall([])
+    assert _conflicting_mailbox_scopes(conn, "agent@x.com", Scope.DEFAULT, 0) == []
+
+
+def test_conflicting_mailbox_scopes_empty_mailbox_short_circuits():
+    conn = MagicMock()
+    assert _conflicting_mailbox_scopes(conn, "   ", Scope.DEFAULT, 0) == []
+    conn.cursor.assert_not_called()
+
+
+def test_conflicting_mailbox_scopes_query_normalizes_and_excludes_target():
+    conn = _conn_with_fetchall([])
+    cur = conn.cursor.return_value.__enter__.return_value
+    _conflicting_mailbox_scopes(conn, "  Agent@X.COM ", Scope.AGENT_VIEW, 5)
+    params = cur.execute.call_args[0][1]
+    assert params[1] == "agent@x.com"     # normalized UPN
+    assert params[2] == Scope.AGENT_VIEW  # exact target scope excluded
+    assert params[3] == 5                 # exact target scope_id excluded
+
+
+# --- Item F: read-gate-disabled warning ---
+
+def test_read_gate_disabled_scopes_reports_only_falsy():
+    conn = _conn_with_fetchall([
+        {"scope": "default", "scope_id": 0, "value": "1"},
+        {"scope": "agent_view", "scope_id": 2, "value": "0"},
+        {"scope": "agent_view", "scope_id": 3, "value": "false"},
+        {"scope": "agent_view", "scope_id": 4, "value": None},
+    ])
+    assert _read_gate_disabled_scopes(conn) == [("agent_view", 2), ("agent_view", 3)]
+
+
+def test_warn_read_gate_disabled_prints_when_disabled(capsys):
+    conn = _conn_with_fetchall([{"scope": "agent_view", "scope_id": 2, "value": "0"}])
+    _warn_read_gate_disabled(conn)
+    out = capsys.readouterr().out
+    assert "DISABLED" in out and "agent_view:2" in out
+
+
+def test_warn_read_gate_disabled_silent_when_all_enabled(capsys):
+    conn = _conn_with_fetchall([{"scope": "default", "scope_id": 0, "value": "1"}])
+    _warn_read_gate_disabled(conn)
+    assert capsys.readouterr().out == ""
+
+
+def test_run_abort_on_mailbox_conflict_rolls_back_and_does_not_commit(monkeypatch):
+    # A mailbox already configured at another scope triggers the collision guard; choosing "abort" must
+    # roll back the uncommitted identity/auth writes (so setup's is_complete on the same conn can't read
+    # the aborted run as complete) and must not commit or write the mailbox.
+    conn, calls = _patch_run(
+        monkeypatch,
+        auth_choice=0,
+        inputs=["tid", "cid", "agent@example.com"],
+        getpass_value="sec",
+        views=[SimpleNamespace(id=1, code="dev")],  # single view -> default-scope target
+        view_choice=0,  # the conflict confirm prompt -> "No — abort"
+    )
+    conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [("agent_view", 7)]
+
+    OutlookOnboarding().run(conn, {}, logging.getLogger("t"))
+
+    conn.rollback.assert_called_once()
+    assert not any(c[0] == "commit" for c in calls)
+    assert not any(len(c) > 1 and c[1] == "outlook/outlook_mailbox_user_id" for c in calls)

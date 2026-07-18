@@ -185,6 +185,19 @@ function parseBool(value, dflt) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
+// outlook/reply_policy governs how outlook_reply handles a reply-all recipient not in core/email_whitelist.
+// 'block' → block the whole send (mirrors outlook_send_mail). Anything else (incl. missing/empty) → the
+// default 'remove' → drop the blocked recipient(s) and send to the rest. Either way only whitelisted
+// addresses ever receive mail.
+function resolveReplyPolicy(value) {
+  return String(value ?? '').trim().toLowerCase() === 'block' ? 'block' : 'remove';
+}
+
+// Case-insensitive dedupe preserving first-seen original casing (email addresses are case-insensitive).
+function dedupeCI(addrs) {
+  return [...new Map(addrs.filter(Boolean).map((a) => [a.toLowerCase(), a])).values()];
+}
+
 // On a non-ok Graph response, drain+discard the body (it can carry mailbox/tenant identifiers we must
 // NOT surface to the agent — same policy as api-handlers.js) and throw a STATUS-ONLY error. The tool
 // catch blocks log this server-side and return it to the agent already sanitized.
@@ -195,33 +208,64 @@ async function ensureOk(res) {
   }
 }
 
-// Accept only strict ISO-8601 datetimes before interpolating into an OData $filter (never raw-interpolate
-// agent input). Returns true for e.g. 2026-01-02T03:04:05Z / +01:00 / with fractional seconds.
-function isIso8601(value) {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value);
-}
-
-const FOLDER_MAP = { inbox: 'Inbox', sentitems: 'SentItems', drafts: 'Drafts' };
-
-export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthFactory, artifactsDir }) {
+export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthFactory, artifactsDir, db, jobId, agentViewId }) {
   const cfg = moduleConfigs?.outlook || {};
   const auth = (graphAuthFactory || createGraphAuth)(cfg);
   const whitelist = loadWhitelist(moduleConfigs);
+  const replyPolicy = resolveReplyPolicy(cfg.reply_policy);
+
+  // Bot-to-bot loop suppression needs NO outbound stamping: an inbound message is treated as
+  // agent-authored when its (DMARC-verified) From is one of the deployment's fleet mailboxes — the set
+  // auto-derived from the agent_views (every OTHER outlook-enabled view's resolved mailbox), computed in
+  // the delta handler (api-handlers.js deriveFleetMailboxes / isAgentSender). Graph makes
+  // internetMessageHeaders read-only after create, so a per-message HMAC header can't be set on a reply
+  // draft — address matching is the reliable, Graph-header-free signal.
 
   // S3 READ RESTRICTION: when `restrict_read_to_allowed_senders` is on (DEFAULT true), the read tools
-  // (get_message / search / get_new) surface a message only if it passes the SAME gate as the inbound
+  // (get_message / get_attachment) surface a message only if it passes the SAME gate as the inbound
   // publisher (channel.py): sender on outlook/allowed_senders AND a DMARC `pass`. The From header is
   // forgeable, so an allow-listed sender alone is NOT enough — DMARC is the cryptographic proof; without
   // it a spoofed allow-listed From on a DMARC-failing mail would be readable (a prompt-injection vector).
   // The verdict is the immutable receipt-time Authentication-Results header (parseDmarcVerdict), checked
   // FAIL-CLOSED: no verifiable `pass` ⇒ not surfaced. Empty allowed_senders = block all. Disabling
   // restrict_read_to_allowed_senders bypasses BOTH checks (lets the agent read any mail) — a documented
-  // security risk. `surfaceAllowed` is the sync gate for a SINGLE-message GET (which reliably returns the
-  // selected internetMessageHeaders); list tools use the async `readGatePass` below (collections don't).
+  // security risk. This runs IN ADDITION to the current-job binding below.
   const allowedSenders = loadAllowedSenders(cfg);
   const restrictRead = parseBool(cfg.restrict_read_to_allowed_senders, true);
   const surfaceAllowed = (addr, headers) =>
     !restrictRead || (matchesWhitelist(addr || '', allowedSenders) && parseDmarcVerdict(headers) === 'pass');
+
+  // CURRENT-JOB READ BINDING: privacy-by-construction for headless email jobs. With no enumeration tool,
+  // the only remaining read vector is a leaked opaque message id; bind get_message/get_attachment to the
+  // id that TRIGGERED this job so a foreign id cannot be read. Resolved once per session (this promise is
+  // register()-scoped — NEVER module scope). jobId null (interactive `agento run`) → binding disabled
+  // (operator escape hatch). A jobId that resolves no row scoped to THIS agent_view + Outlook source →
+  // fail closed (serve nothing). reference_id is `{slug}::{message_id}`; the bare id is the tail.
+  let bindingPromise;
+  const resolveBinding = () => {
+    if (!bindingPromise) {
+      bindingPromise = (async () => {
+        try {
+          const [rows] = await db.getCronPool().query(
+            "SELECT reference_id FROM job WHERE id = ? AND agent_view_id = ? AND source = 'outlook'",
+            [jobId, agentViewId]
+          );
+          if (!rows || rows.length === 0) return { bound: false };
+          return { bound: true, messageId: String(rows[0].reference_id || '').split('::').pop() };
+        } catch (err) {
+          log('outlook_read_binding', 'ERROR', `job binding lookup failed: ${err.message}`);
+          return { bound: false };
+        }
+      })();
+    }
+    return bindingPromise;
+  };
+  // True iff `requestedId` may be read under the current-job binding. jobId null → allow (interactive).
+  const jobBindingAllows = async (requestedId) => {
+    if (jobId === null || jobId === undefined) return true;
+    const b = await resolveBinding();
+    return b.bound && b.messageId === requestedId;
+  };
 
   // Per-tool opt-in gate. At startup (registerModuleRestApis) isToolEnabled is undefined and the server
   // is a no-op stub, so registering is harmless; at session time a disabled tool is skipped entirely.
@@ -235,14 +279,28 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
     });
   }
 
-  // Attach validated files to an already-created draft (createReply OR POST /messages) and send it.
-  // Defined INSIDE register() so it closes over the session-scoped graphFetch (like graphFetch /
-  // surfaceAllowed / notConfigured) — never a module-level function reading per-session auth from module
-  // scope (that is the cross-session contamination pattern the rules forbid). Shared by outlook_reply and
-  // outlook_send_mail; the only per-tool difference is who created the draft. On ANY failure after the
-  // draft exists, best-effort DELETE the draft (no orphan) then re-throw to the caller's outer catch.
-  async function attachAndSendDraft(mailbox, draftId, records) {
+  // Attach validated files to a draft and send it. Defined INSIDE register() so it closes over the
+  // session-scoped graphFetch (like graphFetch / surfaceAllowed / notConfigured) — never a module-level
+  // function reading per-session auth from module scope (that is the cross-session contamination pattern
+  // the rules forbid). Shared by the reply-all and send_mail draft paths; the only per-tool difference is
+  // who created the draft. On ANY failure after the draft exists, best-effort DELETE the draft (no orphan)
+  // then re-throw to the caller's outer catch.
+  async function attachAndSendDraft(mailbox, draftId, records, recipientsOverride = null) {
     try {
+      // reply_policy=remove: overwrite the draft's recipients with the whitelisted subset BEFORE
+      // attaching/sending (createReplyAll auto-populated the full set; we drop the blocked ones). Runs
+      // inside this try so the draft is DELETEd on any failure — no orphaned draft in Drafts.
+      // SECURITY (load-bearing): Graph PATCH on a message REPLACES toRecipients/ccRecipients wholesale
+      // (it does not merge/append), so the auto-populated blocked addresses are fully overwritten by the
+      // whitelisted subset. Keep it a full replace — never a partial/merge update — or a blocked address
+      // could survive into the send.
+      if (recipientsOverride) {
+        const pr = await graphFetch(
+          `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(draftId)}`,
+          { method: 'PATCH', body: JSON.stringify({ toRecipients: recipientsOverride.to, ccRecipients: recipientsOverride.cc }) }
+        );
+        await ensureOk(pr);
+      }
       for (const { realPath, name } of records) {
         // Re-validate at read time (close the TOCTOU between early validation and upload): re-resolve +
         // re-assert /workspace containment (catches a post-validation symlink/file swap; throws → cleanup
@@ -322,31 +380,67 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
     }
   }
 
-  // Async read gate for LIST results: a Graph message COLLECTION does not reliably return
-  // internetMessageHeaders even when $select-ed (unlike a single-message GET), so when a listed item
-  // omits them we hydrate the verdict via a per-message GET — bounded to an already-allow-listed sender
-  // (so junk is never hydrated) and FAIL-CLOSED (any hydration failure / unverifiable verdict ⇒ dropped).
-  // Mirrors the publisher's delta-handler hydration. Returns true iff the message is surfaceable.
-  async function readGatePass(m) {
-    if (!restrictRead) return true;
-    const addr = m.from?.emailAddress?.address;
-    if (!matchesWhitelist(addr || '', allowedSenders)) return false;
-    let headers = m.internetMessageHeaders;
-    if (!Array.isArray(headers)) {
-      try {
-        const hr = await graphFetch(
-          `/users/${encodeURIComponent(auth.getMailboxUserId())}/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders`
-        );
-        if (!hr.ok) {
-          await hr.text().catch(() => ''); // drain+discard (never surface a Graph body)
-          return false;
-        }
-        headers = (await hr.json()).internetMessageHeaders;
-      } catch {
-        return false;
-      }
+  // Shared threaded reply-all send. Defined INSIDE register() (closes over session-scoped graphFetch /
+  // auth / whitelist / replyPolicy / attachAndSendDraft). Resolves the set Graph will actually deliver to
+  // — (replyTo || from) ∪ toRecipients ∪ ccRecipients, minus the agent's own mailbox — and gates EVERY
+  // address against core/email_whitelist. A recipient not on the whitelist is handled per outlook/
+  // reply_policy: 'block' returns { blocked } WITHOUT any Graph mutation (block-whole, mirrors
+  // outlook_send_mail); 'remove' (default) drops the blocked address, PATCHing the draft to the
+  // whitelisted subset so a group thread is never blocked by one bad address (only whitelisted addresses
+  // ever receive mail either way). If EVERY recipient is blocked under 'remove', returns { noRecipients }
+  // (cannot reply to nobody). createReplyAll (draft) → [PATCH recipients] → attach+send. Returns
+  // { recipients, dropped } on success.
+  async function createReplyAllDraft(mailbox, messageId, body) {
+    const draftRes = await graphFetch(
+      `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/createReplyAll`,
+      { method: 'POST', body: JSON.stringify({ message: { body: { contentType: 'HTML', content: body } } }) }
+    );
+    await ensureOk(draftRes);
+    return (await draftRes.json())?.id;
+  }
+
+  async function sendThreadedReply(mailbox, messageId, body, records) {
+    const metaRes = await graphFetch(
+      `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}` +
+        '?$select=from,replyTo,toRecipients,ccRecipients,conversationId'
+    );
+    await ensureOk(metaRes);
+    const meta = await metaRes.json();
+    const origin = (meta?.replyTo && meta.replyTo.length)
+      ? meta.replyTo.map((r) => r.emailAddress?.address)
+      : [meta?.from?.emailAddress?.address];
+    const to = (meta?.toRecipients || []).map((r) => r.emailAddress?.address);
+    const cc = (meta?.ccRecipients || []).map((r) => r.emailAddress?.address);
+    const self = (mailbox || '').toLowerCase();
+    const notSelf = (a) => a && a.toLowerCase() !== self;
+    // Case-insensitive dedupe + self-exclusion so an address isn't gated/reported twice and the agent's
+    // own mailbox (which createReplyAll drops server-side) isn't gated.
+    const recipients = dedupeCI([...origin, ...to, ...cc].filter(notSelf));
+    const blocked = recipients.filter((addr) => !matchesWhitelist(addr, whitelist));
+
+    if (blocked.length === 0) {
+      // Fast path (both policies): nothing to drop — let createReplyAll's own recipients stand.
+      const draftId = await createReplyAllDraft(mailbox, messageId, body);
+      await attachAndSendDraft(mailbox, draftId, records);
+      return { recipients };
     }
-    return parseDmarcVerdict(headers) === 'pass';
+
+    if (replyPolicy === 'block') return { blocked };
+
+    // reply_policy=remove: rebuild the whitelisted reply-all buckets — original sender → To, surviving
+    // To/Cc → Cc (matches createReplyAll's own convention) — and PATCH them onto the draft. Promote Cc→To
+    // if the sender was dropped so the message always has a To recipient; if NOTHING survives, don't send.
+    const asRecipients = (addrs) => addrs.map((a) => ({ emailAddress: { address: a } }));
+    let toB = dedupeCI(origin.filter(notSelf)).filter((a) => matchesWhitelist(a, whitelist));
+    const toKeys = new Set(toB.map((a) => a.toLowerCase()));
+    let ccB = dedupeCI([...to, ...cc].filter(notSelf))
+      .filter((a) => matchesWhitelist(a, whitelist) && !toKeys.has(a.toLowerCase()));
+    if (toB.length === 0) { toB = ccB; ccB = []; }
+    if (toB.length === 0) return { noRecipients: true };
+
+    const draftId = await createReplyAllDraft(mailbox, messageId, body);
+    await attachAndSendDraft(mailbox, draftId, records, { to: asRecipients(toB), cc: asRecipients(ccB) });
+    return { recipients: [...toB, ...ccB], dropped: blocked };
   }
 
   function notConfigured(toolName) {
@@ -370,6 +464,13 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       { message_id: z.string().describe('Graph message ID') },
       async ({ message_id }) => {
         if (!auth.isConfigured()) return notConfigured('outlook_get_message');
+        // Current-job binding: a headless job may read ONLY its own triggering message. A foreign id
+        // (leaked/guessed) is refused with a generic error that leaks nothing about why. Runs before any
+        // Graph call.
+        if (!(await jobBindingAllows(message_id))) {
+          log('outlook_get_message', 'BLOCKED', 'message id not bound to the current job');
+          return { content: [{ type: 'text', text: 'Error: message is not available for this task.' }], isError: true };
+        }
         const mailbox = auth.getMailboxUserId();
         try {
           const res = await graphFetch(
@@ -448,6 +549,12 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       },
       async ({ message_id, attachment_id }) => {
         if (!auth.isConfigured()) return notConfigured('outlook_get_attachment');
+        // Current-job binding: attachments may be downloaded ONLY from this job's own triggering message.
+        // A foreign message id is refused generically (no leak) before any Graph call.
+        if (!(await jobBindingAllows(message_id))) {
+          log('outlook_get_attachment', 'BLOCKED', 'message id not bound to the current job');
+          return { content: [{ type: 'text', text: 'Error: message is not available for this task.' }], isError: true };
+        }
         const mailbox = auth.getMailboxUserId();
         try {
           // 1. Re-apply the read gate BEFORE any download. Same message GET shape the read tools use
@@ -558,13 +665,17 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
     );
   }
 
-  // --- outlook_reply (recipient-gated: the original sender must be whitelisted) ---
+  // --- outlook_reply (reply-all: every delivered recipient must be whitelisted) ---
   if (enabled('outlook_reply')) {
     server.tool(
       'outlook_reply',
       [
-        'Reply to an email message. Creates a proper threaded reply (Re: subject, correct headers).',
-        'The reply goes to the original sender, who must be in the email whitelist (core/email_whitelist).',
+        'Reply to an email message. Creates a proper threaded REPLY-ALL (Re: subject, correct headers) —',
+        'it goes to the original sender plus everyone on the To/Cc (excluding your own mailbox), keeping',
+        'the whole conversation in one thread. Only recipients in the email whitelist (core/email_whitelist)',
+        'ever receive it; a non-whitelisted recipient is dropped from the reply by default (reply_policy),',
+        'and the result tells you who was omitted. (If reply_policy=block, one non-whitelisted recipient',
+        'blocks the whole send instead.) For a targeted 1:1 message to a specific address, use outlook_send_mail instead.',
         'The body must be valid HTML (e.g. <p>, <ul>/<li>, <b>) — it is sent as an HTML message body.',
         'Optional attachments: absolute file paths inside /workspace/ (e.g. files downloaded via',
         'outlook_get_attachment). Max 10 files; each up to 25 MB.',
@@ -580,6 +691,12 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       },
       async ({ message_id, body, attachments }) => {
         if (!auth.isConfigured()) return notConfigured('outlook_reply');
+        // Bind to the current job's triggering message: a leaked id must not let the agent reply-all into
+        // (or fetch recipient metadata from) another conversation. Runs before ANY Graph call.
+        if (!(await jobBindingAllows(message_id))) {
+          log('outlook_reply', 'BLOCKED', 'message id not bound to the current job');
+          return { content: [{ type: 'text', text: 'Error: message is not available for this task.' }], isError: true };
+        }
         const mailbox = auth.getMailboxUserId();
         try {
           // With attachments: validate FIRST so bad input returns isError before ANY Graph call.
@@ -593,182 +710,35 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             records = v.records;
           }
 
-          // Require-route governs which JOBS are created; it does NOT constrain MCP calls. outlook_reply
-          // sends external email, so gate the actual recipient against the whitelist. Graph's /reply and
-          // createReply deliver to the original message's Reply-To when present, else From — so gate the
-          // address Graph actually delivers to (fetch from+replyTo): an allow-listed From with a hostile
-          // Reply-To must not exfiltrate the reply to a non-whitelisted address.
-          const fromRes = await graphFetch(
-            `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}?$select=from,replyTo`
-          );
-          await ensureOk(fromRes);
-          const meta = await fromRes.json();
-          const replyToAddrs = (meta?.replyTo || []).map((r) => r.emailAddress?.address).filter(Boolean);
-          const recipients = replyToAddrs.length
-            ? replyToAddrs
-            : [meta?.from?.emailAddress?.address || ''];
-          const blocked = recipients.filter((addr) => !matchesWhitelist(addr, whitelist));
-          if (blocked.length > 0) {
-            log('outlook_reply', 'BLOCKED', `mailbox=${mailbox} recipient(s)="${blocked.join(',')}" not in whitelist`);
+          const result = await sendThreadedReply(mailbox, message_id, body, records);
+          if (result.blocked) {
+            // reply_policy=block: one non-whitelisted recipient blocks the whole send.
+            log('outlook_reply', 'BLOCKED', `mailbox=${mailbox} recipient(s)="${result.blocked.join(',')}" not in whitelist`);
             return {
-              content: [{ type: 'text', text: `Error: reply recipient "${blocked.join(', ')}" is not in the allowed recipients whitelist.` }],
+              content: [{ type: 'text', text: `Error: reply recipient "${result.blocked.join(', ')}" is not in the allowed recipients whitelist.` }],
               isError: true,
             };
           }
-
-          // No-attachments path: byte-for-byte the existing single /reply POST. Send an HTML reply via the
-          // /reply action's `message.body` (ItemBody, contentType HTML) — NOT the `comment` parameter,
-          // which Graph treats as plain text only (mutually exclusive; both = HTTP 400). The /reply action
-          // still threads the reply (Re: subject, In-Reply-To/References, conversationId).
-          if (!records.length) {
-            const res = await graphFetch(
-              `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}/reply`,
-              { method: 'POST', body: JSON.stringify({ message: { body: { contentType: 'HTML', content: body } } }) }
-            );
-            await ensureOk(res);
-            log('outlook_reply', 'OK', `mailbox=${mailbox} to=${recipients.join(',')} message_id=${message_id.slice(0, 20)}...`);
-            return { content: [{ type: 'text', text: 'Reply sent successfully.' }] };
+          if (result.noRecipients) {
+            // reply_policy=remove but EVERY recipient was non-whitelisted → nothing left to reply to.
+            log('outlook_reply', 'BLOCKED', `mailbox=${mailbox} all reply recipients not in whitelist; nothing sent`);
+            return {
+              content: [{ type: 'text', text: 'Error: none of the reply recipients are in the allowed recipients whitelist; nothing was sent. Use outlook_send_mail to reach a specific allowed address.' }],
+              isError: true,
+            };
           }
-
-          // With-attachments path: createReply (draft) → shared attach/send/cleanup helper.
-          const draftRes = await graphFetch(
-            `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(message_id)}/createReply`,
-            { method: 'POST', body: JSON.stringify({ message: { body: { contentType: 'HTML', content: body } } }) }
-          );
-          await ensureOk(draftRes);
-          const draftId = (await draftRes.json())?.id;
-          await attachAndSendDraft(mailbox, draftId, records);
-          log('outlook_reply', 'OK', `mailbox=${mailbox} to=${recipients.join(',')} attachments=${records.length} message_id=${message_id.slice(0, 20)}...`);
-          return { content: [{ type: 'text', text: `Reply sent successfully (${records.length} attachment${records.length === 1 ? '' : 's'}).` }] };
+          const dropped = result.dropped || [];
+          log('outlook_reply', 'OK', `mailbox=${mailbox} to=${result.recipients.join(',')}${dropped.length ? ` dropped=${dropped.join(',')}` : ''} attachments=${records.length} message_id=${message_id.slice(0, 20)}...`);
+          const attachNote = records.length ? ` (${records.length} attachment${records.length === 1 ? '' : 's'})` : '';
+          const dropNote = dropped.length
+            ? ` ${dropped.length} recipient${dropped.length === 1 ? '' : 's'} omitted (not in the allowed recipients whitelist): ${dropped.join(', ')}.`
+            : '';
+          return {
+            content: [{ type: 'text', text: `Reply sent successfully${attachNote}.${dropNote}` }],
+          };
         } catch (err) {
           log('outlook_reply', 'ERROR', `mailbox=${mailbox} ${err.message}`);
           return { content: [{ type: 'text', text: `Error sending reply: ${err.message}` }], isError: true };
-        }
-      }
-    );
-  }
-
-  // --- outlook_search_messages ---
-  if (enabled('outlook_search_messages')) {
-    server.tool(
-      'outlook_search_messages',
-      [
-        'Search email messages with filters (subject, sender, date range, body text).',
-        'Returns: message_id, subject, from, to[], receivedDateTime, isRead.',
-      ].join('\n'),
-      {
-        folder: z.enum(['inbox', 'sentitems', 'drafts']).optional().default('inbox').describe('Mail folder to search'),
-        subject_contains: z.string().optional().describe('Filter: subject contains this text'),
-        from_contains: z.string().optional().describe('Filter: sender address contains this text'),
-        to_contains: z.string().optional().describe('Filter: recipient address contains this text'),
-        body_contains: z.string().optional().describe('Filter: body contains this text'),
-        received_after: z.string().optional().describe('Filter: received after this ISO8601 datetime'),
-        received_before: z.string().optional().describe('Filter: received before this ISO8601 datetime'),
-        limit: z.number().optional().default(10).describe('Max messages to return (max 50)'),
-      },
-      async ({ folder, subject_contains, from_contains, to_contains, body_contains, received_after, received_before, limit }) => {
-        if (!auth.isConfigured()) return notConfigured('outlook_search_messages');
-        const mailbox = auth.getMailboxUserId();
-        const graphFolder = FOLDER_MAP[folder] || 'Inbox';
-
-        const filters = [];
-        const esc = (v) => v.replace(/'/g, "''");
-        if (subject_contains) filters.push(`contains(subject, '${esc(subject_contains)}')`);
-        if (from_contains) filters.push(`contains(from/emailAddress/address, '${esc(from_contains)}')`);
-        if (to_contains) filters.push(`contains(toRecipients/emailAddress/address, '${esc(to_contains)}')`);
-        if (body_contains) filters.push(`contains(body/content, '${esc(body_contains)}')`);
-        if (received_after) {
-          if (!isIso8601(received_after)) {
-            return { content: [{ type: 'text', text: 'Error: received_after must be an ISO-8601 datetime (e.g. 2026-01-02T03:04:05Z).' }], isError: true };
-          }
-          filters.push(`receivedDateTime ge ${received_after}`);
-        }
-        if (received_before) {
-          if (!isIso8601(received_before)) {
-            return { content: [{ type: 'text', text: 'Error: received_before must be an ISO-8601 datetime (e.g. 2026-01-02T03:04:05Z).' }], isError: true };
-          }
-          filters.push(`receivedDateTime le ${received_before}`);
-        }
-
-        const filterParam = filters.length > 0 ? `&$filter=${encodeURIComponent(filters.join(' and '))}` : '';
-        const top = Math.min(Math.max(Number.isFinite(limit) ? limit : 10, 1), 50);
-
-        try {
-          const res = await graphFetch(
-            `/users/${encodeURIComponent(mailbox)}/mailFolders/${encodeURIComponent(graphFolder)}/messages` +
-              `?$select=id,subject,from,toRecipients,receivedDateTime,isRead,internetMessageHeaders` +
-              `&$orderby=receivedDateTime desc` +
-              `&$top=${top}` +
-              filterParam
-          );
-          await ensureOk(res);
-          const data = await res.json();
-          // S3: gate on the RAW message (sender + DMARC, hydrating headers if the collection omitted
-          // them) BEFORE mapping, so headers never leak and a spoofed / DMARC-failed item is never surfaced.
-          const messages = [];
-          for (const m of data.value || []) {
-            if (!(await readGatePass(m))) continue;
-            messages.push({
-              message_id: m.id,
-              subject: m.subject,
-              from: m.from?.emailAddress?.address,
-              to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
-              receivedDateTime: m.receivedDateTime,
-              isRead: m.isRead,
-            });
-          }
-          log('outlook_search_messages', 'OK', `mailbox=${mailbox} folder=${folder} ${messages.length} results`);
-          return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
-        } catch (err) {
-          log('outlook_search_messages', 'ERROR', `mailbox=${mailbox} ${err.message}`);
-          return { content: [{ type: 'text', text: `Error searching messages: ${err.message}` }], isError: true };
-        }
-      }
-    );
-  }
-
-  // --- outlook_get_new_messages ---
-  if (enabled('outlook_get_new_messages')) {
-    server.tool(
-      'outlook_get_new_messages',
-      [
-        'List unread (new) email messages from the Inbox, sorted oldest first.',
-        'Returns: message_id, subject, from, to[], receivedDateTime, isRead.',
-      ].join('\n'),
-      { limit: z.number().optional().default(10).describe('Max messages to return (max 50)') },
-      async ({ limit }) => {
-        if (!auth.isConfigured()) return notConfigured('outlook_get_new_messages');
-        const mailbox = auth.getMailboxUserId();
-        const top = Math.min(Math.max(Number.isFinite(limit) ? limit : 10, 1), 50);
-        try {
-          const res = await graphFetch(
-            `/users/${encodeURIComponent(mailbox)}/mailFolders/Inbox/messages` +
-              `?$filter=isRead eq false` +
-              `&$select=id,subject,from,toRecipients,receivedDateTime,isRead,internetMessageHeaders` +
-              `&$orderby=receivedDateTime asc` +
-              `&$top=${top}`
-          );
-          await ensureOk(res);
-          const data = await res.json();
-          // S3: gate on the RAW message (sender + DMARC, hydrating headers if the collection omitted
-          // them) BEFORE mapping, so headers never leak and a spoofed / DMARC-failed item is never surfaced.
-          const messages = [];
-          for (const m of data.value || []) {
-            if (!(await readGatePass(m))) continue;
-            messages.push({
-              message_id: m.id,
-              subject: m.subject,
-              from: m.from?.emailAddress?.address,
-              to: (m.toRecipients || []).map((r) => r.emailAddress?.address),
-              receivedDateTime: m.receivedDateTime,
-              isRead: m.isRead,
-            });
-          }
-          log('outlook_get_new_messages', 'OK', `mailbox=${mailbox} ${messages.length} unread`);
-          return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
-        } catch (err) {
-          log('outlook_get_new_messages', 'ERROR', `mailbox=${mailbox} ${err.message}`);
-          return { content: [{ type: 'text', text: `Error listing new messages: ${err.message}` }], isError: true };
         }
       }
     );
@@ -813,16 +783,21 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
         const ccRecipients = (cc || []).map((addr) => ({ emailAddress: { address: addr } }));
         const bccRecipients = (bcc || []).map((addr) => ({ emailAddress: { address: addr } }));
         try {
-          // With attachments: validate FIRST (isError before ANY Graph call), then draft → shared helper.
+          // Attachments must ride a draft (never inline /sendMail attachments — Graph caps the whole
+          // inline payload at 4 MB). With attachments: validate FIRST (isError before ANY Graph call);
+          // the shared helper attaches → sends → DELETEs the draft on failure. No attachments → the
+          // single-shot /sendMail below.
           if (attachments?.length) {
-            const v = await validateAttachments(attachments);
-            if (v.error) {
-              log('outlook_send_mail', 'ERROR', `mailbox=${mailbox} ${v.error}`);
-              return { content: [{ type: 'text', text: v.error }], isError: true };
+            let records = [];
+            if (attachments?.length) {
+              const v = await validateAttachments(attachments);
+              if (v.error) {
+                log('outlook_send_mail', 'ERROR', `mailbox=${mailbox} ${v.error}`);
+                return { content: [{ type: 'text', text: v.error }], isError: true };
+              }
+              records = v.records;
             }
-            // Unified draft path (never inline /sendMail attachments — Graph caps the whole inline payload
-            // at 4 MB). POST /messages creates a draft in Drafts; the shared helper attaches → sends →
-            // DELETEs on failure (same machinery as reply; the draft-create is the only new Graph call).
+            // POST /messages creates a draft in Drafts; the shared helper finishes it.
             const draftRes = await graphFetch(`/users/${encodeURIComponent(mailbox)}/messages`, {
               method: 'POST',
               body: JSON.stringify({
@@ -835,13 +810,20 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
             });
             await ensureOk(draftRes);
             const draftId = (await draftRes.json())?.id;
-            await attachAndSendDraft(mailbox, draftId, v.records);
-            log('outlook_send_mail', 'OK', `mailbox=${mailbox} to=${to.join(',')} attachments=${v.records.length} subject="${subject}"`);
-            return { content: [{ type: 'text', text: `Email sent successfully (${v.records.length} attachment${v.records.length === 1 ? '' : 's'}).` }] };
+            await attachAndSendDraft(mailbox, draftId, records);
+            log('outlook_send_mail', 'OK', `mailbox=${mailbox} to=${to.join(',')} attachments=${records.length} subject="${subject}"`);
+            return {
+              content: [{
+                type: 'text',
+                text: records.length
+                  ? `Email sent successfully (${records.length} attachment${records.length === 1 ? '' : 's'}).`
+                  : 'Email sent successfully.',
+              }],
+            };
           }
 
-          // No-attachments path: byte-for-byte the existing single /sendMail POST (now also carrying
-          // bccRecipients when present, mirroring ccRecipients).
+          // No attachments: the single-shot /sendMail POST (also carrying bccRecipients when present,
+          // mirroring ccRecipients).
           const res = await graphFetch(`/users/${encodeURIComponent(mailbox)}/sendMail`, {
             method: 'POST',
             body: JSON.stringify({
@@ -873,6 +855,12 @@ export function register(server, { log, moduleConfigs, isToolEnabled, graphAuthF
       { message_id: z.string().describe('Graph message ID to mark as read') },
       async ({ message_id }) => {
         if (!auth.isConfigured()) return notConfigured('outlook_mark_processed');
+        // Bind to the current job's triggering message: a leaked id must not let the agent flip isRead on
+        // another conversation's mail. Runs before any Graph call.
+        if (!(await jobBindingAllows(message_id))) {
+          log('outlook_mark_processed', 'BLOCKED', 'message id not bound to the current job');
+          return { content: [{ type: 'text', text: 'Error: message is not available for this task.' }], isError: true };
+        }
         const mailbox = auth.getMailboxUserId();
         try {
           const res = await graphFetch(

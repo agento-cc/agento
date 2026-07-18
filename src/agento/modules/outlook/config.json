@@ -2,5 +2,11 @@
   "enabled": false,
   "allowed_senders": "",
   "poll_top": 10,
-  "restrict_read_to_allowed_senders": true
+  "restrict_read_to_allowed_senders": true,
+  "activation_modes": "direct,mention",
+  "summon_token": "@agento",
+  "direct_requires_sole_recipient": true,
+  "mailbox_aliases": "",
+  "allow_bot_collaboration": false,
+  "reply_policy": "remove"
 }

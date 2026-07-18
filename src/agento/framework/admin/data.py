@@ -148,26 +148,53 @@ def get_dashboard_data(conn) -> DashboardData:
     return data
 
 
-def get_jobs(conn, *, limit: int = 50, offset: int = 0, status: str | None = None) -> list[dict]:
+def get_jobs(
+    conn,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    status: str | None = None,
+    source: str | None = None,
+    agent_view_code: str | None = None,
+    strict: bool = False,
+) -> list[dict]:
     if conn is None:
         return []
-    try:
+
+    def _query() -> list[dict]:
         _ensure_conn(conn)
         sql = (
-            "SELECT j.id, j.type, j.status, j.reference_id, j.agent_type, "
+            "SELECT j.id, j.type, j.status, j.source, j.reference_id, j.agent_type, "
             "j.created_at, j.started_at, j.finished_at, j.input_tokens, j.output_tokens, "
+            "j.error_class, j.error_message, "
             "av.code AS agent_view_code "
             "FROM job j LEFT JOIN agent_view av ON j.agent_view_id = av.id"
         )
+        conditions: list[str] = []
         params: list = []
         if status:
-            sql += " WHERE j.status = %s"
+            conditions.append("j.status = %s")
             params.append(status)
+        if source:
+            conditions.append("j.source = %s")
+            params.append(source)
+        if agent_view_code:
+            conditions.append("av.code = %s")
+            params.append(agent_view_code)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY j.id DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
         with conn.cursor() as cur:
             cur.execute(sql, params)
             return cur.fetchall()
+
+    # strict=True lets query errors propagate — callers like `job:list` (an observability command) must
+    # NOT have a DB failure silently rendered as "no jobs". The admin TUI keeps the default swallow.
+    if strict:
+        return _query()
+    try:
+        return _query()
     except Exception:
         return []
 

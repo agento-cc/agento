@@ -51,7 +51,7 @@ Discovered by convention from `<module>/toolbox/*.js` files. Each file exports a
 
 | Tool | Description |
 |------|-------------|
-| `outlook_get_message`, `outlook_search_messages`, `outlook_get_new_messages`, `outlook_reply`, `outlook_send_mail`, `outlook_mark_processed` | Microsoft 365 / Graph email channel (opt-in; sender/recipient allow-listed). See [outlook.md](../modules/outlook.md). |
+| `outlook_get_message`, `outlook_get_attachment`, `outlook_reply`, `outlook_send_mail`, `outlook_mark_processed` | Microsoft 365 / Graph email channel (opt-in; sender/recipient allow-listed; reads bound to the triggering message). See [outlook.md](../modules/outlook.md). |
 
 **User modules** (`app/code/<name>/toolbox/`):
 

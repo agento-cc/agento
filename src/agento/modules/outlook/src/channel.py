@@ -10,6 +10,7 @@ from agento.framework.event_manager import get_event_manager
 from agento.framework.events import SecurityBreachEvent
 from agento.framework.job_models import AgentType, JobRequester, RequesterTrust
 from agento.framework.publisher import publish
+from agento.modules.outlook.src import activation
 
 _REFERENCE_SEP = "::"  # multi-char: base64/base64url message ids never contain two consecutive ':'
 _SLUG_MAX = 60
@@ -143,7 +144,10 @@ class OutlookPublisher:
         self, db_config: object, message_id: str, *, agent_view_id: int,
         priority: int = 50, sender_email: str | None = None,
         dmarc: str | None = None, allowed_senders: list[str] | None = None,
-        subject: str | None = None, logger: logging.Logger | None = None,
+        subject: str | None = None,
+        to=None, cc=None, body_preview: str | None = None,
+        agent_authored: bool = False, mailbox: str | None = None, aliases=None, cfg=None,
+        logger: logging.Logger | None = None,
     ) -> bool:
         # 1. Normalize the claimed From address.
         sender = (sender_email or "").strip().lower()
@@ -193,7 +197,26 @@ class OutlookPublisher:
                 )
             return False
 
-        # 4. PUBLISH to the mailbox's agent_view (the mailbox identifies the view — the publisher
+        # 4. ACTIVATION GATE (stateless). Speak only when clearly meant to: addressed to the mailbox
+        #    (direct) or summoned by token (mention), and never in response to another agent's mail
+        #    (agent_authored — sender is a fleet mailbox) unless collaboration is opted in. A silent
+        #    decision is NOT a hold — the
+        #    caller advances the cursor exactly as it does for other "not for us" mail. Skipped when
+        #    no cfg is supplied (legacy/direct callers) so the plain security gate stands alone.
+        if cfg is not None:
+            decision = activation.decide(
+                agent_authored=agent_authored, cfg=cfg, mailbox=mailbox, aliases=aliases,
+                to_addrs=to, cc_addrs=cc, subject=subject, body_preview=body_preview,
+            )
+            if not decision.can_respond:
+                if logger:
+                    logger.info(
+                        "Outlook message not activated; leaving unread",
+                        extra={"message_id": message_id[:40], "reason": decision.reason},
+                    )
+                return False
+
+        # 5. PUBLISH to the mailbox's agent_view (the mailbox identifies the view — the publisher
         #    loop supplies agent_view_id + priority). DMARC pass cryptographically aligns the From
         #    domain -> trust=DOMAIN.
         digest = hashlib.sha256(sender.encode()).hexdigest()

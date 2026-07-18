@@ -9,6 +9,28 @@ agento job:pause <job_id>    # Stop a running job, keep session
 agento job:resume <job_id>   # Re-queue paused job for consumer pickup
 ```
 
+## job:list — see recent / failed jobs
+
+List jobs newest-first, optionally filtered — useful for spotting dead-lettered failures that otherwise
+only surface via the admin TUI or a configured alert email.
+
+```bash
+agento job:list                            # 20 most recent jobs
+agento job:list --status DEAD              # dead-lettered (retry-exhausted) failures
+agento job:list --status FAILED            # jobs in the FAILED state
+agento job:list --source outlook --limit 50
+agento job:list --agent-view developer
+```
+
+Columns: `ID  STATUS  SOURCE  TYPE  AGENT_VIEW  REFERENCE  CREATED`; for `FAILED`/`DEAD` rows an indented
+line shows `error_class: error_message`. `--status` accepts
+`TODO`/`RUNNING`/`SUCCESS`/`FAILED`/`DEAD`/`PAUSED`. The command is read-only and queries in **strict**
+mode, so a DB/query error is reported (non-zero exit) instead of being printed as "No jobs found".
+
+> Terminal failures land in `DEAD` (the consumer retries up to `max_attempts`, then dead-letters). To be
+> emailed on dead-letter, configure the `app_monitor` alerts (`alerts/smtp_host` + `alerts/email_to`);
+> `job:list --status DEAD` is the pull-based equivalent.
+
 ## How pause works
 
 1. The CLI sends SIGTERM to the agent subprocess (if the PID is alive).

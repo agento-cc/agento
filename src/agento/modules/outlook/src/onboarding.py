@@ -17,8 +17,78 @@ _AUTH_KEYS = (
     "outlook/outlook_cert_pem",
 )
 _MAILBOX_KEY = "outlook/outlook_mailbox_user_id"
+_RESTRICT_READ_KEY = "outlook/restrict_read_to_allowed_senders"
+_FALSY_VALUES = {"0", "false", "no", "off"}
 
 _PEM_END_SENTINEL = "END"
+
+
+def _conflicting_mailbox_scopes(conn, mailbox, target_scope, target_scope_id):
+    """Return ``[(scope, scope_id)]`` rows where ``outlook_mailbox_user_id`` already holds the SAME
+    normalized mailbox UPN at a scope OTHER than the write target.
+
+    The mailbox resolves ``agent_view -> workspace -> default``, so a duplicate at ANY scope means two
+    agent_views would poll the same inbox and the lowest-id view would silently win (see the publisher's
+    ``seen_mailboxes`` dedupe). Comparison is on the normalized UPN (strip + lowercase — the same key the
+    publisher/cursor use); the exact target row (same ``scope`` + ``scope_id``) is excluded so re-running
+    onboarding for the same view is not a self-conflict. Module-level for unit-testability.
+    """
+    normalized = (mailbox or "").strip().lower()
+    if not normalized:
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT scope, scope_id FROM core_config_data "
+            "WHERE path = %s AND value IS NOT NULL AND LOWER(TRIM(value)) = %s "
+            "AND NOT (scope = %s AND scope_id = %s)",
+            (_MAILBOX_KEY, normalized, target_scope, target_scope_id),
+        )
+        rows = cur.fetchall()
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append((row["scope"], row["scope_id"]))
+        else:
+            result.append((row[0], row[1]))
+    return result
+
+
+def _read_gate_disabled_scopes(conn):
+    """Return ``[(scope, scope_id)]`` where ``restrict_read_to_allowed_senders`` is explicitly set to a
+    falsy value (the read gate is disabled — agent can read unauthenticated mail). Default (unset) is
+    secure (``true``), so only explicit falsy rows are reported. Module-level for unit-testability."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT scope, scope_id, value FROM core_config_data WHERE path = %s",
+            (_RESTRICT_READ_KEY,),
+        )
+        rows = cur.fetchall()
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            scope, sid, val = row["scope"], row["scope_id"], row["value"]
+        else:
+            scope, sid, val = row[0], row[1], row[2]
+        if val is not None and str(val).strip().lower() in _FALSY_VALUES:
+            result.append((scope, sid))
+    return result
+
+
+def _warn_read_gate_disabled(conn) -> None:
+    """Print a warning if the read gate is disabled at any scope. Called on every onboarding run so an
+    operator re-configuring Outlook is reminded that reading is unrestricted somewhere."""
+    scopes = _read_gate_disabled_scopes(conn)
+    if not scopes:
+        return
+    where = ", ".join(f"{s}:{sid}" for s, sid in scopes)
+    print(
+        f"\n  WARNING: outlook/restrict_read_to_allowed_senders is DISABLED at scope(s) {where}.\n"
+        "    The agent read tools can then read ANY message in the mailbox — including spoofed,\n"
+        "    non-allow-listed, or DMARC-failed mail (a prompt-injection vector). It is scoped config\n"
+        "    (agent_view > workspace > default), not a global switch. Re-enable per scope with:\n"
+        "      agento config:set outlook/restrict_read_to_allowed_senders 1"
+        "   # add --scope agent_view --scope-id <id> to target a view"
+    )
 
 
 def _read_pem_block(prompt: str) -> str:
@@ -63,7 +133,10 @@ def _print_next_steps() -> None:
         "    2) Allow-list the authorized sender(s) (per-view: add --scope agent_view --scope-id <id>):\n"
         "       agento config:set outlook/allowed_senders \"<sender-address>[,<more>]\"\n"
         "    3) Enable polling for the mailbox's scope (default is off, so the publisher skips it):\n"
-        "       agento config:set outlook/enabled 1   # per-view: add --scope agent_view --scope-id <id>"
+        "       agento config:set outlook/enabled 1   # per-view: add --scope agent_view --scope-id <id>\n"
+        "    4) Recommended (least privilege): restrict the Azure app to THIS mailbox only so a leaked\n"
+        "       toolbox credential can't read/send tenant-wide — see docs/modules/outlook.md\n"
+        "       'Least privilege: scope the app to one mailbox'."
     )
 
 
@@ -135,6 +208,9 @@ class OutlookOnboarding:
                     "Paste the certificate PEM (cert + private key), then a line with just END:"
                 )
                 if not pem:
+                    # Same reason as the mailbox-conflict abort below: discard the uncommitted
+                    # tenant/client writes so an aborted run cannot read back as complete.
+                    conn.rollback()
                     print("  Aborted: no PEM provided (nothing saved).")
                     return
                 if _pem_has_cert_and_key(pem):
@@ -160,21 +236,52 @@ class OutlookOnboarding:
         # Mailbox: the mailbox identifies the agent_view. One mailbox per onboarding run.
         verify_agent_view_id: int | None = None
         views = get_active_agent_views(conn)
+        chosen_av = None
         if len(views) > 1:
             idx = terminal.select(
                 "Which agent_view owns this mailbox?", [av.code for av in views]
             )
-            av = views[idx]
-            scoped_config_set(
-                conn, _MAILBOX_KEY, mailbox,
-                scope=Scope.AGENT_VIEW, scope_id=av.id, encrypted=False,
-            )
-            verify_agent_view_id = av.id
-            print(f"  Mailbox '{mailbox}' bound to agent_view '{av.code}'.")
+            chosen_av = views[idx]
+            target_scope, target_scope_id = Scope.AGENT_VIEW, chosen_av.id
         else:
             # 0 or 1 active view -> default scope (a single view resolves it via fallback).
+            target_scope, target_scope_id = Scope.DEFAULT, 0
+
+        # One-mailbox-per-view guard: the mailbox resolves agent_view -> workspace -> default, so the same
+        # UPN at ANY other scope means two views would share one inbox (lowest agent_view id wins, others
+        # skipped). Warn + confirm; never hard-block (a deliberate re-point is legitimate).
+        conflicts = _conflicting_mailbox_scopes(conn, mailbox, target_scope, target_scope_id)
+        if conflicts:
+            where = ", ".join(f"{s}:{sid}" for s, sid in conflicts)
+            print(f"  WARNING: mailbox '{mailbox}' is already configured at scope(s) {where}.")
+            print("  Two agent_views resolving to the same mailbox share one inbox — the lowest")
+            print("  agent_view id wins and the others are skipped (see docs/modules/outlook.md).")
+            if terminal.select(
+                "Proceed and set this mailbox anyway?",
+                ["No — abort (nothing saved)", "Yes — set it anyway"],
+            ) == 0:
+                # Roll back the uncommitted identity/auth writes from this run — otherwise setup's
+                # is_complete(conn) sees them on the same connection (plus the pre-existing mailbox row
+                # that triggered this conflict) and treats the aborted run as complete, later committing
+                # the partial state. Rollback makes "nothing saved" truthful.
+                conn.rollback()
+                print("  Aborted: nothing saved (no config written).")
+                return
+
+        if chosen_av is not None:
+            scoped_config_set(
+                conn, _MAILBOX_KEY, mailbox,
+                scope=Scope.AGENT_VIEW, scope_id=chosen_av.id, encrypted=False,
+            )
+            verify_agent_view_id = chosen_av.id
+            print(f"  Mailbox '{mailbox}' bound to agent_view '{chosen_av.code}'.")
+        else:
             config_set(conn, _MAILBOX_KEY, mailbox)
         conn.commit()
+
+        # Read-gate warning (scoped config, not a global switch): remind the operator if reading is
+        # unrestricted anywhere — shown on every run, including when Graph verification is skipped below.
+        _warn_read_gate_disabled(conn)
 
         # Verify Graph auth + mailbox access NOW (the toolbox reads the just-committed config per
         # request and decrypts the obscure secret, so /api/outlook/delta exercises the real creds).

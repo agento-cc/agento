@@ -3,7 +3,6 @@ from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 from agento.modules.outlook.src.commands.publish import publish_all_views
-from agento.modules.outlook.src.config import OutlookConfig
 
 P = "agento.modules.outlook.src.commands.publish"
 
@@ -14,18 +13,24 @@ def _views(*specs):
 
 
 def _cfg(enabled=True, poll_top=10, allowed="sklep@x.com"):
-    return OutlookConfig(enabled=enabled, poll_top=poll_top, allowed_senders=allowed)
+    # Raw per-path strings, as ScopedConfigService.get() returns them (the publisher now reads
+    # non-secret outlook config per path, never via get_module).
+    return {
+        "outlook/enabled": "1" if enabled else "0",
+        "outlook/poll_top": str(poll_top),
+        "outlook/allowed_senders": allowed,
+    }
 
 
 class _FakeScoped:
-    """Stand-in for ScopedConfigService: returns configs[scope_id]."""
+    """Stand-in for ScopedConfigService: serves configs[scope_id] as per-path .get() values."""
     configs: ClassVar[dict] = {}
 
     def __init__(self, conn, scope, scope_id):
         self._scope_id = scope_id
 
-    def get_module(self, name):
-        return _FakeScoped.configs.get(self._scope_id)
+    def get(self, path):
+        return _FakeScoped.configs.get(self._scope_id, {}).get(path)
 
 
 def _patch_env(configs, list_delta_side_effect):

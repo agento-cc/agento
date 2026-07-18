@@ -354,6 +354,81 @@ class ResumeCommand:
         print(f"it will resume via session_id={job.session_id}")
 
 
+class JobListCommand:
+    @property
+    def name(self) -> str:
+        return "job:list"
+
+    @property
+    def shortcut(self) -> str:
+        return "jo:li"
+
+    @property
+    def help(self) -> str:
+        return "List recent jobs (--status/--source/--agent-view) — surfaces failed/dead jobs"
+
+    def configure(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--status",
+            choices=["TODO", "RUNNING", "SUCCESS", "FAILED", "DEAD", "PAUSED"],
+            default=None,
+            help="Filter by job status (e.g. DEAD for dead-lettered failures)",
+        )
+        parser.add_argument("--source", default=None, help="Filter by job source (e.g. outlook, jira)")
+        parser.add_argument("--agent-view", dest="agent_view", default=None,
+                            help="Filter by agent_view code")
+        parser.add_argument("--limit", type=int, default=20, help="Max rows to show (default 20)")
+
+    def execute(self, args: argparse.Namespace) -> None:
+        import sys
+        from datetime import datetime
+
+        from ..admin.data import get_jobs
+
+        db_config, _, _ = _load_framework_config()
+        conn = get_connection_or_exit(db_config)
+        try:
+            # strict=True: surface a query failure instead of an empty list — this command exists to make
+            # failures visible, so a silent "no jobs" on a broken query would defeat its purpose.
+            rows = get_jobs(
+                conn,
+                limit=args.limit,
+                status=args.status,
+                source=args.source,
+                agent_view_code=args.agent_view,
+                strict=True,
+            )
+        except Exception as e:
+            print(f"Error: could not query jobs: {e}", file=sys.stderr)
+            sys.exit(1)
+        finally:
+            conn.close()
+
+        if not rows:
+            print("No jobs found.")
+            return
+
+        header = (f"{'ID':>6}  {'STATUS':<8}  {'SOURCE':<10}  {'TYPE':<8}  "
+                  f"{'AGENT_VIEW':<14}  {'REFERENCE':<20}  CREATED")
+        print(header)
+        print("-" * len(header))
+        for r in rows:
+            created = r.get("created_at")
+            created_s = created.strftime("%Y-%m-%d %H:%M") if isinstance(created, datetime) else str(created or "")
+            print(
+                f"{r.get('id', ''):>6}  {(r.get('status') or ''):<8}  {(r.get('source') or ''):<10}  "
+                f"{(r.get('type') or ''):<8}  {(r.get('agent_view_code') or '-'):<14}  "
+                f"{str(r.get('reference_id') or '-')[:20]:<20}  {created_s}"
+            )
+            if (r.get("status") or "").upper() in ("FAILED", "DEAD"):
+                ec = r.get("error_class") or ""
+                em = (r.get("error_message") or "").replace("\n", " ")
+                if len(em) > 100:
+                    em = em[:100] + "…"
+                if ec or em:
+                    print(f"        ↳ {ec}: {em}" if ec else f"        ↳ {em}")
+
+
 class E2eCommand:
     @property
     def name(self) -> str:

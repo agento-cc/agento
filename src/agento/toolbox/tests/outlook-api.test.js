@@ -310,3 +310,90 @@ describe('POST /api/outlook/delta handler', () => {
     expect(resolver).toHaveBeenNthCalledWith(2, null);
   });
 });
+
+describe('delta map carries to / cc / bodyPreview (activation plumbing)', () => {
+  beforeEach(() => vi.unstubAllGlobals());
+
+  it('maps toRecipients, ccRecipients and bodyPreview, and $selects them', async () => {
+    const { calls } = queueFetch([
+      jsonRes({
+        value: [{
+          id: 'm1', subject: 'A',
+          from: { emailAddress: { address: 'x@y.com', name: 'X' } },
+          toRecipients: [{ emailAddress: { address: 'to1@y.com', name: 'To1' } }],
+          ccRecipients: [{ emailAddress: { address: 'cc1@y.com', name: 'Cc1' } }],
+          bodyPreview: 'hello there',
+          receivedDateTime: '2026-01-01T00:00:00Z', conversationId: 'c1',
+          internetMessageHeaders: hdr('dmarc=pass'),
+        }],
+        '@odata.deltaLink': AGENT_DELTA('NEW'),
+      }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    const m = res.body.messages[0];
+    expect(m.to).toEqual([{ name: 'To1', address: 'to1@y.com' }]);
+    expect(m.cc).toEqual([{ name: 'Cc1', address: 'cc1@y.com' }]);
+    expect(m.bodyPreview).toBe('hello there');
+    // the base delta URL selects the new fields
+    expect(calls[0]).toContain('toRecipients');
+    expect(calls[0]).toContain('ccRecipients');
+    expect(calls[0]).toContain('bodyPreview');
+  });
+
+  it('defaults to/cc to [] when the item omits them', async () => {
+    queueFetch([
+      jsonRes({
+        value: [{ id: 'm1', from: { emailAddress: { address: 'x@y.com' } }, internetMessageHeaders: hdr('dmarc=pass') }],
+        '@odata.deltaLink': AGENT_DELTA('NEW'),
+      }),
+    ]);
+    const handler = createDeltaHandler(ok(cfg), vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    expect(res.body.messages[0].to).toEqual([]);
+    expect(res.body.messages[0].cc).toEqual([]);
+  });
+});
+
+describe('agent_authored (fleet-mailbox loop detection) in the delta map', () => {
+  beforeEach(() => vi.unstubAllGlobals());
+
+  // Loop suppression uses fleet-address detection (no header/HMAC): agent_authored iff the message From
+  // is in the resolver-supplied fleetMailboxes set (auto-derived from the agent_views, not hand-listed).
+  // The DMARC gate is applied later by the publisher, not here.
+  const runWith = async (fleetMailboxes, fromAddress) => {
+    queueFetch([
+      jsonRes({
+        value: [{ id: 'm1', from: { emailAddress: { address: fromAddress } }, internetMessageHeaders: hdr('dmarc=pass') }],
+        '@odata.deltaLink': AGENT_DELTA('D'),
+      }),
+    ]);
+    const resolver = async () => ({ cfg, resolved: true, fleetMailboxes });
+    const handler = createDeltaHandler(resolver, vi.fn(), fakeAuthFactory);
+    const res = mockRes();
+    await handler({ body: { cursors: {} } }, res);
+    return res;
+  };
+
+  it('From in the fleet set → agent_authored true (case-insensitive)', async () => {
+    const res = await runWith(new Set(['peer-bot@example.com']), 'Peer-Bot@Example.com');
+    expect(res.body.messages[0].agent_authored).toBe(true);
+  });
+
+  it('From not in the fleet set → agent_authored false', async () => {
+    const res = await runWith(new Set(['peer-bot@example.com']), 'human@example.com');
+    expect(res.body.messages[0].agent_authored).toBe(false);
+  });
+
+  it('empty fleet set (no peers) → agent_authored false', async () => {
+    const res = await runWith(new Set(), 'peer-bot@example.com');
+    expect(res.body.messages[0].agent_authored).toBe(false);
+  });
+
+  it('resolver omits fleetMailboxes entirely → treated as empty (agent_authored false)', async () => {
+    const res = await runWith(undefined, 'peer-bot@example.com');
+    expect(res.body.messages[0].agent_authored).toBe(false);
+  });
+});

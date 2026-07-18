@@ -8,5 +8,57 @@
   "outlook_mailbox_user_id": {"type": "string", "label": "Mailbox UPN to monitor (e.g. agent@example.com)"},
   "allowed_senders": {"type": "string", "label": "Allowed senders (comma-separated; supports glob wildcards e.g. *@mycompany.com; empty blocks all)"},
   "poll_top": {"type": "integer", "label": "Delta page size per poll (<=50; the poll pages to the end, so this caps per-page size, not the total)"},
-  "restrict_read_to_allowed_senders": {"type": "boolean", "label": "Prevent MCP tool from reading messages from untrusted senders", "description": "When enabled (recommended), the read tools (outlook_get_message / outlook_search_messages / outlook_get_new_messages) only surface mail that passes the same gate as the publisher: sender on allowed_senders AND a DMARC pass (fail-closed). Warning: disabling may lead to security risk! (the agent could read any message in the mailbox, including spoofed / non-allow-listed / DMARC-failed mail)"}
+  "restrict_read_to_allowed_senders": {"type": "boolean", "label": "Prevent MCP tool from reading messages from untrusted senders", "description": "When enabled (recommended), the read tools (outlook_get_message / outlook_get_attachment) only surface mail that passes the same gate as the publisher: sender on allowed_senders AND a DMARC pass (fail-closed). Warning: disabling may lead to security risk! (the agent could read any message in the mailbox, including spoofed / non-allow-listed / DMARC-failed mail)"},
+  "activation_modes": {
+    "type": "string",
+    "label": "Activation modes (comma-separated: direct,mention)",
+    "description": "When the agent may act on inbound mail. 'direct' = the mailbox (or an alias) is the sole recipient; 'mention' = the summon token appears in the subject or body preview. Empty disables both (the agent never activates).",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  },
+  "summon_token": {
+    "type": "string",
+    "label": "Summon token",
+    "description": "Token that triggers 'mention' activation when it appears (case-insensitive) in the subject or body preview. Default '@agento'.",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  },
+  "direct_requires_sole_recipient": {
+    "type": "boolean",
+    "label": "Direct activation requires sole recipient",
+    "description": "When on (default), 'direct' activation fires only if the mailbox (or an alias) is the sole recipient across To+Cc. When off, any direct address activates.",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  },
+  "mailbox_aliases": {
+    "type": "string",
+    "label": "Mailbox aliases (comma-separated)",
+    "description": "Extra addresses that count as this mailbox for direct activation (e.g. support@ aliased to the monitored UPN). Compared against To+Cc alongside the primary mailbox UPN.",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  },
+  "allow_bot_collaboration": {
+    "type": "boolean",
+    "label": "Allow bot collaboration",
+    "description": "When off (default), inbound mail from a fleet agent mailbox is suppressed (no job) to break bot-to-bot loops. The fleet is auto-derived from the agent_views (the mailbox of every other outlook-enabled view). Turn on only to let agents collaborate on the same thread.",
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  },
+  "reply_policy": {
+    "type": "select",
+    "label": "Reply-all whitelist policy",
+    "description": "How outlook_reply handles a reply-all recipient that is NOT in core/email_whitelist. 'remove' (default) drops the blocked recipient(s) and sends to the rest; 'block' blocks the entire reply if any recipient is not whitelisted. Either way, mail only ever reaches whitelisted addresses. Applies to outlook_reply only (outlook_send_mail always blocks the whole send).",
+    "options": [
+      {"value": "remove", "label": "Remove non-whitelisted recipients from the reply (default)"},
+      {"value": "block", "label": "Block the entire reply if any recipient is not whitelisted"}
+    ],
+    "showInDefault": true,
+    "showInWorkspace": true,
+    "showInAgentView": true
+  }
 }

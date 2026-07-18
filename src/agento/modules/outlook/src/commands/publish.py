@@ -10,11 +10,24 @@ from agento.framework.log import get_logger
 from agento.framework.scoped_config import Scope
 from agento.framework.workspace import get_active_agent_views
 from agento.modules.outlook.src.channel import OutlookPublisher
+from agento.modules.outlook.src.config import OutlookConfig
 from agento.modules.outlook.src.cursor import load_cursors, save_cursor
 from agento.modules.outlook.src.toolbox_client import OutlookToolboxClient
 
+# Non-secret outlook config paths read per-path (never get_module) so the cron never resolves the
+# Graph secrets — the toolbox is the only container that touches them. See docs SKILL §5a.
+_CONFIG_PATHS = (
+    "enabled", "poll_top", "allowed_senders", "activation_modes", "summon_token",
+    "direct_requires_sole_recipient", "mailbox_aliases", "allow_bot_collaboration",
+)
 
-def _publish_view_messages(publisher, db_config, av, cfg, messages, priority, logger):
+
+def _resolve_outlook_config(conn, agent_view_id: int) -> OutlookConfig:
+    svc = ScopedConfigService(conn, Scope.AGENT_VIEW, agent_view_id)
+    return OutlookConfig.from_dict({key: svc.get(f"outlook/{key}") for key in _CONFIG_PATHS})
+
+
+def _publish_view_messages(publisher, db_config, av, cfg, messages, priority, logger, mailbox, aliases):
     """Gate+publish each message. Returns (published_count, hold). hold=True means a genuinely
     TRANSIENT condition (a publish exception, e.g. a DB blip) was seen → caller must NOT advance the
     cursor so the batch is re-fetched next poll. Per-message errors never abort the batch.
@@ -36,7 +49,12 @@ def _publish_view_messages(publisher, db_config, av, cfg, messages, priority, lo
                 db_config, message_id, agent_view_id=av.id, priority=priority,
                 sender_email=sender, dmarc=msg.get("dmarc"),
                 allowed_senders=cfg.allowed_senders_list,
-                subject=msg.get("subject"), logger=logger,
+                subject=msg.get("subject"),
+                to=msg.get("to"), cc=msg.get("cc"),
+                body_preview=msg.get("bodyPreview"),
+                agent_authored=bool(msg.get("agent_authored")),
+                mailbox=mailbox, aliases=aliases, cfg=cfg,
+                logger=logger,
             ):
                 published += 1
         except Exception:
@@ -72,8 +90,8 @@ def publish_all_views(
     try:
         for av in views:
             try:
-                cfg = ScopedConfigService(conn, Scope.AGENT_VIEW, av.id).get_module("outlook")
-                if cfg is None or not cfg.enabled:
+                cfg = _resolve_outlook_config(conn, av.id)
+                if not cfg.enabled:
                     logger.debug("Outlook disabled for agent_view %s (id=%d), skipping", av.code, av.id)
                     continue
                 top = top_override if top_override else cfg.poll_top
@@ -95,7 +113,8 @@ def publish_all_views(
                 seen_mailboxes.add(mailbox_key)
                 priority = resolve_publish_priority(conn, av.id)
                 pub_count, hold = _publish_view_messages(
-                    publisher, db_config, av, cfg, resp.get("messages", []), priority, logger
+                    publisher, db_config, av, cfg, resp.get("messages", []), priority, logger,
+                    mailbox_key, cfg.mailbox_aliases_list,
                 )
                 published += pub_count
                 # PERSIST-THEN-ADVANCE: only after publishing, and only when the batch had no transient

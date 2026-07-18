@@ -137,6 +137,28 @@ export async function loadScopedDbOverrides(agentViewId) {
 }
 
 /**
+ * List the ids of all active agent_views (view AND its workspace active), id order.
+ * The JS mirror of Python's get_active_agent_views — used by the Outlook channel to
+ * auto-derive the fleet mailbox set. Swallows DB errors (warns + returns []) so callers
+ * fail safe, matching loadDbOverrides / loadScopedDbOverrides.
+ */
+export async function listActiveAgentViewIds() {
+  try {
+    const pool = getCronPool();
+    const [rows] = await pool.query(
+      `SELECT av.id FROM agent_view av
+       JOIN workspace w ON w.id = av.workspace_id
+       WHERE av.is_active = 1 AND w.is_active = 1
+       ORDER BY av.id`
+    );
+    return rows.map((r) => r.id);
+  } catch (err) {
+    console.warn(`[config-loader] Failed to list active agent_views: ${err.message}`);
+    return [];
+  }
+}
+
+/**
  * Resolve a single config value by raw path through the standard fallback:
  * 1. ENV var: CONFIG__{PATH_WITH___} (slash -> __, dash -> _, uppercased)
  * 2. DB: core_config_data merged across the scope chain (decrypt-aware)
@@ -417,7 +439,7 @@ export async function registerModuleRestApis(context) {
   const dbOverrides = await loadDbOverrides();
   const moduleConfigs = await loadModuleConfigs(dbOverrides);
   const fileManager = createFileManager(moduleConfigs, context.log);
-  const enrichedContext = { ...context, moduleConfigs, loadModuleConfigs, loadScopedDbOverrides, fileManager };
+  const enrichedContext = { ...context, moduleConfigs, loadModuleConfigs, loadScopedDbOverrides, listActiveAgentViewIds, fileManager };
 
   const sorted = [...modules].sort((a, b) => (a.order || 100) - (b.order || 100));
 
@@ -464,7 +486,14 @@ export async function registerTools(server, context, agentViewId = null, preload
   const configDefaults = loadConfigDefaults();
   const enabledCheck = (toolName) => isToolEnabled(toolName, dbOverrides, configDefaults);
   const fileManager = createFileManager(moduleConfigs, context.log);
-  const enrichedContext = { ...context, app: undefined, moduleConfigs, isToolEnabled: enabledCheck, fileManager };
+  const enrichedContext = {
+    ...context,
+    app: undefined,
+    moduleConfigs,
+    isToolEnabled: enabledCheck,
+    fileManager,
+    agentViewId,
+  };
 
   // Build offload config for the result offload middleware
   const offloadConfig = {

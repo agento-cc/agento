@@ -13,6 +13,7 @@ TOOL_FIELD_TEMPLATES = {
         "user": {"type": "string", "label": "User"},
         "pass": {"type": "obscure", "label": "Password"},
         "database": {"type": "string", "label": "Database"},
+        "client_connection_pool_max_per_tool": {"type": "integer", "label": "Maximum client connections"},
     },
     "mssql": {
         "host": {"type": "string", "label": "Host"},
@@ -20,6 +21,7 @@ TOOL_FIELD_TEMPLATES = {
         "user": {"type": "string", "label": "User"},
         "pass": {"type": "obscure", "label": "Password"},
         "database": {"type": "string", "label": "Database"},
+        "client_connection_pool_max_per_tool": {"type": "integer", "label": "Maximum client connections"},
     },
     "opensearch": {
         "host": {"type": "string", "label": "Host"},

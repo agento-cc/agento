@@ -390,19 +390,20 @@ describe('AC2 outlook_get_attachment', () => {
 describe('AC3 outlook_reply attachments', () => {
   const replyGate = (over = {}) => ({ test: (u) => u.includes('$select=from'), res: () => okJson({ from: { emailAddress: { address: 'sklep@mycompanystudio.com' } }, ...over }) });
 
-  it('(a) no attachments → single /reply POST, no createReply', async () => {
+  it('(a) no attachments → createReplyAll draft → send (no single /reply)', async () => {
     const fetchMock = router([
       replyGate(),
-      { test: (u) => u.endsWith('/reply'), res: () => ok2xx() },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
+      { test: (u, m) => u.endsWith('/send') && m === 'POST', res: () => ok2xx(202) },
     ]);
     vi.stubGlobal('fetch', fetchMock);
     const s = makeServer();
     register(s, ctxWithOutlook());
     const r = await s.tools.outlook_reply.handler({ message_id: 'm1', body: '<p>hi</p>' });
     expect(r.isError).toBeUndefined();
-    expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith('/createReply'))).toBe(false);
-    expect(fetchMock.mock.calls[1][0]).toMatch(/\/reply$/);
-    expect(fetchMock.mock.calls[0][0]).toContain('$select=from,replyTo');
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith('/createReplyAll'))).toBe(true);
+    expect(fetchMock.mock.calls.some((c) => /\/reply$/.test(String(c[0])))).toBe(false);
+    expect(fetchMock.mock.calls[0][0]).toContain('$select=from,replyTo,toRecipients,ccRecipients');
   });
 
   it('(a2) allow-listed From but non-whitelisted Reply-To is BLOCKED (no reply/createReply)', async () => {
@@ -417,10 +418,11 @@ describe('AC3 outlook_reply attachments', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the gate GET
   });
 
-  it('(a3) a whitelisted Reply-To is allowed', async () => {
+  it('(a3) a whitelisted Reply-To is allowed (createReplyAll → send)', async () => {
     const fetchMock = router([
       replyGate({ replyTo: [{ emailAddress: { address: 'bob@mycompany.com' } }] }),
-      { test: (u) => u.endsWith('/reply'), res: () => ok2xx() },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
+      { test: (u, m) => u.endsWith('/send') && m === 'POST', res: () => ok2xx(202) },
     ]);
     vi.stubGlobal('fetch', fetchMock);
     const s = makeServer();
@@ -432,7 +434,7 @@ describe('AC3 outlook_reply attachments', () => {
   it('(b) small file (<3 MB): validate → gate → createReply → attach (contentBytes) → send', async () => {
     const fetchMock = router([
       replyGate(),
-      { test: (u, m) => u.endsWith('/createReply') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
       { test: (u, m) => u.endsWith('/attachments') && m === 'POST', res: () => ok2xx(201) },
       { test: (u, m) => u.endsWith('/send') && m === 'POST', res: () => ok2xx(202) },
     ]);
@@ -451,7 +453,7 @@ describe('AC3 outlook_reply attachments', () => {
     realpath.mockImplementation(async (p) => (p === '/workspace/file.pdf' ? '/workspace/real/file.pdf' : p));
     const fetchMock = router([
       replyGate(),
-      { test: (u, m) => u.endsWith('/createReply') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
       { test: (u, m) => u.endsWith('/attachments') && m === 'POST', res: () => ok2xx(201) },
       { test: (u, m) => u.endsWith('/send') && m === 'POST', res: () => ok2xx(202) },
     ]);
@@ -469,7 +471,7 @@ describe('AC3 outlook_reply attachments', () => {
     const uploadUrl = 'https://outlook.office.com/api/v2.0/uploadSession/xyz';
     const fetchMock = router([
       replyGate(),
-      { test: (u, m) => u.endsWith('/createReply') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
       { test: (u) => u.endsWith('/createUploadSession'), res: () => okJson({ uploadUrl }) },
       { test: (u, m) => u === uploadUrl && m === 'PUT', res: () => ok2xx(200) },
       { test: (u, m) => u.endsWith('/send') && m === 'POST', res: () => ok2xx(202) },
@@ -490,7 +492,7 @@ describe('AC3 outlook_reply attachments', () => {
   it('(d) a failure after the draft exists DELETEs the draft and returns isError', async () => {
     const fetchMock = router([
       replyGate(),
-      { test: (u, m) => u.endsWith('/createReply') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draft1' }) },
       { test: (u, m) => u.endsWith('/attachments') && m === 'POST', res: () => failRes(500, 'SECRET') },
       { test: (u, m) => m === 'DELETE', res: () => ok2xx(204) },
     ]);
@@ -652,7 +654,7 @@ describe('R4-F2 read-time recheck', () => {
     });
     const fetchMock = router([
       { test: (u) => u.includes('$select=from'), res: () => okJson({ from: { emailAddress: { address: 'sklep@mycompanystudio.com' } } }) },
-      { test: (u, m) => u.endsWith('/createReply') && m === 'POST', res: () => okJson({ id: 'draftR' }) },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draftR' }) },
       { test: (u, m) => m === 'DELETE', res: () => ok2xx(204) },
     ]);
     vi.stubGlobal('fetch', fetchMock);
@@ -673,7 +675,7 @@ describe('R4-F2 read-time recheck', () => {
     const uploadUrl = 'https://outlook.office.com/upload/abc';
     const fetchMock = router([
       { test: (u) => u.includes('$select=from'), res: () => okJson({ from: { emailAddress: { address: 'sklep@mycompanystudio.com' } } }) },
-      { test: (u, m) => u.endsWith('/createReply') && m === 'POST', res: () => okJson({ id: 'draftR' }) },
+      { test: (u, m) => u.endsWith('/createReplyAll') && m === 'POST', res: () => okJson({ id: 'draftR' }) },
       { test: (u) => u.endsWith('/createUploadSession'), res: () => okJson({ uploadUrl }) },
       { test: (u, m) => u === uploadUrl && m === 'PUT', res: () => ok2xx(200) },
       { test: (u, m) => u.endsWith('/send') && m === 'POST', res: () => ok2xx(202) },

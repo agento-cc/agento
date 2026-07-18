@@ -72,10 +72,28 @@ def two_views():
 
 
 def _delta_stub(by_view, *, delta_link="L-NEXT"):
-    """Return a respx side_effect that maps the posted agent_view_id -> {mailbox, messages, deltaLink}."""
+    """Return a respx side_effect that maps the posted agent_view_id -> {mailbox, messages, deltaLink}.
+
+    Each message is enriched with the activation-relevant fields (to/cc/bodyPreview/agent_authored/
+    receivedDateTime) the delta handler now emits. A message with no explicit ``to`` defaults to being
+    addressed directly at the mailbox (the common case: sole recipient -> direct activation), so the
+    existing gate/dedup/cursor assertions keep their meaning; new tests override to/cc/bodyPreview.
+    """
     def _handler(request):
         payload = json.loads(request.content)
-        out = dict(by_view[payload["agent_view_id"]])
+        src = by_view[payload["agent_view_id"]]
+        mailbox = src.get("mailbox")
+        messages = []
+        for m in src.get("messages", []):
+            msg = dict(m)
+            msg.setdefault("to", [{"name": "", "address": mailbox}] if mailbox else [])
+            msg.setdefault("cc", [])
+            msg.setdefault("bodyPreview", "")
+            msg.setdefault("agent_authored", False)
+            msg.setdefault("receivedDateTime", "2026-01-01T00:00:00Z")
+            messages.append(msg)
+        out = dict(src)
+        out["messages"] = messages
         out.setdefault("deltaLink", delta_link)
         out.setdefault("resynced", False)
         return Response(200, json=out)
@@ -281,3 +299,93 @@ def test_replay_same_delta_creates_no_duplicate_jobs(int_db_config, two_views):
             conn.close()
 
     assert len([j for j in fetch_all_jobs() if j["reference_id"] == "dup-1"]) == 1
+
+
+# ---- Activation gate (Workstream 3/4): direct / mention / loop-marker suppression ----
+
+def _run_dev(int_db_config):
+    conn = _test_connection(autocommit=False)
+    try:
+        return publish_all_views(int_db_config, conn, TOOLBOX_URL,
+                                 logging.getLogger("it-outlook"), agent_view_code="av-outlook-dev")
+    finally:
+        conn.close()
+
+
+@respx.mock
+def test_direct_addressed_creates_job(int_db_config, two_views):
+    dev_id, _ = two_views
+    by_view = {dev_id: {"mailbox": "dev@example.com", "messages": [
+        {"id": "direct-1", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass",
+         "to": [{"address": "dev@example.com"}], "cc": []}]}}
+    respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
+
+    assert _run_dev(int_db_config) == 1
+    assert [j["reference_id"] for j in fetch_all_jobs()] == ["direct-1"]
+
+
+@respx.mock
+def test_cc_only_no_mention_no_job_but_cursor_advances(int_db_config, two_views):
+    """A mail where the mailbox is only a cc (a human is the addressee) and no summon token appears
+    must NOT create a job — yet the cursor still advances (a policy decision never holds)."""
+    dev_id, _ = two_views
+    by_view = {dev_id: {"mailbox": "dev@example.com", "deltaLink": "L-CC", "messages": [
+        {"id": "cc-only", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass",
+         "to": [{"address": "colleague@example.com"}], "cc": [{"address": "dev@example.com"}],
+         "bodyPreview": "no summon here", "subject": "zwykła sprawa"}]}}
+    respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
+
+    assert _run_dev(int_db_config) == 0
+    assert not fetch_all_jobs()
+    rconn = _test_connection(autocommit=False)
+    try:
+        assert load_cursors(rconn) == {"dev@example.com": "L-CC"}  # advanced despite no job
+    finally:
+        rconn.close()
+
+
+@respx.mock
+def test_summon_token_creates_job_even_when_not_directly_addressed(int_db_config, two_views):
+    dev_id, _ = two_views
+    by_view = {dev_id: {"mailbox": "dev@example.com", "messages": [
+        {"id": "mention-1", "from": {"address": "sklep@mycompanystudio.com"}, "dmarc": "pass",
+         "to": [{"address": "colleague@example.com"}], "cc": [{"address": "team@example.com"}],
+         "subject": "Re: raport", "bodyPreview": "cześć @agento, przygotuj podsumowanie"}]}}
+    respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
+
+    assert _run_dev(int_db_config) == 1
+    assert [j["reference_id"].rsplit("::", 1)[-1] for j in fetch_all_jobs()] == ["mention-1"]
+
+
+@respx.mock
+def test_agent_authored_inbound_with_humans_default_no_job(int_db_config, two_views):
+    """Regression F2: an agent-authored inbound addressed straight at the mailbox (would be direct),
+    with humans also present, must create NO job under the default config (hard loop suppression)."""
+    dev_id, _ = two_views
+    by_view = {dev_id: {"mailbox": "dev@example.com", "messages": [
+        {"id": "bot-1", "from": {"address": "ops@mycompany.com"}, "dmarc": "pass",
+         "to": [{"address": "dev@example.com"}, {"address": "human@example.com"}], "cc": [],
+         "agent_authored": True, "subject": "@agento kontynuuj", "bodyPreview": "@agento kontynuuj"}]}}
+    respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
+
+    assert _run_dev(int_db_config) == 0
+    assert not fetch_all_jobs()
+
+
+@respx.mock
+def test_allow_bot_collaboration_lets_agent_authored_through(int_db_config, two_views):
+    dev_id, _ = two_views
+    conn = _test_connection(autocommit=True)
+    try:
+        scoped_config_set(conn, "outlook/allow_bot_collaboration", "1",
+                          scope=Scope.AGENT_VIEW, scope_id=dev_id)
+    finally:
+        conn.close()
+
+    by_view = {dev_id: {"mailbox": "dev@example.com", "messages": [
+        {"id": "bot-collab-1", "from": {"address": "ops@mycompany.com"}, "dmarc": "pass",
+         "to": [{"address": "dev@example.com"}], "cc": [], "agent_authored": True}]}}
+    respx.post(DELTA_URL).mock(side_effect=_delta_stub(by_view))
+
+    assert _run_dev(int_db_config) == 1
+    assert [j["reference_id"] for j in fetch_all_jobs()] == ["bot-collab-1"]
