@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { logToolbox as log } from '../log.js';
+import { logToolboxMcp as log } from '../log.js';
 
 function createOpensearchTool(server, toolName, description, config) {
   server.tool(

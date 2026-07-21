@@ -6,7 +6,6 @@ describe('health registration scope isolation', () => {
   });
 
   it('resolves default health independently after a scoped registration', async () => {
-    const scopedLog = vi.fn();
     const registerTools = vi.fn(async (_server, _context, agentViewId) => ({
       toolNames: [agentViewId ? `scoped_${agentViewId}` : 'default_tool'],
       healthchecks: [agentViewId ? 'scoped_check' : 'default_check'],
@@ -16,7 +15,6 @@ describe('health registration scope isolation', () => {
       agentViewMeta: { id: 7, agentViewCode: 'reviewer' },
     });
     vi.doMock('../config-loader.js', () => ({ registerTools, loadScopedDbOverrides }));
-    vi.doMock('../log.js', () => ({ createScopedLogger: () => scopedLog }));
 
     const { createHealthRegistration } = await import('../health-registration.js');
     const defaultLog = vi.fn();
@@ -27,7 +25,10 @@ describe('health registration scope isolation', () => {
 
     expect(scoped).toEqual({ tools: ['scoped_7'], healthchecks: ['scoped_check'] });
     expect(defaultScope).toEqual({ tools: ['default_tool'], healthchecks: ['default_check'] });
-    expect(registerTools.mock.calls[0][1].log).toBe(scopedLog);
+    // /health is a REST/ops path and never invokes tools, so it must NOT swap in the MCP
+    // logger — both scoped and default registrations keep the caller's (REST) context.log,
+    // keeping toolbox_mcp.log free of health-probe registration noise.
+    expect(registerTools.mock.calls[0][1].log).toBe(defaultLog);
     expect(registerTools.mock.calls[1][1].log).toBe(defaultLog);
     expect(registerTools.mock.calls.map(call => call[2])).toEqual([7, null]);
   });

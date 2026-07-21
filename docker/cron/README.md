@@ -170,6 +170,9 @@ docker compose exec cron crontab -u agent -l
 tail -f logs/sync-jira-cron.log     # Sync: Jira queries, crontab updates
 tail -f logs/publisher.log          # Publisher: job enqueue events
 tail -f logs/consumer.log           # Consumer: job execution (structured JSON)
+tail -f logs/toolbox_mcp.log        # Toolbox: agent MCP tool invocations (clean)
+tail -f logs/toolbox_rest.log       # Toolbox: REST /api/* calls + lifecycle/discovery noise
+# (toolbox_mcp.log + toolbox_rest.log replace the former single toolbox.log)
 
 # Preview sync without modifying crontab
 docker compose exec cron /opt/cron-agent/run.sh jira:periodic:sync --dry-run

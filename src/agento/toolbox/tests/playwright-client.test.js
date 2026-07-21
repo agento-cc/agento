@@ -45,7 +45,7 @@ describe('playwright-client state machine', () => {
       readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
       writeFile: vi.fn().mockResolvedValue(undefined),
     }));
-    vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+    vi.doMock('../log.js', () => ({ logToolboxRest: vi.fn() }));
   });
 
   afterEach(() => {

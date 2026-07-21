@@ -4,7 +4,65 @@ vi.mock('node:fs', () => ({
   appendFileSync: vi.fn(),
 }));
 
-import { createScopedLogger } from '../log.js';
+import { appendFileSync } from 'node:fs';
+import { createScopedLogger, createPhasedLogger, logToolboxMcp, logToolboxRest } from '../log.js';
+
+describe('log sinks', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    appendFileSync.mockClear();
+  });
+
+  it('logToolboxMcp writes to the MCP log file', () => {
+    logToolboxMcp('email_send', 'OK', 'sent');
+    expect(appendFileSync).toHaveBeenCalledWith('/app/logs/toolbox_mcp.log', expect.any(String));
+  });
+
+  it('logToolboxRest writes to the REST log file', () => {
+    logToolboxRest('api/jira/search', 'OK', 'hits=3');
+    expect(appendFileSync).toHaveBeenCalledWith('/app/logs/toolbox_rest.log', expect.any(String));
+  });
+
+  it('createScopedLogger writes to the MCP log file', () => {
+    const log = createScopedLogger({ id: 1, label: 'Dev' });
+    log('mysql_prod', 'QUERY', 'select 1');
+    expect(appendFileSync).toHaveBeenCalledWith('/app/logs/toolbox_mcp.log', expect.any(String));
+  });
+});
+
+describe('createPhasedLogger', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    appendFileSync.mockClear();
+  });
+
+  it('routes registration-phase logging to the REST file', () => {
+    const invocationLog = vi.fn();
+    const log = createPhasedLogger(invocationLog);
+    log('browser', 'INIT', 'whitelist=[...]');
+    expect(appendFileSync).toHaveBeenCalledWith('/app/logs/toolbox_rest.log', expect.any(String));
+    expect(invocationLog).not.toHaveBeenCalled();
+  });
+
+  it('routes invocation-phase logging to the injected MCP logger after the flip', () => {
+    const invocationLog = vi.fn();
+    const log = createPhasedLogger(invocationLog);
+    log.toInvocationPhase();
+    log('email_send', 'OK', 'sent');
+    expect(invocationLog).toHaveBeenCalledWith('email_send', 'OK', 'sent');
+    // nothing new written to the REST file during the invocation phase
+    expect(appendFileSync).not.toHaveBeenCalled();
+  });
+
+  it('uses the real MCP file when the injected logger is logToolboxMcp', () => {
+    const log = createPhasedLogger(logToolboxMcp);
+    log('discovery', 'OK', 'registered'); // registration phase -> REST
+    log.toInvocationPhase();
+    log('mysql_prod', 'OK', 'rows=1');     // invocation phase -> MCP
+    expect(appendFileSync).toHaveBeenCalledWith('/app/logs/toolbox_rest.log', expect.any(String));
+    expect(appendFileSync).toHaveBeenCalledWith('/app/logs/toolbox_mcp.log', expect.any(String));
+  });
+});
 
 describe('createScopedLogger', () => {
   beforeEach(() => {

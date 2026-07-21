@@ -1,6 +1,6 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { logToolbox as log } from '../log.js';
+import { logToolboxMcp as log } from '../log.js';
 
 function escapeCsvField(value) {
   if (value === null || value === undefined) return '';

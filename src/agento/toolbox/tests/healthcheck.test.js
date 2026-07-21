@@ -31,7 +31,7 @@ describe('adapter healthchecks', () => {
           }),
         },
       }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({
         getSqlTimeoutMs: () => 300000,
       }));
@@ -53,7 +53,7 @@ describe('adapter healthchecks', () => {
 
     it('returns skip for unconfigured tool', async () => {
       vi.doMock('mysql2/promise', () => ({ default: { createPool: vi.fn() } }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({
         getSqlTimeoutMs: () => 300000,
       }));
@@ -82,7 +82,7 @@ describe('adapter healthchecks', () => {
           }),
         },
       }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({
         getSqlTimeoutMs: () => 300000,
       }));
@@ -109,7 +109,7 @@ describe('adapter healthchecks', () => {
       vi.doMock('mysql2/promise', () => ({
         default: { createPool: () => ({ getConnection: vi.fn().mockResolvedValue(connection) }) },
       }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
 
       const { registerMysqlTools } = await import('../adapters/mysql.js');
       const { healthcheck } = registerMysqlTools({ tool: vi.fn() }, [
@@ -135,7 +135,7 @@ describe('adapter healthchecks', () => {
           })),
         },
       }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({ getSqlTimeoutMs: () => 300000 }));
 
       const { registerMssqlTools } = await import('../adapters/mssql.js');
@@ -153,7 +153,7 @@ describe('adapter healthchecks', () => {
 
     it('returns skip for unconfigured tool', async () => {
       vi.doMock('mssql', () => ({ default: {} }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       vi.doMock('./sql-timeout.js', () => ({ getSqlTimeoutMs: () => 300000 }));
 
       const { registerMssqlTools } = await import('../adapters/mssql.js');
@@ -184,7 +184,7 @@ describe('adapter healthchecks', () => {
           })),
         },
       }));
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
 
       const { registerMssqlTools } = await import('../adapters/mssql.js');
       const { healthcheck } = registerMssqlTools({ tool: vi.fn() }, [
@@ -204,7 +204,7 @@ describe('adapter healthchecks', () => {
 
   describe('opensearch', () => {
     it('returns ok for reachable host', async () => {
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockResolvedValue({ ok: true });
 
@@ -224,7 +224,7 @@ describe('adapter healthchecks', () => {
     });
 
     it('returns fail for HTTP error', async () => {
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 });
 
@@ -242,7 +242,7 @@ describe('adapter healthchecks', () => {
     });
 
     it('returns skip for unconfigured tool', async () => {
-      vi.doMock('../log.js', () => ({ logToolbox: vi.fn() }));
+      vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn() }));
 
       const { registerOpensearchTools } = await import('../adapters/opensearch.js');
       const server = { tool: vi.fn() };

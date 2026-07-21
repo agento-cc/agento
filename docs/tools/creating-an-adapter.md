@@ -9,7 +9,7 @@ Create `src/agento/toolbox/adapters/postgres.js`:
 ```javascript
 import { z } from 'zod';
 import pg from 'pg';
-import { logToolbox as log } from '../log.js';
+import { logToolboxMcp as log } from '../log.js';
 import { isReadOnlySql } from './sql-read-only.js';
 import { getSqlTimeoutMs } from './sql-timeout.js';
 

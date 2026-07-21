@@ -6,7 +6,7 @@ import express from 'express';
 import { registerTools, registerModuleRestApis, loadScopedDbOverrides } from './config-loader.js';
 import { SqlPoolRegistry } from './adapters/sql-pool-registry.js';
 import { createHealthRegistration } from './health-registration.js';
-import { logToolbox, logPublisher, createScopedLogger } from './log.js';
+import { logToolboxMcp, logToolboxRest, logPublisher, createScopedLogger, createPhasedLogger } from './log.js';
 import * as db from './db.js';
 import * as playwright from './playwright-client.js';
 
@@ -16,12 +16,15 @@ const app = express();
 // NOTE: no express.json() here — SSEServerTransport reads raw body from req stream
 
 const sessions = new Map();
-const sqlPoolRegistry = new SqlPoolRegistry({ log: logToolbox });
+const sqlPoolRegistry = new SqlPoolRegistry({ log: logToolboxRest });
 
-// Shared context passed to all module register() functions
+// Shared context passed to all module register() functions.
+// Base log is the REST/lifecycle logger: it feeds registerModuleRestApis' REST
+// route handlers, startup logging, and the agent-view-less /health probe. MCP
+// sessions override context.log with the MCP logger in createServer().
 const context = {
   app,
-  log: logToolbox,
+  log: logToolboxRest,
   logPublisher,
   db,
   sqlPoolRegistry,
@@ -56,6 +59,9 @@ async function createServer(agentViewId = null, jobId = null) {
   // jobId (from req.query.job_id, null for interactive runs / tool-list) flows to every tool's
   // register() via registerTools -> enrichedContext; schedule_followup uses it to inherit the
   // current job's channel/reference/scope.
+  // invocationLog is the MCP tool-invocation logger for this session: logToolboxMcp for
+  // interactive/tool-list runs, or the agent_view-scoped variant when an agent_view is known.
+  let invocationLog = logToolboxMcp;
   let sessionContext = { ...context, artifactsDir, jobId };
   let preloadedOverrides = null;
   if (agentViewId) {
@@ -63,12 +69,19 @@ async function createServer(agentViewId = null, jobId = null) {
     preloadedOverrides = overrides;
     if (agentViewMeta) {
       artifactsDir = buildArtifactsDir(agentViewMeta, jobId);
-      const scopedLog = createScopedLogger(agentViewMeta);
-      sessionContext = { ...sessionContext, artifactsDir, log: scopedLog };
+      invocationLog = createScopedLogger(agentViewMeta);
+      sessionContext = { ...sessionContext, artifactsDir };
     }
   }
 
+  // Registration-time diagnostics that modules emit from register() (e.g. browser SESSION/INIT)
+  // are lifecycle noise and must stay out of toolbox_mcp.log. The phased logger routes them to
+  // toolbox_rest.log, then flips to invocationLog once registration completes — before any tool
+  // handler can run — so only real invocations reach toolbox_mcp.log.
+  const sessionLog = createPhasedLogger(invocationLog);
+  sessionContext = { ...sessionContext, log: sessionLog };
   const { healthchecks } = await registerTools(server, sessionContext, agentViewId, preloadedOverrides);
+  sessionLog.toInvocationPhase();
   return { server, healthchecks };
 }
 
@@ -197,14 +210,14 @@ app.get('/health', async (req, res) => {
 // Register module REST APIs and start Playwright in parallel, then listen
 Promise.allSettled([
   registerModuleRestApis(context)
-    .then(() => logToolbox('startup', 'OK', 'Module REST APIs registered')),
+    .then(() => logToolboxRest('startup', 'OK', 'Module REST APIs registered')),
   playwright.initPlaywright(),
 ]).then(([restResult, playwrightResult]) => {
   if (restResult.status === 'rejected') {
-    logToolbox('startup', 'ERROR', `Module REST API registration failed: ${restResult.reason?.message}`);
+    logToolboxRest('startup', 'ERROR', `Module REST API registration failed: ${restResult.reason?.message}`);
   }
   if (playwrightResult.status === 'rejected') {
-    logToolbox('playwright', 'ERROR', `Failed to start Playwright MCP: ${playwrightResult.reason?.message}. Auto-restart loop will retry up to MAX_ATTEMPTS.`);
+    logToolboxRest('playwright', 'ERROR', `Failed to start Playwright MCP: ${playwrightResult.reason?.message}. Auto-restart loop will retry up to MAX_ATTEMPTS.`);
   }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Toolbox MCP server listening on port ${PORT}`);

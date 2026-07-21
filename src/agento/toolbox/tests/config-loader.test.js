@@ -26,7 +26,8 @@ describe('config-loader', () => {
 
     // Mock log
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
     }));
 
@@ -138,7 +139,8 @@ describe('config-loader', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
     }));
 
@@ -237,7 +239,8 @@ describe('resolveModuleField', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
     }));
 
@@ -305,7 +308,8 @@ describe('loadModuleConfigs', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
     }));
 
@@ -391,7 +395,8 @@ describe('loadScopedDbOverrides', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -429,7 +434,8 @@ describe('loadScopedDbOverrides', () => {
       getCronPool: () => ({ query: queryMock }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -464,7 +470,8 @@ describe('loadScopedDbOverrides', () => {
       getCronPool: () => ({ query: queryMock }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -499,7 +506,8 @@ describe('loadScopedDbOverrides', () => {
       getCronPool: () => ({ query: queryMock }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -530,7 +538,8 @@ describe('toolbox discovery', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
     }));
 
@@ -590,7 +599,8 @@ describe('isToolEnabled', () => {
       getCronPool: () => ({ query: vi.fn().mockResolvedValue([[]]) }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -646,7 +656,7 @@ describe('resolveConfigValue', () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.doMock('../db.js', () => ({ getCronPool: () => ({ query: vi.fn().mockResolvedValue([[]]) }) }));
-    vi.doMock('../log.js', () => ({ logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn() }));
+    vi.doMock('../log.js', () => ({ logToolboxMcp: vi.fn(), logToolboxRest: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn() }));
     const mod = await import('../config-loader.js');
     resolveConfigValue = mod.resolveConfigValue;
   });
@@ -726,7 +736,8 @@ describe('registerTools integration', () => {
       getCronPool: () => ({ query: queryMock }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -772,7 +783,8 @@ describe('registerTools integration', () => {
       getCronPool: () => ({ query: queryMock }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -818,7 +830,8 @@ describe('registerTools integration', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -857,7 +870,8 @@ describe('registerTools integration', () => {
       }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(),
+      logToolboxMcp: vi.fn(),
+      logToolboxRest: vi.fn(),
       logPublisher: vi.fn(),
       createScopedLogger: vi.fn(),
     }));
@@ -901,7 +915,7 @@ describe('registerTools integration', () => {
       getCronPool: () => ({ query: queryDev }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+      logToolboxMcp: vi.fn(), logToolboxRest: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
     }));
     vi.doMock('../adapters/index.js', () => ({
       registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
@@ -968,7 +982,7 @@ describe('registerTools integration', () => {
       getCronPool: () => ({ query: queryInherited }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+      logToolboxMcp: vi.fn(), logToolboxRest: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
     }));
     vi.doMock('../adapters/index.js', () => ({
       registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
@@ -1031,7 +1045,7 @@ describe('registerTools integration', () => {
 
     vi.doMock('../db.js', () => ({ getCronPool: () => ({ query: queryInherit }) }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+      logToolboxMcp: vi.fn(), logToolboxRest: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
     }));
     vi.doMock('../adapters/index.js', () => ({
       registerAdapterTools: vi.fn((_server, tools) => ({ names: tools.map(t => t.name), healthchecks: [] })),
@@ -1075,7 +1089,7 @@ describe('registerTools integration', () => {
       getCronPool: () => ({ query: queryMock }),
     }));
     vi.doMock('../log.js', () => ({
-      logToolbox: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
+      logToolboxMcp: vi.fn(), logToolboxRest: vi.fn(), logPublisher: vi.fn(), createScopedLogger: vi.fn(),
     }));
     vi.doMock('../adapters/index.js', () => ({
       registerAdapterTools: vi.fn(() => ({ names: [], healthchecks: [] })),

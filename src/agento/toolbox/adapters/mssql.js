@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import sql from 'mssql';
-import { logToolbox as log } from '../log.js';
+import { logToolboxMcp as log } from '../log.js';
 import { runCancellable } from '../cancellable-operation.js';
 import { isReadOnlySql } from './sql-read-only.js';
 import { getSqlTimeoutMs } from './sql-timeout.js';

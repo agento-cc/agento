@@ -5,6 +5,7 @@ import { decrypt, hasEncryptionKey } from './crypto.js';
 import { registerAdapterTools } from './adapters/index.js';
 import { wrapHandler } from './adapters/large-result.js';
 import { FileManager, ConverterRegistry } from './file-manager.js';
+import { logToolboxRest } from './log.js';
 
 const CORE_MODULES_DIR = process.env.CORE_MODULES_DIR || '/app/modules/core';
 const USER_MODULES_DIR = process.env.USER_MODULES_DIR || '/app/modules/user';
@@ -452,16 +453,16 @@ export async function registerModuleRestApis(context) {
           for (const conv of toolModule.converters) {
             fileManager.converterRegistry.register(conv);
           }
-          context.log('discovery', 'OK', `Registered ${toolModule.converters.length} converter(s) from ${mod.name}/toolbox/${path.basename(file)}`);
+          logToolboxRest('discovery', 'OK', `Registered ${toolModule.converters.length} converter(s) from ${mod.name}/toolbox/${path.basename(file)}`);
         }
         if (typeof toolModule.register === 'function') {
           // Pass a stub server — only Express routes matter at startup
           const stubServer = { tool: () => {} };
           await toolModule.register(stubServer, enrichedContext);
-          context.log('startup', 'OK', `Registered REST APIs from ${mod.name}/toolbox/${path.basename(file)}`);
+          logToolboxRest('startup', 'OK', `Registered REST APIs from ${mod.name}/toolbox/${path.basename(file)}`);
         }
       } catch (err) {
-        context.log('startup', 'ERROR', `Failed to load ${file}: ${err.message}`);
+        logToolboxRest('startup', 'ERROR', `Failed to load ${file}: ${err.message}`);
       }
     }
   }
@@ -540,19 +541,19 @@ export async function registerTools(server, context, agentViewId = null, preload
           for (const conv of toolModule.converters) {
             fileManager.converterRegistry.register(conv);
           }
-          context.log('discovery', 'OK', `Registered ${toolModule.converters.length} converter(s) from ${mod.name}/toolbox/${path.basename(file)}`);
+          logToolboxRest('discovery', 'OK', `Registered ${toolModule.converters.length} converter(s) from ${mod.name}/toolbox/${path.basename(file)}`);
         }
         if (typeof toolModule.register === 'function') {
           await toolModule.register(server, enrichedContext);
-          context.log('discovery', 'OK', `Registered toolbox/${path.basename(file)} from ${mod.name}`);
+          logToolboxRest('discovery', 'OK', `Registered toolbox/${path.basename(file)} from ${mod.name}`);
         } else if (!Array.isArray(toolModule.converters)) {
-          context.log('discovery', 'SKIP', `${file} has no register() export`);
+          logToolboxRest('discovery', 'SKIP', `${file} has no register() export`);
         }
         if (typeof toolModule.healthcheck === 'function') {
           healthchecks.push(() => toolModule.healthcheck(enrichedContext));
         }
       } catch (err) {
-        context.log('discovery', 'ERROR', `Failed to load ${file}: ${err.message}`);
+        logToolboxRest('discovery', 'ERROR', `Failed to load ${file}: ${err.message}`);
       }
     }
   }

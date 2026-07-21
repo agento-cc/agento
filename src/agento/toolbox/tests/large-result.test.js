@@ -14,7 +14,7 @@ function mockFs() {
 function mockLog() {
   const calls = [];
   vi.doMock('../log.js', () => ({
-    logToolbox: vi.fn((tool, status, details) => { calls.push({ tool, status, details }); }),
+    logToolboxMcp: vi.fn((tool, status, details) => { calls.push({ tool, status, details }); }),
     logPublisher: vi.fn(),
   }));
   return calls;

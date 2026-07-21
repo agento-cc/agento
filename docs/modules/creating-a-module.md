@@ -253,6 +253,8 @@ EOF
 
 Convention-based discovery: any `.js` file in `toolbox/` is auto-discovered by the Toolbox at startup. The `context` object provides `{ app, log, db, playwright, fileManager }` -- no imports from framework files needed.
 
+Always log tool activity via the injected `log` (never import a logger or hardcode a file path). The Toolbox auto-routes it: handlers registered as MCP tools (`server.tool(...)`) log to `toolbox_mcp.log`, while REST route handlers (`app.post('/api/...')`) log to `toolbox_rest.log`. You don't pass a type -- the correct log is injected per registration path.
+
 Restart toolbox after adding tools:
 
 ```bash
