@@ -2,7 +2,7 @@
 
 from .auth import AuthResult, authenticate_interactive, get_available_providers, save_credentials
 from .config import AgentManagerConfig
-from .errors import AuthenticationError
+from .errors import AuthenticationError, UsageLimitError
 from .models import AgentProvider, Token, TokenStatus, UsageSummary
 from .token_store import (
     clear_token_error,
@@ -14,6 +14,7 @@ from .token_store import (
     register_token,
     select_token,
     set_token_priority,
+    throttle_token,
 )
 from .usage_store import get_usage_summaries, get_usage_summary, record_usage
 
@@ -24,6 +25,7 @@ __all__ = [
     "AuthenticationError",
     "Token",
     "TokenStatus",
+    "UsageLimitError",
     "UsageSummary",
     "authenticate_interactive",
     "clear_token_error",
@@ -40,4 +42,5 @@ __all__ = [
     "save_credentials",
     "select_token",
     "set_token_priority",
+    "throttle_token",
 ]

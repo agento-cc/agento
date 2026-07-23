@@ -172,9 +172,10 @@ def select_token(
     """Claim the least-recently-used healthy token for ``agent_type`` and stamp
     ``used_at=UTC_TIMESTAMP(6)`` atomically.
 
-    Filters: ``enabled=TRUE``, ``status='ok'``, and ``expires_at`` either NULL
-    or in the future. Ordering: ``used_at`` ascending, NULLs first (never-used
-    tokens win).
+    Filters: ``enabled=TRUE``, ``status='ok'``, ``expires_at`` either NULL or in
+    the future (credential still valid), and ``throttled_until`` either NULL or in
+    the past (not currently rate/usage-limited). Ordering: ``used_at`` ascending,
+    NULLs first (never-used tokens win).
 
     The ``FOR UPDATE SKIP LOCKED`` + in-line commit prevents two concurrent
     workers from picking the same row. Returns ``None`` when no healthy token
@@ -188,6 +189,7 @@ def select_token(
                AND enabled = TRUE
                AND status = 'ok'
                AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP())
+               AND (throttled_until IS NULL OR throttled_until <= UTC_TIMESTAMP())
              ORDER BY priority ASC,
                       used_at IS NULL DESC, used_at ASC, id ASC
              LIMIT 1
@@ -230,16 +232,45 @@ def mark_token_error(
     return found
 
 
+def throttle_token(
+    conn: pymysql.Connection,
+    token_id: int,
+    until: datetime,
+    message: str,
+    logger: logging.Logger | None = None,
+) -> bool:
+    """Temporarily remove a token from selection until ``until`` (naive UTC) after a
+    session/usage/rate-limit hit, WITHOUT poisoning it.
+
+    Sets ``throttled_until`` only — ``status`` stays ``'ok'`` and ``expires_at``
+    (credential expiry) is untouched. ``select_token``/``count_tokens_for_provider``
+    skip the token while ``throttled_until`` is in the future and auto-include it once
+    it passes. ``message`` is logged, not stored (``error_msg`` pairs with
+    ``status='error'``). Returns True if the row was found."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE oauth_token SET throttled_until = %s, updated_at = NOW() WHERE id = %s",
+            (until, token_id),
+        )
+        found = cur.rowcount > 0
+    if logger:
+        logger.warning(
+            f"Throttled token: id={token_id} until={until} msg={(message or '')[:200]!r} found={found}"
+        )
+    return found
+
+
 def clear_token_error(
     conn: pymysql.Connection,
     token_id: int,
     logger: logging.Logger | None = None,
 ) -> bool:
-    """Clear error status on a token (operator recovery). Returns True if found."""
+    """Clear error status AND any usage-limit throttle on a token (operator recovery,
+    e.g. ``token:reset``). Returns True if found."""
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE oauth_token SET status = 'ok', error_msg = NULL, updated_at = NOW() "
-            "WHERE id = %s",
+            "UPDATE oauth_token SET status = 'ok', error_msg = NULL, throttled_until = NULL, "
+            "updated_at = NOW() WHERE id = %s",
             (token_id,),
         )
         found = cur.rowcount > 0
@@ -270,8 +301,10 @@ def count_tokens_for_provider(
     conn: pymysql.Connection,
     agent_type: AgentProvider,
 ) -> tuple[int, int]:
-    """Return (enabled_total, healthy_unexpired) counts — used for diagnostic
-    messages when ``select_token`` returns None."""
+    """Return (enabled_total, healthy) counts, where ``healthy`` mirrors
+    ``select_token``'s eligibility (status='ok', unexpired, and not currently
+    throttled) — used for diagnostic messages when ``select_token`` returns None and
+    to decide usage-limit/auth failover (``retry_with_other_token``)."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT COUNT(*) AS c FROM oauth_token WHERE agent_type = %s AND enabled = TRUE",
@@ -283,6 +316,7 @@ def count_tokens_for_provider(
             SELECT COUNT(*) AS c FROM oauth_token
              WHERE agent_type = %s AND enabled = TRUE AND status = 'ok'
                AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP())
+               AND (throttled_until IS NULL OR throttled_until <= UTC_TIMESTAMP())
             """,
             (agent_type.value,),
         )

@@ -12,6 +12,7 @@ NON_RETRYABLE_ERRORS = frozenset({
     "FileNotFoundError",
     "KeyError",
     "AuthenticationError",  # token expired — retrying won't help
+    "UsageLimitError",  # session/usage limit — terminal unless a healthy token remains
 })
 
 
@@ -61,24 +62,27 @@ def evaluate(
             reason=f"Verification veto retry {attempt + 1}/{max_attempts} after {delay}s",
         )
 
-    # Auth failures are normally terminal — a single bad credential won't heal
-    # on retry. But with an LRU token pool, poisoning the offending token leaves
+    # Auth failures and usage/session-limit hits are normally terminal — a single
+    # bad or limited credential won't heal on the same token. But with an LRU token
+    # pool, poisoning (auth) or throttling (usage-limit) the offending token leaves
     # healthy alternatives. The consumer sets ``retry_with_other_token`` on the
-    # exception when another healthy token exists, so the job retries onto the
-    # next token instead of dead-lettering on the first bad credential.
-    if error_class == "AuthenticationError" and getattr(error_obj, "retry_with_other_token", False):
+    # exception when another healthy token exists, so the job retries onto the next
+    # token instead of dead-lettering on the first bad/limited credential.
+    if error_class in ("AuthenticationError", "UsageLimitError") and getattr(
+        error_obj, "retry_with_other_token", False
+    ):
         if attempt >= max_attempts:
             return RetryDecision(
                 should_retry=False,
                 delay_seconds=0,
-                reason=f"Max attempts ({max_attempts}) reached after auth failure",
+                reason=f"Max attempts ({max_attempts}) reached after {error_class}",
             )
         delay_index = min(attempt - 1, len(BACKOFF_DELAYS) - 1)
         delay = BACKOFF_DELAYS[delay_index]
         return RetryDecision(
             should_retry=True,
             delay_seconds=delay,
-            reason=f"Auth failure retry {attempt + 1}/{max_attempts} after {delay}s (next healthy token)",
+            reason=f"{error_class} retry {attempt + 1}/{max_attempts} after {delay}s (next healthy token)",
         )
 
     if error_class and error_class in NON_RETRYABLE_ERRORS:

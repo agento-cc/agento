@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agento.framework.agent_manager.errors import AuthenticationError
+from agento.framework.agent_manager.errors import AuthenticationError, UsageLimitError
 from agento.framework.events import JobVerificationFailed, Verdict, VerifyReason
 from agento.framework.retry_policy import BACKOFF_DELAYS, evaluate
 
@@ -160,11 +160,45 @@ def test_auth_error_without_flag_is_terminal():
 
 
 def test_retry_flag_on_non_auth_error_does_not_bypass_non_retryable():
-    """The pool-aware retry is scoped to AuthenticationError. A stray
-    ``retry_with_other_token`` on an unrelated, normally-terminal error must
+    """The pool-aware retry is scoped to AuthenticationError/UsageLimitError. A
+    stray ``retry_with_other_token`` on an unrelated, normally-terminal error must
     NOT make it retryable."""
     exc = ValueError("boom")
     exc.retry_with_other_token = True  # type: ignore[attr-defined]
     decision = evaluate("ValueError", attempt=1, max_attempts=3, error_obj=exc)
     assert decision.should_retry is False
     assert "Non-retryable" in decision.reason
+
+
+# -- UsageLimitError pool-aware failover ---------------------------------------
+# A session/usage limit is TEMPORARY: the consumer throttles the offending token
+# (cooldown, not poison) and flags ``retry_with_other_token`` when a healthy token
+# remains, so the job fails over. Without a healthy alternative it is terminal for
+# this job — but the token self-recovers after its cooldown. Mirrors auth behavior.
+
+def _limit_error(*, healthy_alternative: bool) -> UsageLimitError:
+    exc = UsageLimitError("hit your session limit", token_id=7)
+    exc.retry_with_other_token = healthy_alternative
+    return exc
+
+
+def test_usage_limit_retries_when_healthy_alternative_exists():
+    exc = _limit_error(healthy_alternative=True)
+    decision = evaluate("UsageLimitError", attempt=1, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is True
+    assert decision.delay_seconds == BACKOFF_DELAYS[0]
+    assert "UsageLimitError retry" in decision.reason
+
+
+def test_usage_limit_terminal_without_healthy_alternative():
+    exc = _limit_error(healthy_alternative=False)
+    decision = evaluate("UsageLimitError", attempt=1, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is False
+    assert "Non-retryable" in decision.reason
+
+
+def test_usage_limit_with_alternative_respects_max_attempts():
+    exc = _limit_error(healthy_alternative=True)
+    decision = evaluate("UsageLimitError", attempt=3, max_attempts=3, error_obj=exc)
+    assert decision.should_retry is False
+    assert "Max attempts" in decision.reason

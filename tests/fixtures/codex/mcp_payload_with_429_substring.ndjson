@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"019e9222-ab85-7cb1-bdc5-33a5877cb247"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_6","type":"mcp_tool_call","server":"toolbox","tool":"demo_lookup","arguments":{"query":"lookup id 429000112233"},"result":{"content":[{"type":"text","text":"[{\"id\":429001,\"ref\":\"429000112233\",\"amount\":\"429.00\"}]"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_9","type":"agent_message","text":"Record 429000112233 — amount 429.00. The substring 429 appears in the id and amount; this is not a usage-limit error."}}
+{"type":"turn.completed","usage":{"input_tokens":101854,"cached_input_tokens":68736,"output_tokens":1904,"reasoning_output_tokens":833}}

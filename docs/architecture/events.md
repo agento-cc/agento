@@ -163,6 +163,15 @@ Examples: `job_claim_after`, `module_register_before`, `workspace_build_complete
 
 `skill_sync_complete_after` fires after the DB commit in `sync_skills()`. Observers can use it to trigger workspace rebuilds when skill content changes (Phase 10.5b).
 
+### Token Pool Lifecycle
+
+| Event | Data Class | Fields | When |
+|-------|-----------|--------|------|
+| `token_auth_failed_after` | `TokenAuthFailedEvent` | `agent_type, token_id, error_msg, job_id` | A runtime auth failure flips a token to `status='error'` (permanent poison) |
+| `token_usage_limited_after` | `TokenUsageLimitedEvent` | `agent_type, token_id, error_msg, reset_at, job_id` | A session/usage/rate limit throttles a token via `throttled_until` (temporary cooldown; `status` stays `'ok'`) |
+
+`token_usage_limited_after` is distinct from `token_auth_failed_after`: a usage limit is **temporary**, so the consumer sets `oauth_token.throttled_until = reset_at` (a cooldown the pool skips until it passes — the token auto-recovers) and the job fails over to another healthy token, whereas an auth failure **poisons** the token (`status='error'`) until an operator or credential-refresh clears it. Both are internal events (defined in `framework/events.py`, not re-exported from `framework/contracts/`).
+
 ### Config & Setup Lifecycle
 
 `config_save_after` fires only from CLI `config:set`, not from internal bootstrap config resolution.

@@ -32,6 +32,10 @@ class Token:
     used_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Temporary usage-limit cooldown (oauth_token.throttled_until). NULL/None when
+    # not throttled. Default keeps existing keyword constructions working; placed
+    # last because it is the only field with a default.
+    throttled_until: datetime | None = None
 
     @classmethod
     def from_row(cls, row: dict) -> Token:
@@ -47,6 +51,7 @@ class Token:
             priority=int(row.get("priority") or 0),
             error_msg=row.get("error_msg"),
             expires_at=row.get("expires_at"),
+            throttled_until=row.get("throttled_until"),
             used_at=row.get("used_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],

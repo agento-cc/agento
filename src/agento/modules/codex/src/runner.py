@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from agento.framework.agent_manager.errors import AuthenticationError
+from agento.framework.agent_manager.errors import AuthenticationError, UsageLimitError
 from agento.framework.agent_manager.models import AgentProvider
 from agento.framework.agent_manager.runner import TokenRunner
 from agento.framework.runner import RunResult
@@ -20,6 +21,23 @@ _AUTH_PHRASE_RE = re.compile(
     r"\b(401\s+Unauthorized|invalid[_ ]api[_ ]key|"
     r"please\s+(sign|log)\s+in|not\s+authenticated|"
     r"authentication\s+failed|missing\s+bearer)\b",
+    re.IGNORECASE,
+)
+
+# Session/usage/rate-limit phrases — checked ONLY against turn.failed.error.message
+# (same anti-false-positive discipline as auth). These map to a TEMPORARY throttle
+# (fail over + auto-recover), distinct from the permanent auth poison above.
+_LIMIT_PHRASE_RE = re.compile(
+    r"\b(429|too\s+many\s+requests|rate[_ ]limit(?:_exceeded|_error)?|"
+    r"usage[_ ]limit(?:_reached)?|quota\s+exceeded|insufficient_quota)\b",
+    re.IGNORECASE,
+)
+
+# Best-effort reset hint in a codex limit message, e.g. "try again in 90s",
+# "retry after 3600 seconds", "try again in 1h2m3s". Returns None if absent.
+_RETRY_AFTER_RE = re.compile(
+    r"(?:try\s+again\s+in|retry(?:[-\s]after)?)\s+"
+    r"(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s(?:econds?)?)?",
     re.IGNORECASE,
 )
 
@@ -91,6 +109,12 @@ class TokenCodexRunner(TokenRunner):
         if (msg := _detect_auth_error(events)) is not None:
             raise AuthenticationError(f"Codex CLI auth error: {msg[:500]}")
 
+        if (err := _detect_limit_error(events)) is not None:
+            msg = str(err.get("message") or err.get("type") or err.get("code") or "usage limit")
+            raise UsageLimitError(
+                f"Codex CLI error: {msg[:500]}", reset_at=_reset_at_from_error(err)
+            )
+
         result = RunResult(raw_output=_extract_agent_text(events))
         _populate_session(events, result)
         _populate_usage(events, result)
@@ -122,6 +146,71 @@ def _detect_auth_error(events: list[dict]) -> str | None:
         if msg and _AUTH_PHRASE_RE.search(msg):
             return msg
     return None
+
+
+def _detect_limit_error(events: list[dict]) -> dict | None:
+    """Return the ``turn.failed`` error dict on a session/usage/rate limit, else None.
+
+    Like ``_detect_auth_error`` it inspects ONLY the structured ``turn.failed.error``
+    object — never raw stdout — so a "429" substring inside an MCP payload can't
+    false-positive. Beyond the human ``message`` it also matches the machine-readable
+    ``type``/``code`` fields, so a typed limit error with a bland (or empty) message is
+    still classified (a codex ``turn.failed`` can exit rc=0 — missing it would
+    dead-letter as a false SUCCESS)."""
+    for ev in events:
+        if ev.get("type") != "turn.failed":
+            continue
+        err = ev.get("error")
+        if not isinstance(err, dict):
+            continue
+        haystack = " ".join(
+            str(err.get(k, "")) for k in ("message", "type", "code")
+        )
+        if haystack.strip() and _LIMIT_PHRASE_RE.search(haystack):
+            return err
+    return None
+
+
+def _reset_at_from_error(err: dict, now: datetime | None = None) -> datetime | None:
+    """Derive a naive-UTC reset time from a codex limit error. Prefers machine-readable
+    fields (``retry_after``/``retry_after_ms``/``reset_after_seconds`` as a delay, or
+    ``reset_at``/``reset`` as an epoch), then falls back to a "try again in …" hint in
+    the message text. Returns ``None`` when nothing is parseable (the consumer then
+    applies its default throttle window). ``now`` is injectable for tests. Never raises."""
+    base = now or datetime.now(UTC)
+    # Delay-in-seconds fields.
+    for key in ("retry_after", "retry_after_seconds", "reset_after_seconds"):
+        v = err.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            return (base + timedelta(seconds=int(v))).astimezone(UTC).replace(tzinfo=None)
+    # Delay-in-milliseconds.
+    v = err.get("retry_after_ms")
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        return (base + timedelta(milliseconds=int(v))).astimezone(UTC).replace(tzinfo=None)
+    # Absolute epoch-seconds reset.
+    for key in ("reset_at", "reset"):
+        v = err.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            try:
+                return datetime.fromtimestamp(int(v), tz=UTC).replace(tzinfo=None)
+            except (OverflowError, OSError, ValueError):
+                pass
+    return _parse_reset_at(str(err.get("message") or ""), now=now)
+
+
+def _parse_reset_at(msg: str, now: datetime | None = None) -> datetime | None:
+    """Best-effort: derive a naive-UTC reset time from a codex limit message's
+    "try again in …" / "retry after …" hint. Returns ``None`` when absent. ``now`` is
+    injectable for deterministic tests. Never raises."""
+    m = _RETRY_AFTER_RE.search(msg or "")
+    if not m or not any(m.groups()):
+        return None
+    hours, minutes, seconds = (int(g) if g else 0 for g in m.groups())
+    total = hours * 3600 + minutes * 60 + seconds
+    if total <= 0:
+        return None
+    base = now or datetime.now(UTC)
+    return (base + timedelta(seconds=total)).astimezone(UTC).replace(tzinfo=None)
 
 
 def _extract_agent_text(events: list[dict]) -> str:

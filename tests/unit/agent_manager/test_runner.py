@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agento.framework.agent_manager.errors import AuthenticationError
+from agento.framework.agent_manager.errors import AuthenticationError, UsageLimitError
 from agento.framework.agent_manager.models import AgentProvider, Token, TokenStatus
 from agento.framework.runner import Runner
 from agento.modules.claude.src.runner import TokenClaudeRunner
@@ -468,6 +468,60 @@ class TestTokenCodexRunnerJsonOutput:
             runner._parse_output(raw)
 
         assert "401" in str(exc_info.value)
+
+    def test_parse_output_raises_usage_limit_on_turn_failed_429(self):
+        raw = (_CODEX_FIXTURES / "usage_limit.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        with pytest.raises(UsageLimitError) as exc_info:
+            runner._parse_output(raw)
+
+        assert not isinstance(exc_info.value, AuthenticationError)
+        # "try again in 3600 seconds" → a reset time was derived.
+        assert exc_info.value.reset_at is not None
+
+    def test_parse_output_does_NOT_raise_on_substring_429_in_mcp_payload(self):
+        """Regression guard mirroring the 401 case: a bare '429' inside an MCP
+        payload (order id / total) must NOT trigger UsageLimitError — only a
+        structured turn.failed.error message does."""
+        raw = (_CODEX_FIXTURES / "mcp_payload_with_429_substring.ndjson").read_text()
+        runner = TokenCodexRunner(dry_run=True)
+
+        result = runner._parse_output(raw)  # must NOT raise
+
+        assert "429000112233" in result.raw_output
+        assert result.input_tokens == 101854
+
+    def test_parse_output_raises_usage_limit_on_typed_code_with_bland_message(self):
+        """A typed limit error whose human message has NO limit phrase must still be
+        classified via the structured error.type/code (a codex turn.failed can exit
+        rc=0 — missing it would dead-letter as a false SUCCESS)."""
+        raw = (
+            '{"type":"thread.started","thread_id":"sess-lim"}\n'
+            '{"type":"turn.failed","error":{"message":"Request failed.",'
+            '"type":"usage_limit_reached","code":"usage_limit_reached"}}\n'
+        )
+        runner = TokenCodexRunner(dry_run=True)
+        with pytest.raises(UsageLimitError):
+            runner._parse_output(raw)
+
+    def test_parse_output_reset_from_machine_readable_retry_after(self):
+        """reset_at is derived from a machine-readable retry_after (seconds) field,
+        not only from message text."""
+        from datetime import UTC, datetime
+
+        from agento.modules.codex.src.runner import _reset_at_from_error
+
+        base = datetime(2026, 7, 22, 8, 0, tzinfo=UTC)
+        err = {"message": "rate limit", "retry_after": 3600}
+        assert _reset_at_from_error(err, now=base) == datetime(2026, 7, 22, 9, 0)
+        # epoch reset field
+        epoch = int(datetime(2026, 7, 22, 10, 0, tzinfo=UTC).timestamp())
+        assert _reset_at_from_error({"type": "rate_limit", "reset_at": epoch}, now=base) == datetime(
+            2026, 7, 22, 10, 0
+        )
+        # nothing parseable → None
+        assert _reset_at_from_error({"type": "rate_limit"}, now=base) is None
 
     def test_parse_output_no_turn_completed_returns_partial_result(self):
         """If codex dies mid-stream (no turn.completed), parser still extracts

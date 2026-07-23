@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -439,4 +440,17 @@ class TokenAuthFailedEvent:
     agent_type: str
     token_id: int
     error_msg: str
+    job_id: int | None = None
+
+
+@dataclass
+class TokenUsageLimitedEvent:
+    """Dispatched when a session/usage/rate limit throttles a token (a temporary
+    cooldown via ``throttled_until`` — the token stays ``status='ok'`` and recovers
+    automatically). ``reset_at`` is the naive-UTC time the throttle lifts."""
+
+    agent_type: str
+    token_id: int
+    error_msg: str
+    reset_at: datetime | None = None
     job_id: int | None = None

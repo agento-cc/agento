@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
+from agento.framework.agent_manager.errors import UsageLimitError
 from agento.framework.runner import McpInitReport, McpServerStatus
 from agento.modules.claude.src.output_parser import (
     AuthenticationError,
+    _parse_reset_at,
     parse_claude_output,
 )
 
@@ -116,6 +119,60 @@ def test_credential_401_raises_authentication_error():
     )
     with pytest.raises(AuthenticationError, match="401 Invalid authentication credentials"):
         parse_claude_output(raw)
+
+
+def test_session_limit_raises_usage_limit_error_stream_json():
+    raw = (
+        '{"type": "result", "is_error": true, '
+        '"result": "You\'ve hit your session limit \\u00b7 resets 1pm (Europe/Warsaw)"}\n'
+    )
+    with pytest.raises(UsageLimitError) as exc:
+        parse_claude_output(raw)
+    # A reset time was parseable → reset_at is set (not the default-throttle fallback).
+    assert exc.value.reset_at is not None
+    assert not isinstance(exc.value, AuthenticationError)
+
+
+def test_session_limit_raises_usage_limit_error_single_json():
+    raw = json.dumps({"is_error": True, "result": "You've hit your session limit"})
+    with pytest.raises(UsageLimitError):
+        parse_claude_output(raw)
+
+
+def test_usage_limit_error_without_reset_has_none_reset_at():
+    raw = json.dumps({"is_error": True, "result": "rate_limit_error: slow down"})
+    with pytest.raises(UsageLimitError) as exc:
+        parse_claude_output(raw)
+    assert exc.value.reset_at is None
+
+
+def test_auth_error_wins_over_limit_phrase():
+    # A message containing BOTH an auth phrase and a limit phrase is a permanent
+    # auth failure (poison), not a temporary throttle.
+    raw = json.dumps({"is_error": True, "result": "authentication_error; usage limit"})
+    with pytest.raises(AuthenticationError):
+        parse_claude_output(raw)
+
+
+class TestParseResetAt:
+    NOW = datetime(2026, 7, 22, 8, 0, tzinfo=UTC)  # 08:00 UTC
+
+    def test_pm_time_in_warsaw_converts_to_utc(self):
+        # 1pm Europe/Warsaw (UTC+2 in July) = 11:00 UTC, later today.
+        r = _parse_reset_at("resets 1pm (Europe/Warsaw)", now=self.NOW)
+        assert r == datetime(2026, 7, 22, 11, 0)
+
+    def test_past_time_rolls_to_tomorrow(self):
+        # 9am Europe/Warsaw = 07:00 UTC, already past 08:00 → next day.
+        r = _parse_reset_at("resets 9am (Europe/Warsaw)", now=self.NOW)
+        assert r == datetime(2026, 7, 23, 7, 0)
+
+    def test_unparseable_returns_none(self):
+        assert _parse_reset_at("resets soon", now=self.NOW) is None
+        assert _parse_reset_at("no reset info here", now=self.NOW) is None
+
+    def test_bad_timezone_returns_none(self):
+        assert _parse_reset_at("resets 1pm (Not/AZone)", now=self.NOW) is None
 
 
 def test_transient_401_does_not_raise_authentication_error():

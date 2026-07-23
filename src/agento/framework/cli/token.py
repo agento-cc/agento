@@ -339,6 +339,7 @@ class TokenListCommand:
                     "error_msg": t.error_msg,
                     "used_at": t.used_at.isoformat() if t.used_at else None,
                     "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+                    "throttled_until": t.throttled_until.isoformat() if t.throttled_until else None,
                     "token_limit": t.token_limit,
                     "tokens_used": used,
                     "call_count": calls,
@@ -360,7 +361,10 @@ class TokenListCommand:
                 usage_str = f"used={used}/{t.token_limit} ({pct_free}% free)"
             else:
                 usage_str = f"used={used}/unlimited"
-            status_str = f"status={t.status.value}"
+            # A token can be status='ok' yet temporarily skipped by the pool because it
+            # hit a usage/session limit — surface that so operators aren't confused.
+            throttled = t.throttled_until is not None and t.throttled_until > now.replace(tzinfo=None)
+            status_str = f"status={t.status.value}" + (" (throttled)" if throttled else "")
             used_at_str = f"last_used={_humanize_delta(t.used_at, now)}"
             expires_str = f"expires={_format_expiry(t.expires_at, now)}"
             type_str = f"type={t.type}"
@@ -371,6 +375,8 @@ class TokenListCommand:
                 f"{usage_str}  {status_str}  {used_at_str}  {expires_str}"
             )
             print(line)
+            if throttled:
+                print(f"      ⏳ throttled until {t.throttled_until} (usage/session limit)")
             if t.status.value == "error" and t.error_msg:
                 snippet = t.error_msg[:180]
                 if len(t.error_msg) > 180:

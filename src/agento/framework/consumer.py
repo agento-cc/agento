@@ -9,10 +9,14 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from .agent_manager.errors import AuthenticationError
+from .agent_manager.errors import AuthenticationError, UsageLimitError
 from .agent_manager.models import AgentProvider
 from .agent_manager.token_resolver import TokenResolver
-from .agent_manager.token_store import count_tokens_for_provider, mark_token_error
+from .agent_manager.token_store import (
+    count_tokens_for_provider,
+    mark_token_error,
+    throttle_token,
+)
 from .agent_view_runtime import resolve_agent_view_runtime
 from .bootstrap import bootstrap, dispatch_reload, dispatch_shutdown, get_module_config
 from .channels.registry import get_channel
@@ -34,6 +38,7 @@ from .events import (
     JobSucceededEvent,
     JobVerificationFailed,
     TokenAuthFailedEvent,
+    TokenUsageLimitedEvent,
     WorkerStartedEvent,
     WorkerStoppedEvent,
 )
@@ -44,6 +49,12 @@ from .runner import McpInitReport, RunResult
 from .runner_factory import create_runner
 from .workflows import get_workflow_class
 from .workflows.base import JobContext
+
+# Fallback throttle window applied to a usage-limited token when the CLI error gave
+# no parseable reset time. Session/usage limits typically reset on an hourly/daily
+# boundary; 1h keeps the token out of the pool long enough to fail over while still
+# recovering on its own.
+_DEFAULT_LIMIT_THROTTLE = timedelta(hours=1)
 
 
 @dataclass
@@ -554,6 +565,10 @@ class Consumer:
                 else f"subtype={result.subtype or '?'} {result.stats_line}"
             )
             return _JobResult.from_run_result(result, summary)
+        except UsageLimitError as exc:
+            success = False
+            self._handle_usage_limit(job, token, agent_type, exc)
+            raise
         except AuthenticationError as exc:
             success = False
             self._handle_auth_failure(job, token, agent_type, exc)
@@ -612,6 +627,53 @@ class Consumer:
         except Exception:
             self.logger.exception(
                 "token_auth_failed_after observer failed",
+                extra={"job_id": job.id, "token_id": token_id},
+            )
+
+    def _handle_usage_limit(
+        self,
+        job: Job,
+        token,
+        agent_type: AgentProvider,
+        exc: UsageLimitError,
+    ) -> None:
+        """Throttle the usage/session-limited token until its reset time (a temporary
+        cooldown — NOT a poison) so the pool skips it and the job fails over to a
+        healthy token, then dispatch ``token_usage_limited_after``. Best-effort — DB
+        issues here must not mask the original failure about to be re-raised."""
+        token_id = exc.token_id if exc.token_id is not None else token.id
+        until = exc.reset_at or (datetime.now(UTC).replace(tzinfo=None) + _DEFAULT_LIMIT_THROTTLE)
+        try:
+            conn = get_connection(self._db_config)
+            try:
+                throttle_token(conn, token_id, until, str(exc), logger=self.logger)
+                conn.commit()
+                # Pool-aware retry: with the offending token now throttled (and thus
+                # excluded from the healthy count), let the job retry onto the next
+                # token if a healthy one remains for this provider.
+                _total, healthy = count_tokens_for_provider(conn, agent_type)
+                exc.retry_with_other_token = healthy > 0
+            finally:
+                conn.close()
+        except Exception:
+            self.logger.exception(
+                "Failed to throttle token after usage limit",
+                extra={"job_id": job.id, "token_id": token_id},
+            )
+        try:
+            get_event_manager().dispatch(
+                "token_usage_limited_after",
+                TokenUsageLimitedEvent(
+                    agent_type=agent_type.value,
+                    token_id=token_id,
+                    error_msg=str(exc),
+                    reset_at=until,
+                    job_id=job.id,
+                ),
+            )
+        except Exception:
+            self.logger.exception(
+                "token_usage_limited_after observer failed",
                 extra={"job_id": job.id, "token_id": token_id},
             )
 

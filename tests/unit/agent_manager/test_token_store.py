@@ -16,6 +16,7 @@ from agento.framework.agent_manager.token_store import (
     register_token,
     select_token,
     set_token_priority,
+    throttle_token,
     update_refreshed_credentials,
 )
 
@@ -299,11 +300,44 @@ class TestMarkAndClearTokenError:
         sql = cursor.execute.call_args[0][0]
         assert "status = 'ok'" in sql
         assert "error_msg = NULL" in sql
+        # Operator recovery also lifts any usage-limit throttle.
+        assert "throttled_until = NULL" in sql
 
     def test_clear_token_error_returns_false_when_not_found(self):
         conn, _cursor = _mock_conn(rowcount=0)
 
         assert clear_token_error(conn, 999) is False
+
+
+class TestThrottleToken:
+    def test_sets_throttled_until_without_poisoning(self):
+        conn, cursor = _mock_conn(rowcount=1)
+        until = datetime(2026, 7, 22, 12, 0, 0)
+
+        result = throttle_token(conn, 7, until, "hit your session limit")
+
+        assert result is True
+        sql = cursor.execute.call_args[0][0]
+        # Cooldown only — must NOT touch status or expires_at (credential expiry).
+        assert "throttled_until = %s" in sql
+        assert "status" not in sql
+        assert "expires_at" not in sql
+        params = cursor.execute.call_args[0][1]
+        assert params == (until, 7)
+
+    def test_returns_false_when_not_found(self):
+        conn, _cursor = _mock_conn(rowcount=0)
+        assert throttle_token(conn, 999, datetime(2026, 7, 22, 12, 0), "msg") is False
+
+
+class TestSelectTokenSkipsThrottled:
+    def test_select_token_query_excludes_throttled(self):
+        conn, cursor = _mock_conn(fetchone_return=None)
+
+        select_token(conn, AgentProvider.CLAUDE)
+
+        sql = cursor.execute.call_args_list[0][0][0]
+        assert "throttled_until IS NULL OR throttled_until <= UTC_TIMESTAMP()" in sql
 
 
 class TestCountTokensForProvider:

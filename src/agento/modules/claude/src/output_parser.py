@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agento.framework.agent_manager.errors import AuthenticationError
+from agento.framework.agent_manager.errors import AuthenticationError, UsageLimitError
 from agento.framework.runner import McpInitReport, McpServerStatus, RunResult
 
 AUTH_ERROR_PHRASES = (
@@ -13,11 +16,78 @@ AUTH_ERROR_PHRASES = (
     "401 Invalid authentication credentials",
 )
 
+# Session/usage/rate-limit phrases. These are TEMPORARY throttles (fail over + auto-recover),
+# distinct from AUTH_ERROR_PHRASES (permanent poison). Matched case-insensitively.
+LIMIT_ERROR_PHRASES = (
+    "hit your session limit",
+    "usage limit",
+    "usage_limit_reached",
+    "rate_limit_error",
+)
+
+# "resets 1pm (Europe/Warsaw)" / "resets 1:30am (America/New_York)" — capture clock + tz.
+_RESET_RE = re.compile(
+    r"resets?\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)?\s*\(([^)]+)\)",
+    re.IGNORECASE,
+)
+
 
 # Backward-compatible alias — all existing imports of ClaudeResult keep working.
 ClaudeResult = RunResult
 
-__all__ = ["AUTH_ERROR_PHRASES", "AuthenticationError", "ClaudeResult", "parse_claude_output"]
+__all__ = [
+    "AUTH_ERROR_PHRASES",
+    "LIMIT_ERROR_PHRASES",
+    "AuthenticationError",
+    "ClaudeResult",
+    "UsageLimitError",
+    "parse_claude_output",
+]
+
+
+def _parse_reset_at(msg: str, now: datetime | None = None) -> datetime | None:
+    """Parse a Claude limit message's reset time (e.g. ``resets 1pm (Europe/Warsaw)``)
+    into a naive-UTC datetime. Returns the next occurrence of that wall-clock time in
+    the named IANA timezone (rolling to tomorrow if it has already passed today).
+    ``now`` is injectable for deterministic tests (defaults to ``datetime.now(UTC)``).
+    Returns ``None`` on anything unparseable — never raises."""
+    m = _RESET_RE.search(msg or "")
+    if not m:
+        return None
+    hour_s, minute_s, ampm, tz_s = m.groups()
+    try:
+        tz = ZoneInfo(tz_s.strip())
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        return None
+    try:
+        hour = int(hour_s)
+        minute = int(minute_s) if minute_s else 0
+    except ValueError:
+        return None
+    if ampm:
+        ampm = ampm.lower()
+        if hour == 12:
+            hour = 0
+        if ampm == "pm":
+            hour += 12
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    base = (now or datetime.now(UTC)).astimezone(tz)
+    candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= base:
+        candidate += timedelta(days=1)
+    return candidate.astimezone(UTC).replace(tzinfo=None)
+
+
+def _classify_error(msg: str):
+    """Return the exception to raise for a Claude ``is_error`` result message.
+    Auth phrases (permanent) win over limit phrases (temporary)."""
+    if any(p in msg for p in AUTH_ERROR_PHRASES):
+        return AuthenticationError(f"Claude CLI error: {msg}")
+    low = msg.lower()
+    if any(p in low for p in LIMIT_ERROR_PHRASES):
+        return UsageLimitError(f"Claude CLI error: {msg}", reset_at=_parse_reset_at(msg))
+    return RuntimeError(f"Claude CLI error: {msg}")
 
 
 def parse_claude_output(raw: str, logger: logging.Logger | None = None) -> RunResult:
@@ -83,9 +153,7 @@ def parse_claude_output(raw: str, logger: logging.Logger | None = None) -> RunRe
     if result_event:
         if result_event.get("is_error"):
             msg = result_event.get("result", "unknown error")
-            if any(p in msg for p in AUTH_ERROR_PHRASES):
-                raise AuthenticationError(f"Claude CLI error: {msg}")
-            raise RuntimeError(f"Claude CLI error: {msg}")
+            raise _classify_error(msg)
 
         usage = result_event.get("usage", {})
         return RunResult(
@@ -137,9 +205,7 @@ def _parse_single_json(raw: str, _log: logging.Logger) -> RunResult:
 
     if data.get("is_error"):
         msg = data.get("result", "unknown error")
-        if any(p in msg for p in AUTH_ERROR_PHRASES):
-            raise AuthenticationError(f"Claude CLI error: {msg}")
-        raise RuntimeError(f"Claude CLI error: {msg}")
+        raise _classify_error(msg)
 
     cr = RunResult(
         raw_output=raw,

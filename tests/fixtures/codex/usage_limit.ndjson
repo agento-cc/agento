@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019e9111-aaaa-bbbb-cccc-407119d634b3"}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... 2/5 (unexpected status 429 Too Many Requests, url: wss://api.openai.com/v1/responses)"}
+{"type":"turn.failed","error":{"message":"unexpected status 429 Too Many Requests: You have hit your usage limit. Please try again in 3600 seconds. url: https://api.openai.com/v1/responses, request id: req_09aa"}}

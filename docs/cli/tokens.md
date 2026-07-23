@@ -27,9 +27,17 @@ Health state lives on each row:
 |--------------|-------------------------------------------------------------------------|
 | `status`     | `ok` or `error`. Flipped to `error` when the runner classifies an authentication failure (e.g. invalid credentials or expired OAuth) — not every transient `401`. |
 | `error_msg`  | Operator-visible reason for the latest failure.                         |
-| `expires_at` | Credential expiry (from the stored payload). Expired rows are skipped. **Claude OAuth leaves this NULL on purpose** — see the note below. |
+| `expires_at` | Credential expiry (from the stored payload). A row is skipped once `expires_at` is in the **past** (a *future* value means still-valid). **Claude OAuth leaves this NULL on purpose** — see the note below. |
+| `throttled_until` | Temporary usage/session-limit **cooldown**. Set to the limit's reset time when the provider account is rate/usage-limited. The pool skips the token while `throttled_until` is in the **future** and auto-includes it once it passes. Distinct from `expires_at` (credential expiry) and from `status='error'` (poison): `status` stays `'ok'` and the token self-recovers. |
 | `used_at`    | Last time a worker claimed the row — drives LRU ordering within a priority tier. |
 | `priority`   | Pool selection weight. Lower value wins; 0 = default.                   |
+
+**Three ways a token leaves the pool (in increasing permanence):**
+- **Throttled** (`throttled_until` in the future, `status='ok'`): hit a session/usage/rate limit. Temporary — the token auto-recovers at the reset time and the job **fails over** to another healthy token meanwhile. No operator action needed.
+- **Expired** (`expires_at` in the past): credential lapsed. Cleared by `token:refresh`.
+- **Errored** (`status='error'`): auth failure poisoned it. Cleared by `token:reset` or `token:refresh`.
+
+`token:reset` clears **both** `status='error'` and any `throttled_until` cooldown.
 
 > **Claude OAuth tokens** intentionally leave the row `expires_at` **NULL**.
 > Claude's `expiresAt` is the short-lived (~8h) *access*-token expiry in epoch
@@ -121,7 +129,7 @@ agento token:list --json
 agento token:list --all    # include disabled tokens
 ```
 
-Each row shows `type`, `priority`, `status`, `last_used`, `expires`, and (for errored tokens) the truncated `error_msg`. The `credentials` blob is never surfaced.
+Each row shows `type`, `priority`, `status`, `last_used`, and `expires`. A token that is temporarily rate/usage-limited shows `status=ok (throttled)` plus a `⏳ throttled until <time>` line; an errored token shows its truncated `error_msg`. `--json` includes a `throttled_until` field (ISO-8601, or `null`) alongside `expires_at`. The `credentials` blob is never surfaced.
 
 ## Set Pool Priority
 
@@ -156,10 +164,10 @@ Useful when you know a license has been revoked or want to take one offline for 
 
 ```bash
 agento token:mark-error 1 "Revoked by admin 2026-04-23"
-agento token:reset 1    # clear status=error, status back to 'ok'
+agento token:reset 1    # clear status=error AND any throttle, status back to 'ok'
 ```
 
-`mark-error` stops the pool from handing out that token; `reset` puts it back in rotation without a full re-auth round-trip.
+`mark-error` stops the pool from handing out that token; `reset` puts it back in rotation without a full re-auth round-trip (it also lifts a usage-limit `throttled_until` cooldown, should you want to force a throttled token back early).
 
 ## Usage Stats
 
